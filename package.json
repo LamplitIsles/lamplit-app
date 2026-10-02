@@ -16,7 +16,9 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test:panels-browser": "bun tests/panels-browser.mjs",
-    "freeze:panels": "bun tests/freeze-panels.mjs"
+    "freeze:panels": "bun tests/freeze-panels.mjs",
+    "test:images-browser": "bun tests/images-browser.mjs",
+    "freeze:images": "bun tests/freeze-images.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261002.1",

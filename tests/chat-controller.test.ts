@@ -36,6 +36,7 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
         messages: live,
         before: "11",
         capabilities,
+        recovery: [],
       };
     },
     async history() {
@@ -106,9 +107,11 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
     value: { href: `http://127.0.0.1:${server.port}/slice/` },
   });
   const saved = new Map<string, string>();
+  let storageFails = false;
   const controller = new ChatController(() => {}, {
     getItem: (key) => saved.get(key) ?? null,
     setItem: (key, value) => {
+      if (storageFails) throw new Error("Fixture storage quota");
       saved.set(key, value);
     },
   });
@@ -139,6 +142,10 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
     expect(
       JSON.parse(saved.get("lamplit.pending:history-fixture")!)[0].state,
     ).toBe("unconsumed");
+    storageFails = true;
+    await controller.send("storage failure remains visible");
+    expect(controller.error).toContain("无法保存发送状态");
+    storageFails = false;
     let release!: () => void;
     panels.delays.set(
       "relationship",

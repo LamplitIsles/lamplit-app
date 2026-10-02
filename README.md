@@ -10,8 +10,8 @@ The first slice supports main-session text history, sending and steering,
 completed-message delivery, targeted stop, and reconnect reconciliation. Agent
 messages appear when each message is complete, as in an IM app. Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
-reminders are available through the shared connection. Album browsing and saving
-originals work independently of image sending; search, attachment sending, TTS
+reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
+use the same native contract. Album browsing and saving originals work independently; search, generic attachments, TTS
 and native releases remain outside this slice. The existing frontends remain in
 service until full product coverage is verified.
 
@@ -35,6 +35,7 @@ bun run format:check
 bun run test
 bun run test:browser
 bun run test:panels-browser
+bun run test:images-browser
 ```
 
 Browser acceptance uses an isolated Chrome context and a test-owned fake backend.
@@ -84,3 +85,17 @@ field definitions, limits, fixtures, archive/hash verification and actual-backen
 integration commands. `bun run freeze:panels` records the committed app HEAD and
 compiled contracts in ignored scratch artifacts; actual backends must accept that
 same artifact before any repository merges.
+
+## Images and recovery
+
+Choose or paste supported images, preview/remove them, and send alone or with text.
+The connected host advertises its limits: Pi up to six / 8 MB each / 24 MB originals
+per operation; CFL five / 5 MiB / 20 MiB. Failed upload retains editable selections.
+Submitted input recovery offers explicit inspection/restoration without replacing
+current edits. Missing originals require explicit removal; uncertain delivery is
+inspected and never automatically retried. Unsent drafts are not saved across reload.
+
+See [image protocol and frozen native acceptance](docs/image-send-recovery.md).
+`bun run freeze:images` freezes committed browser/contracts and the reusable runner
+once into ignored scratch. Specs #3097/#3098 consume those exact archives; actual
+Pi/CFL acceptance remains the Owner gate for #3096 before merge, with no deployment.

@@ -1,5 +1,12 @@
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
+export * from "./images.ts";
+import {
+  OperationIdSchema,
+  ImageRefSchema,
+  ImageLimitsSchema,
+  RecoverySchema,
+} from "./images.ts";
 import { Type, type Static } from "typebox";
 import { validate } from "./validation.ts";
 export { validate } from "./validation.ts";
@@ -16,11 +23,12 @@ const Id = Type.String({ minLength: 1, maxLength: 300 });
 const NullableId = Type.Union([Id, Type.Null()]);
 export const SubmissionSchema = Type.Object(
   {
-    operationId: Type.String({
-      pattern:
-        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-    }),
-    text: Type.String({ minLength: 1, maxLength: 16000 }),
+    operationId: OperationIdSchema,
+    text: Type.String({ maxLength: 16000 }),
+    images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
+    replacementSourceIds: Type.Optional(
+      Type.Array(Id, { maxItems: 20, uniqueItems: true }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -43,6 +51,7 @@ export const ReceiptSchema = Type.Object(
 );
 export const MessageSchema = Type.Object(
   {
+    images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
     source: Type.Optional(ReminderSourceSchema),
     delivery: Type.Optional(
       Type.Union([
@@ -81,12 +90,13 @@ export const ViewSchema = Type.Object(
     activeTurnId: NullableId,
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),
     before: NullableId,
+    recovery: Type.Array(RecoverySchema, { maxItems: 20 }),
     capabilities: Type.Object(
       {
         text: Type.Literal(true),
         steer: Type.Literal(true),
         stop: Type.Literal(true),
-        images: Type.Literal(false),
+        images: Type.Union([Type.Literal(false), ImageLimitsSchema]),
       },
       { additionalProperties: false },
     ),
@@ -121,3 +131,18 @@ export const capabilities: ChatView["capabilities"] = {
   stop: true,
   images: false,
 };
+
+/** Optional image/replacement fields are omitted for ordinary text, not a second submission path. */
+export function validateSubmission(value: unknown): Submission {
+  const input = validate(SubmissionSchema, value);
+  if (!input.text.trim() && !input.images?.length)
+    throw new Error("Empty message");
+  if (
+    input.images &&
+    (new Set(input.images.map((r) => r.attachmentId)).size !==
+      input.images.length ||
+      input.images.some((r) => r.availability !== "available"))
+  )
+    throw new Error("Invalid submitted images");
+  return input;
+}

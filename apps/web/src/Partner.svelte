@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { mediaUrl, type ImageRef } from "@lamplit/contracts";
   import { affinityStage } from "./lib/companion/domain.ts";
   import { onMount } from "svelte";
   import { f7, f7ready } from "framework7-svelte";
@@ -54,6 +55,7 @@
           view: controller.view,
           older: controller.older,
           pending: controller.pending,
+          recovery: controller.recovery,
           connected: controller.connected,
           before: controller.before,
           loadingOlder: controller.loadingOlder,
@@ -90,13 +92,33 @@
                     ? "待确认"
                     : "未被接收",
           items: [
-            {
-              id: m.id,
+            ...(m.images ?? []).map((image) => ({
+              id: `${m.id}:${image.attachmentId}`,
               messageKey: m.id,
-              kind: m.role === "notice" ? "notice" : "text",
-              side: m.role === "user" && !m.source ? "outgoing" : "incoming",
-              text: m.text,
-            },
+              kind: "image" as const,
+              side:
+                m.role === "user" && !m.source
+                  ? ("outgoing" as const)
+                  : ("incoming" as const),
+              state:
+                image.availability === "available"
+                  ? ("ready" as const)
+                  : ("failed" as const),
+              attachment: image,
+              alt: image.name,
+            })),
+            ...(m.text
+              ? [
+                  {
+                    id: m.id,
+                    messageKey: m.id,
+                    kind: m.role === "notice" ? "notice" : "text",
+                    side:
+                      m.role === "user" && !m.source ? "outgoing" : "incoming",
+                    text: m.text,
+                  },
+                ]
+              : []),
           ],
         }) as TimelineMessageUnit,
     );
@@ -114,16 +136,31 @@
                 ? "未消费"
                 : p.state === "accepted"
                   ? "已接收"
-                  : "待确认",
+                  : p.state === "rejected"
+                    ? "未被接收"
+                    : "待确认",
           items: [
-            {
-              id: p.operationId,
+            ...(p.images ?? []).map((image) => ({
+              id: `${p.operationId}:${image.attachmentId}`,
               messageKey: p.operationId,
-              kind: "text",
-              side: "outgoing",
-              text: p.text,
-              pending: true,
-            },
+              kind: "image" as const,
+              side: "outgoing" as const,
+              state: "ready" as const,
+              attachment: image,
+              alt: image.name,
+            })),
+            ...(p.text
+              ? [
+                  {
+                    id: p.operationId,
+                    messageKey: p.operationId,
+                    kind: "text" as const,
+                    side: "outgoing" as const,
+                    text: p.text,
+                    pending: true,
+                  },
+                ]
+              : []),
           ],
         });
     return {
@@ -144,12 +181,32 @@
     };
   });
   const actions: CompanionActions = {
-    async send(text, images, retire) {
-      if (!controller?.connected || images.length)
+    async send(text, images, retire, sources) {
+      if (!controller?.connected)
         throw new CompanionPreControllerError("请等待连接恢复后发送文字。");
       if (controller.pending.length >= 20)
         throw new CompanionPreControllerError("请先核对尚未确认的消息。");
-      await controller.send(text, () => retire?.({ reason: "observed" }));
+      try {
+        await controller.send(
+          text,
+          () => retire?.({ reason: "observed" }),
+          images,
+          sources,
+        );
+      } catch (error) {
+        controller.error = error instanceof Error ? error.message : "发送失败";
+        revision += 1;
+        throw new CompanionPreControllerError(controller.error);
+      }
+    },
+    dismissRecovery: (key) => controller.dismissRecovery(key),
+    attachmentUrl: async (attachment) => {
+      const ref = attachment as ImageRef;
+      const response = await fetch(mediaUrl(ref.attachmentId), {
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error("Missing image");
+      return URL.createObjectURL(await response.blob());
     },
     readPanel: (method, input) => controller.readPanel(method, input),
     refreshRelationship: (history) => controller.refreshRelationship(history),
@@ -216,8 +273,21 @@
     appearance = value;
     writePreference(APPEARANCE_STORAGE_KEY, value);
   }}
-  imageLimits={undefined}
-  recoveredDraft={undefined}
+  imageLimits={chatState?.view?.capabilities.images || undefined}
+  recoveredDraft={chatState?.recovery[0]
+    ? {
+        key: chatState.recovery[0].sourceId,
+        sourceIds: [chatState.recovery[0].sourceId],
+        input: chatState.recovery[0].text,
+        state: chatState.recovery[0].state,
+        replacementEligible: chatState.recovery[0].replacementEligible,
+        images: chatState.recovery[0].images.map((image) => ({
+          id: image.attachmentId,
+          name: image.name,
+          url: mediaUrl(image.attachmentId),
+        })),
+      }
+    : undefined}
   onHistoryOpenChange={undefined}
   sessionId={chatState?.view?.sessionId}
   {voiceCapability}

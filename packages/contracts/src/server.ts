@@ -16,10 +16,11 @@ import {
   Chat,
   ViewSchema,
   PageSchema,
-  SubmissionSchema,
+  validateSubmission,
   ReceiptSchema,
   validate,
   validateId,
+  validateRecovery,
   type ChatView,
   type HistoryPage,
   type Receipt,
@@ -40,7 +41,9 @@ export async function createChatHost(
   backend: ChatBackend,
   onError: (error: unknown) => void = console.error,
 ) {
-  const view = replicatedState(validate(ViewSchema, await backend.read()));
+  const initial = validate(ViewSchema, await backend.read());
+  initial.recovery.forEach(validateRecovery);
+  const view = replicatedState(initial);
   const provider = new RemoteServiceProvider([Chat]);
   let closed = false,
     dirty = false;
@@ -54,6 +57,7 @@ export async function createChatHost(
         while (dirty && !closed) {
           dirty = false;
           const next = validate(ViewSchema, await backend.read());
+          next.recovery.forEach(validateRecovery);
           if (closed) return;
           if (JSON.stringify(next) !== JSON.stringify(view.value))
             view.change(BACKGROUND_CONTEXT, (draft) => {
@@ -61,6 +65,9 @@ export async function createChatHost(
               draft.before = next.before;
               draft.activeTurnId = next.activeTurnId;
               draft.name = next.name;
+              draft.sessionId = next.sessionId;
+              draft.capabilities = next.capabilities;
+              draft.recovery = next.recovery;
             });
         }
       } finally {
@@ -92,9 +99,10 @@ export async function createChatHost(
       return validate(PageSchema, await backend.history(validateId(before)));
     },
     async submit(input: Submission) {
-      const value = validate(SubmissionSchema, input);
-      if (!value.text.trim()) throw new Error("Empty message");
+      const value = validateSubmission(input);
       const receipt = validate(ReceiptSchema, await backend.submit(value));
+      if (receipt.operationId !== value.operationId)
+        throw new Error("Wrong operation receipt");
       await refresh();
       return receipt;
     },
@@ -260,3 +268,5 @@ export async function createChatHost(
     },
   };
 }
+
+export { imageHttp, type ImageBackend } from "./image-http.ts";

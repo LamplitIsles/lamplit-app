@@ -35,6 +35,7 @@ export function fixtureBackend() {
         messages: [...messages].slice(-30),
         before: null,
         capabilities,
+        recovery: [],
       };
     },
     async history() {

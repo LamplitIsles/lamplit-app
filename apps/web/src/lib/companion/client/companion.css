@@ -936,3 +936,47 @@
   display: grid;
   place-items: center;
 }
+
+/* Scoped attachment board: retain Framework7 composer around the image region. */
+.companion-composer {
+  --f7-messagebar-attachment-height: 96px;
+  --f7-messagebar-attachment-landscape-height: 96px;
+}
+.companion-composer .companion-image-drafts.messagebar-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  overflow: visible;
+  gap: 8px;
+  padding: 8px;
+  height: auto;
+}
+.companion-composer .companion-image-draft.messagebar-attachment {
+  width: 96px;
+  height: 96px;
+  margin: 0;
+  overflow: visible;
+}
+.companion-composer .companion-image-draft-preview img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.companion-input-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.companion-recovery-preview {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+}
+.companion-input-recovery details {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

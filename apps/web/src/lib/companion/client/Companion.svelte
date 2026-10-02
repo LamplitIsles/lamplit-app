@@ -297,13 +297,16 @@
   let continuityStatusKey = "";
   let continuityStatusTimer: ReturnType<typeof setTimeout> | undefined;
   let imageDrafts: CompanionImageDraft[] = [];
+  let imageIntakeFailure: CompanionMessage | undefined;
   let imageDraftSessionId: string | undefined;
   let recoveredDraftKey = "";
   let recoveredDraftToken = 0;
+  let replacementSourceIds: readonly string[] = [];
+  let missingRecoveryImages = false;
+  let restoringRecovery = false;
   let deferredPreviewReleases: CompanionImageDraft[] = [];
   let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
-  let submissionToken = 0;
   let imagePickerPointer: { id: number; startedAt: number } | undefined;
   let suppressImagePickerClick = false;
   let messagebarComponent: Messagebar;
@@ -396,21 +399,26 @@
     imageDraftSessionId = sessionId;
     recoveredDraftKey = "";
     recoveredDraftToken += 1;
+    replacementSourceIds = [];
+    missingRecoveryImages = false;
+    restoringRecovery = false;
     composer = createComposerState();
-    submissionToken += 1;
     void scheduleComposerResize();
+  }
+  $: if (
+    !composer.draft &&
+    !imageDrafts.length &&
+    !restoringRecovery &&
+    !missingRecoveryImages
+  ) {
+    replacementSourceIds = [];
+    recoveredDraftKey = "";
   }
   $: if (projection.canSubmit === false && voiceBusy) void cancelVoiceInput();
   $: if (sessionId !== voiceSessionId) {
     voiceSessionId = sessionId;
     void cancelVoiceInput();
   }
-  $: if (
-    recoveredDraft &&
-    recoveredDraft.key !== recoveredDraftKey &&
-    sessionId === imageDraftSessionId
-  )
-    void restoreRecoveredDraft(recoveredDraft);
 
   async function scheduleComposerResize(): Promise<void> {
     await tick();
@@ -479,31 +487,48 @@
     const token = ++recoveredDraftToken;
     recoveredDraftKey = draft.key;
     if (sessionId !== imageDraftSessionId) return;
-    const existingText = composer.draft.trim();
-    composer = {
-      ...composer,
-      draft: existingText ? `${draft.input}\n${composer.draft}` : draft.input,
-      composing: false,
-    };
+    if (
+      composer.draft.trim() ||
+      imageDrafts.length ||
+      !draft.replacementEligible ||
+      draft.state === "uncertain"
+    )
+      return;
+    restoringRecovery = true;
+    const originalComposer = composer.draft;
     const files: File[] = [];
+    let missing = false;
     for (const image of draft.images) {
       try {
         const response = await fetch(image.url);
-        if (!response.ok) continue;
+        if (!response.ok) throw new Error("Missing image");
         const blob = await response.blob();
         files.push(
           new File([blob], image.name, { type: blob.type || "image/png" }),
         );
       } catch {
-        // The text remains editable even if an attachment cannot be restored.
+        missing = true;
       }
     }
     if (token !== recoveredDraftToken || sessionId !== imageDraftSessionId)
       return;
-    if (files.length)
-      imageDrafts = [...imageDrafts, ...createImageDrafts(files)];
+    restoringRecovery = false;
+    if (
+      composer.draft !== originalComposer ||
+      imageDrafts.length ||
+      recoveredDraft?.key !== draft.key ||
+      !recoveredDraft.replacementEligible ||
+      recoveredDraft.state === "uncertain"
+    ) {
+      recoveredDraftKey = "";
+      return;
+    }
+    composer = { ...composer, draft: draft.input, composing: false };
+    replacementSourceIds = draft.sourceIds;
+    missingRecoveryImages = missing;
+    imageDrafts = createImageDrafts(files);
     void scheduleComposerResize();
-    liveAnnouncement = { key: "error.restored" };
+    liveAnnouncement = { key: "recovery.restored" };
   }
 
   function messageContentParts(
@@ -1145,13 +1170,21 @@
   }
 
   function submit(): void {
-    if (projection.canSubmit === false || voiceBusy) return;
+    if (
+      projection.canSubmit === false ||
+      voiceBusy ||
+      restoringRecovery ||
+      missingRecoveryImages
+    )
+      return;
     const restoreText = composer.draft;
     const text = restoreText.trim();
     if (text.length > MAX_MESSAGE_LENGTH) return;
     if ((!text && imageDrafts.length === 0) || composer.composing) return;
     const submittedDrafts = [...imageDrafts];
     const originSessionId = sessionId;
+    const sources = replacementSourceIds;
+    replacementSourceIds = [];
     composer = {
       ...reduceComposer(composer, { type: "submit" }),
       draft: "",
@@ -1161,7 +1194,6 @@
     returnToLatest();
     void tick().then(returnToLatest);
     void scheduleComposerResize();
-    const token = ++submissionToken;
     const onRetire = (retirement: PendingSubmissionRetirement): void => {
       retireSubmission(
         submittedDrafts,
@@ -1171,15 +1203,12 @@
       );
     };
     void Promise.resolve()
-      .then(() => actions.send(text, submittedDrafts, onRetire))
+      .then(() => actions.send(text, submittedDrafts, onRetire, sources))
       .catch((error: unknown) => {
-        // Once beginSubmission() succeeds, the Session controller is the only
-        // controller that retires its echo and restores a rejected draft. The only
-        // local restoration path is an explicitly marked caller failure before
-        // that controller boundary (for example no bound Session or /compact).
+        // Only failures before admission return Files locally. Merge with current
+        // edits even if another send began; native recovery is always explicit.
         if (
           error instanceof CompanionPreControllerError &&
-          token === submissionToken &&
           sessionId === originSessionId
         ) {
           composer = {
@@ -1190,7 +1219,12 @@
             composing: false,
           };
           imageDrafts = [...imageDrafts, ...submittedDrafts];
+          replacementSourceIds = [
+            ...new Set([...replacementSourceIds, ...sources]),
+          ];
           void scheduleComposerResize();
+        } else if (error instanceof CompanionPreControllerError) {
+          releaseSubmissionImages(submittedDrafts);
         }
         liveAnnouncement =
           error instanceof Error && error.message === "compact-with-images"
@@ -1358,8 +1392,10 @@
     const error = imageIntakeError(imageDrafts, files, imageLimits);
     if (error) {
       liveAnnouncement = error;
+      imageIntakeFailure = error;
       return;
     }
+    imageIntakeFailure = undefined;
     imageDrafts = [...imageDrafts, ...createImageDrafts(files)];
   }
   function onImageInput(event: Event): void {
@@ -1369,7 +1405,7 @@
   }
   function onPaste(event: ClipboardEvent): void {
     const images = imageFilesFromClipboard(event.clipboardData);
-    if (chatOnly || images.length === 0) return;
+    if (images.length === 0) return;
     event.preventDefault();
     addImages(images);
   }
@@ -2067,7 +2103,7 @@
           {/if}
         {/snippet}
         {#snippet innerStart()}
-          {#if !chatOnly || voiceBusy}<button
+          {#if imageLimits || voiceBusy}<button
               class="button button-tonal button-round companion-attach"
               type="button"
               aria-label={t(voiceBusy ? "voice.cancel" : "image.choose")}
@@ -2088,6 +2124,85 @@
           {/if}
         {/snippet}
         {#snippet beforeArea()}
+          {#if recoveredDraft && recoveredDraft.key !== recoveredDraftKey}
+            <div
+              class="companion-input-recovery"
+              role="status"
+              data-testid="input-recovery"
+            >
+              <span
+                >{recoveredDraft.state === "uncertain"
+                  ? t("recovery.uncertain")
+                  : t("recovery.available")}</span
+              >
+              <button
+                class="button button-tonal"
+                type="button"
+                disabled={!recoveredDraft.replacementEligible ||
+                  recoveredDraft.state === "uncertain" ||
+                  !!composer.draft.trim() ||
+                  imageDrafts.length > 0 ||
+                  restoringRecovery}
+                on:click={() =>
+                  recoveredDraft && void restoreRecoveredDraft(recoveredDraft)}
+                >{t("recovery.restore")}</button
+              >
+              <button
+                class="button"
+                type="button"
+                on:click={() => {
+                  if (recoveredDraft)
+                    actions.dismissRecovery?.(recoveredDraft.key);
+                }}>{t("recovery.discard")}</button
+              >
+              <details>
+                <summary>{t("recovery.inspect")}</summary>
+                <p>{recoveredDraft.input}</p>
+                {#each recoveredDraft.images as image}<img
+                    class="companion-recovery-preview"
+                    src={image.url}
+                    alt={image.name}
+                  />{/each}
+              </details>
+              {#if composer.draft.trim() || imageDrafts.length}<span
+                  >{t("recovery.busy")}</span
+                >{/if}
+            </div>
+          {/if}
+          {#if replacementSourceIds.length}
+            <div class="companion-input-recovery">
+              <button
+                class="button"
+                type="button"
+                on:click={() => {
+                  actions.dismissRecovery?.(recoveredDraftKey);
+                  recoveredDraftKey = "";
+                  releaseSubmissionImages(imageDrafts);
+                  imageDrafts = [];
+                  composer = { ...composer, draft: "", composing: false };
+                  replacementSourceIds = [];
+                  missingRecoveryImages = false;
+                  void scheduleComposerResize();
+                }}>{t("recovery.discardRestored")}</button
+              >
+            </div>
+          {/if}
+          {#if missingRecoveryImages}
+            <div
+              class="companion-input-recovery"
+              role="alert"
+              data-testid="missing-recovery-image"
+            >
+              <span>{t("recovery.missing")}</span>
+              <button
+                class="button button-tonal"
+                type="button"
+                on:click={() => {
+                  missingRecoveryImages = false;
+                }}>{t("recovery.removeMissing")}</button
+              >
+            </div>
+          {/if}
           <input
             bind:this={photoLibraryInput}
             id="companion-image-library"
@@ -2191,11 +2306,25 @@
             disabled={voiceBusy ||
               projection.canSubmit === false ||
               composer.draft.trim().length > MAX_MESSAGE_LENGTH ||
+              restoringRecovery ||
+              missingRecoveryImages ||
               (!composer.draft.trim() && imageDrafts.length === 0)}
             ><ArrowUp size={20} aria-hidden="true" /></button
           >
         {/snippet}
         {#snippet afterInner()}
+          {#if projection.promptError || imageIntakeFailure}
+            <div
+              class="companion-voice-input-status companion-voice-input-error"
+              role="alert"
+              data-testid="input-error"
+            >
+              {projection.promptError ||
+                (imageIntakeFailure
+                  ? t(imageIntakeFailure.key, imageIntakeFailure.params)
+                  : "")}
+            </div>
+          {/if}
           <div
             use:connectMessagebar={{
               label: t("composer.label"),

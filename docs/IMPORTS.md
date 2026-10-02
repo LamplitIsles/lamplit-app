@@ -38,3 +38,11 @@ actions. It removes CFL-only JSON reads and relation readiness as a chat gate,
 retains the imported visual language, and fixes Framework7 browser download
 routing and signed affinity changes. No new upstream source was imported; the
 source commits and license above remain the attribution authority.
+
+`apps/web/src/lib/photo-upload.ts` adapts the browser base64/canvas JPEG preparation
+from local read-only `LamplitIsles/lamplit-chat`, commit
+`2c4280f6d95daa455c85c61ada7b0fc8a48dd3a1`, path
+`frontend/src/lib/companion/photo-upload.ts` (Apache-2.0). It preserves original
+bytes and bounded 480px preview / 1200px model JPEG variants, replacing Pi-only
+hardcoded limits/DTOs with the public host-advertised contract. No native source,
+configuration, state or credentials were changed/imported.

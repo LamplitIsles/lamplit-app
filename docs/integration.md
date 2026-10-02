@@ -134,3 +134,16 @@ See [companion panels](companion-panels.md) for the authoritative public contrac
 frozen compiled-package handoff, native fixture requirements and actual-host
 commands. Its same-artifact two-backend acceptance remains pending the Owner gate.
 No deployment or production service restart is part of that acceptance.
+
+## Image sending and recovery
+
+Spec #3096 extends the compiled root with strict original/preview/model upload,
+host image limits, reference/availability and native recovery DTOs. `view.recovery`
+is required (empty when no recoverable submitted input). Mount the portable
+`imageHttp` from `/server` before static routing or implement equivalent validated
+native routing; authenticate upload and original reads against current owner/session.
+Use existing native storage and atomic admission/replacement authority. Pi retains
+browser-prepared JPEG variants; CFL uses original bytes. No server transcoding or
+new execution service is needed. See [image-send-recovery](image-send-recovery.md)
+for exact DTOs, native controls, limits and frozen runner commands. Backend workers
+must use the frozen archives instead of rebuilding their own browser/package.

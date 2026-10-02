@@ -1,0 +1,201 @@
+# Image sending and submitted-input recovery
+
+Spec #3096 owns this app contract. The public root exports the TypeBox schemas,
+DTO types, `validateUpload`, `validateRecovery`, `mediaUrl`, `UPLOAD_PATH`, and
+`MAX_UPLOAD_BODY_BYTES`; `/server` exports `imageHttp` and `ImageBackend`. Both
+native adapters consume the same compiled package and browser archive.
+
+## Public DTOs and endpoints
+
+`view.capabilities.images` is `false` when storage is unavailable, otherwise:
+`{ mediaTypes, maxImagesPerMessage, maxImageBytes, maxMessageImageBytes }`.
+Allowed types are PNG, JPEG, WebP and GIF. Pi advertises six images, 8,000,000
+original bytes each and 24,000,000 original bytes per operation; CFL advertises
+five, 5,242,880 and 20,971,520. Public maxima permit both; hosts enforce their own
+advertised limits and native storage constraints. Invalid selection leaves text
+usable. Browser preparation preserves original bytes and creates JPEG preview
+(480px maximum side / 160,000 bytes) and model (1200px / 320,000 bytes) variants.
+
+`POST /api/chat/images`, JSON, same-origin credentials and Origin header:
+
+```ts
+{
+  sessionId: string;
+  operationId: UUID;
+  images: Array<{
+    id: string; order: number; name: string; mediaType: ImageMediaType;
+    original: string; preview: string; model: string; // base64 only here
+  }>;
+}
+// Result
+{ sessionId: string; operationId: UUID; images: ImageRef[] }
+// ImageRef (all fields required)
+{ attachmentId: string; name: string; mediaType: ImageMediaType;
+  availability: "available" | "missing" }
+```
+
+IDs use `[A-Za-z0-9_-]`, at most 100 characters; filenames at most 200; count at
+most six; order is contiguous from zero and IDs unique. Upload JSON has a
+36,000,000 UTF-8 byte ceiling, including streamed/chunked requests. Strict base64,
+decoded byte bounds and PNG/JPEG/WebP/GIF signatures are checked by the common
+validator. Native adapters retain their existing storage checks, including CFL's
+160-character filename bound; no additional decoder or image-processing dependency
+is required.
+Use `validateUpload`, `validateSubmission` and `validateRecovery`, not schemas alone. The host can enforce smaller native
+request bounds, provided its advertised supported images can fit.
+
+`GET /api/chat/media/{attachmentId}/{original|preview|model}` returns authorized
+image bytes, with a finite 32 MiB original read ceiling independent of intake
+limits and unchanged 160,000/320,000-byte preview/model ceilings, `no-store`, `nosniff`, or a visible 404 for missing bytes. No arbitrary
+URLs, local paths or image data enter WS history/localStorage. Media ownership is
+resolved from the authenticated current owner/session, independently of opaque ID
+knowledge. `imageHttp` handles parsing/bounds/origin/response validation; the
+injected authorization function must authenticate every request, and the backend
+must verify attachment ownership and immutable operation bindings. Revalidate
+owner/session at the durable storage boundary if authentication changes while
+reading a request. GET can remain available for previously stored media when new
+uploads are disabled; custom native routing may implement that distinction.
+
+`submit` is `{ operationId: UUID, text: string, images?: ImageRef[],
+replacementSourceIds?: string[] }`. Text is at most 16,000 UTF-16 units; empty text
+is allowed with images. Empty text plus empty images is rejected. Ordered references and replacement
+IDs are part of immutable identity. Upload success never admits input. Same ID and
+same full payload reconciles without execution; changed payload conflicts. The
+native adapter rejects refs not uploaded under this owner/session/operation and
+performs eligibility checking plus replacement atomically with admission. It must
+check current durable state, the portable WS host validates payloads and correlated receipts, while the native adapter owns atomic eligibility.
+
+`view.recovery` is a bounded array (at most 20) of:
+
+```ts
+{ sourceId: string; operationId: UUID; text: string; images: ImageRef[];
+  state: "rejected" | "unconsumed" | "uncertain";
+  replacementEligible: boolean }
+```
+
+This is authoritative native submitted input, including native frontend inputs.
+Only verified rejected/unconsumed sources may be replacement eligible; uncertain
+sources never are. Use `validateRecovery`. Consumed/replaced sources disappear
+from native recovery and cannot reappear on reconnect. Receipts retain existing
+accepted/consumed/unconsumed/uncertain/missing/rejected semantics; socket loss or
+turn completion never proves non-consumption. Recent/paginated `messages.images`
+projects only actual native message membership, including completed agent images;
+workspace files and staged uploads alone are not chat or album membership.
+
+## User behavior
+
+Choose files, paste images or use the existing native photo hook. Real 96px
+thumbnails appear above text; remove targets are 44px. Images can be sent alone.
+Preparation/upload failure returns editable text and Files without admission.
+Once submitted, bounded reference-only pending metadata is saved per session;
+storage failure is visible. Reconnect looks up exact operations. The existing
+explicit missing-operation retry retains its exact payload and identity; uncertain
+input is never automatically executed.
+
+Recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
+current text/images are present; it cannot overwrite new edits. Original bytes are
+rehydrated over authorized HTTP. Missing originals leave editable text and block
+send until the user explicitly removes missing images or selects replacements.
+Edited recovery sends with a new operation ID and verified replacement source ID.
+Native state is checked again before send. Dismiss hides a recovery offer for this
+page/session only; it does not consume or delete native input. Clearing all restored
+text/images returns its offer. Explicitly discarding restored input dismisses that
+page-local offer and exposes the next source without changing native consumption. Unsent composer
+persistence and generic attachments are outside this feature.
+
+## Local verification and immutable handoff
+
+```sh
+# Retained product HEAD ebde803: already completed; not runner-only steps.
+bun run check
+bun run lint
+bun run format:check
+bun run test
+bun run build
+bun run test:browser
+bun run test:panels-browser
+bun run test:images-browser
+# Current runner-only checks (no product builds):
+bun run lint && bun run format:check && node tests/route-lifecycle-browser.mjs
+# Runner-only revision: commit verified runner source; do not rebuild browser/contracts:
+bun run freeze:images
+```
+
+The runner-only revision writes `.scratch/image-send-recovery/artifacts-review2`.
+It copies the Owner-reviewed browser/contracts archives and manifests byte-identically
+from `artifacts-review1`, retaining product source HEAD `ebde803fb955349c8bd05de259f13ca14b63f668`.
+Only the reusable acceptance archive is revised; `identity.json` records its separate
+committed `acceptanceSourceHead`, per-component source identities and hashes.
+The runner is Owner-approved; native acceptance remains pending.
+Previous archives/evidence are retained. Existing output identity is never overwritten;
+both backend workers consume the same Owner-approved runner and reviewed product bytes,
+without rebuilding or refreezing browser/contracts. Verify identity archive hashes, then extracted files:
+
+```sh
+mkdir -p browser contracts acceptance
+# Substitute the received archive directory; use test-owned destination folders.
+tar -xzf ARTIFACTS/lamplit-web-images.tgz -C browser
+tar -xzf ARTIFACTS/lamplit-contracts-images.tgz -C contracts
+tar -xzf ARTIFACTS/lamplit-acceptance-images.tgz -C acceptance
+(cd browser && shasum -a 256 -c ../ARTIFACTS/browser.sha256)
+(cd contracts/package && shasum -a 256 -c ../../ARTIFACTS/contracts.sha256)
+(cd acceptance && shasum -a 256 -c ../ARTIFACTS/acceptance.sha256)
+(cd contracts/package && bun install)
+(cd acceptance && bun install)
+```
+
+Installing runtime dependencies in `contracts/package` is required for Bun local
+file dependencies: compiled modules resolve dependencies from that real directory.
+This installs dependencies only; it does not build or refreeze any artifact.
+
+Native hosts serve extracted `browser` at `/slice/`, mount authenticated image
+HTTP and shared WS, and install `contracts/package`. Start their real workerd/DO
+or Node host on an isolated port with test-owned data/auth and fake model/app-server.
+Keep four panels and voice configured using the existing acceptance recipes.
+Run the extracted runner with Chrome installed:
+
+```sh
+cd acceptance
+APP_ACCEPTANCE_URL=http://127.0.0.1:PORT/slice/ \
+APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:CONTROL_PORT/__test/image-send-recovery \
+APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence \
+  bun images-browser.mjs
+# Focused local real-Playwright route lifecycle regression:
+node route-lifecycle-browser.mjs
+# Optional fixture-only basic authentication:
+# APP_ACCEPTANCE_USERNAME=... APP_ACCEPTANCE_PASSWORD=...
+```
+
+The control endpoint is **test infrastructure only**, never production routing.
+Implement it against native storage/execution, not an alternative mock chat adapter.
+It accepts JSON POST actions matching `tests/images-fixture.ts`:
+
+| Action                                                  | Required native fixture effect                                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `reset`                                                 | Clear only this fixture's session/media/receipts; reset fake execution count; expose native limits.             |
+| `mode`, `state: consumed/unconsumed/rejected/uncertain` | Configure fake native admission/consumption outcome for the next inputs. Do not infer state from WS disconnect. |
+| `uploadFailure`, `enabled`                              | Fail/restore native storage before admission.                                                                   |
+| `disabled`, `enabled`                                   | Advertise unavailable/available image intake, retaining text.                                                   |
+| `complete`                                              | Complete current fake turn with text `完整图片回复` and native-generated image membership.                      |
+| `history`                                               | Seed 32 complete text replies after current image messages, forcing pagination.                                 |
+| `nativeRecovery`                                        | Seed verified native-origin unconsumed input `原生恢复输入` and `native.png` original.                          |
+| `missing`                                               | Remove originals referenced by current fixture recovery only.                                                   |
+| `consume`                                               | Mark fixture recovery consumed, update delivery/receipts, clear recovery durably.                               |
+| `state`                                                 | Read state without mutation.                                                                                    |
+
+Every control result returns `{ executions, submissions, recovery, messages, limits,
+album }`; submissions are actual admitted immutable public DTOs, album includes
+actual native membership and provenance. Execution counts must represent native
+fake execution rather than upload/RPC counts. The runner requests anonymous media
+without owner credentials and requires denial. Native authenticated session IDs
+need not equal the local fixture's ID: the runner captures real upload identity.
+Numeric intake limits are read from native capabilities; assertions for safe
+identity, ownership, recovery, history, replacement and no replay are fixed.
+The existing text/voice/panel runners remain additional regression checks. Actual
+Pi and CFL reports are the Owner's joint acceptance/merge gate; app local completion
+does not claim actual-host acceptance. Keep the app PR open; no deployment.
+
+The delayed-media and delayed-upload probes release their held requests and await
+`page.unrouteAll({ behavior: "wait" })` before advancing. Ordinary `unroute` does
+not await handlers and can race a later fulfillment. No route exceptions are
+suppressed; a genuine handler failure still fails the acceptance process.

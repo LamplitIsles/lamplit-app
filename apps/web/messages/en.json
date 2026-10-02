@@ -268,5 +268,15 @@
   "alarm.emptyHint": "Ask for a reminder in the conversation.",
   "alarm.intervalSeconds": "Every {seconds} seconds",
   "diary.missing": "This diary entry is missing.",
-  "gallery.unavailable": "Image unavailable"
+  "gallery.unavailable": "Image unavailable",
+  "recovery.uncertain": "Delivery is uncertain. Inspect the conversation before sending again.",
+  "recovery.available": "An unfinished input is available to restore.",
+  "recovery.restore": "Restore to edit",
+  "recovery.discard": "Dismiss",
+  "recovery.busy": "Send or clear the current input first.",
+  "recovery.missing": "Some original images are missing. Edit the text, then select images again or explicitly remove the missing images.",
+  "recovery.removeMissing": "Remove missing images",
+  "recovery.inspect": "Inspect submitted input",
+  "recovery.restored": "Restored. Edit and send when ready.",
+  "recovery.discardRestored": "Discard restored input"
 }

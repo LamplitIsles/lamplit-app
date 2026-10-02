@@ -29,7 +29,9 @@ export interface CompanionActions {
     text: string,
     images: readonly CompanionImageDraft[],
     onRetire?: (retirement: PendingSubmissionRetirement) => void,
+    replacementSourceIds?: readonly string[],
   ) => Promise<void>;
+  dismissRecovery?: (key: string) => void;
   readPanel?: <K extends keyof PanelBackend>(
     method: K,
     input: Omit<Parameters<PanelBackend[K]>[0], "sessionId">,
@@ -60,6 +62,8 @@ export interface CompanionRecoveredDraft {
   key: string;
   sourceIds: readonly string[];
   input: string;
+  state: "rejected" | "unconsumed" | "uncertain";
+  replacementEligible: boolean;
   images: readonly { id: string; name: string; url: string }[];
 }
 

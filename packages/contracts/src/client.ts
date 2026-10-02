@@ -26,6 +26,8 @@ import {
   PageSchema,
   ReceiptSchema,
   validate,
+  validateRecovery,
+  validateSubmission,
   type ChatView,
 } from "./index.ts";
 import { decodeFrame, sendFrame } from "./wire.ts";
@@ -214,7 +216,9 @@ export async function openChat(
     await binding.ready(BACKGROUND_CONTEXT);
     unsubscribe = service.view.subscribe((value) => {
       try {
-        changed(validate(ViewSchema, value));
+        const view = validate(ViewSchema, value);
+        view.recovery.forEach(validateRecovery);
+        changed(view);
       } catch {
         socket.close(1002, "Invalid view");
         finish();
@@ -244,16 +248,22 @@ export async function openChat(
         );
       },
       async submit(input: import("./index.ts").Submission) {
-        return validate(
+        const receipt = validate(
           ReceiptSchema,
-          await service.submit(input, BACKGROUND_CONTEXT),
+          await service.submit(validateSubmission(input), BACKGROUND_CONTEXT),
         );
+        if (receipt.operationId !== input.operationId)
+          throw new Error("Wrong operation receipt");
+        return receipt;
       },
       async lookup(id: string) {
-        return validate(
+        const receipt = validate(
           ReceiptSchema,
           await service.lookup(id, BACKGROUND_CONTEXT),
         );
+        if (receipt.operationId !== id)
+          throw new Error("Wrong operation receipt");
+        return receipt;
       },
       async stop(id: string) {
         const v = await service.stop(id, BACKGROUND_CONTEXT);

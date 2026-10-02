@@ -268,5 +268,15 @@
   "alarm.emptyHint": "可以在聊天中请她设一个提醒。",
   "alarm.intervalSeconds": "每 {seconds} 秒",
   "diary.missing": "这篇日记已不存在。",
-  "gallery.unavailable": "图片不可用"
+  "gallery.unavailable": "图片不可用",
+  "recovery.uncertain": "发送结果待确认，请检查聊天记录。",
+  "recovery.available": "有未完成的输入可恢复。",
+  "recovery.restore": "恢复编辑",
+  "recovery.discard": "忽略",
+  "recovery.busy": "请先发送或清空当前输入。",
+  "recovery.missing": "部分原图无法恢复。文字可编辑；发送前请重新选择图片或明确移除缺失图片。",
+  "recovery.removeMissing": "移除缺失图片",
+  "recovery.inspect": "查看提交内容",
+  "recovery.restored": "已恢复，可编辑后发送。",
+  "recovery.discardRestored": "丢弃恢复的输入"
 }

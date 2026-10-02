@@ -2,17 +2,17 @@
 
 The browser opens a same-origin WebSocket at `/api/chat/socket`. A connection is
 an observation/control channel; closing it never means stopping engine execution.
-Static assets and future media continue to use HTTP.
+Static assets and media continue to use HTTP.
 
 `lamplit.chat.v1` is a Chord singleton with:
 
-| Member                          | Meaning                                                                                 |
-| ------------------------------- | --------------------------------------------------------------------------------------- |
-| `view`                          | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
-| `history(before)`               | Previous page of completed messages and user submissions                                |
-| `submit({ operationId, text })` | New input; the engine adapter starts or steers its native conversation                  |
-| `lookup(operationId)`           | Reconcile admission after lost acknowledgement                                          |
-| `stop(turnId)`                  | Stop this specific turn; a stale turn returns `stopped: false`                          |
+| Member                                                          | Meaning                                                                                 |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `view`                                                          | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
+| `history(before)`                                               | Previous page of completed messages and user submissions                                |
+| `submit({ operationId, text, images?, replacementSourceIds? })` | New input; the engine adapter starts or steers its native conversation                  |
+| `lookup(operationId)`                                           | Reconcile admission after lost acknowledgement                                          |
+| `stop(turnId)`                                                  | Stop this specific turn; a stale turn returns `stopped: false`                          |
 
 Chord method contracts include an invocation context as their last parameter.
 The browser helper supplies it. Socket cancellation is not passed into execution;
@@ -118,3 +118,12 @@ The same service now includes six bounded, validated read methods; see
 adapter responsibilities and frozen acceptance commands. Reminder provenance is
 persisted in the optional message `source` field. No panel reads use CFL-only JSON
 endpoints, and image bytes remain on authenticated same-origin HTTP.
+
+## Images and submitted-input recovery
+
+The public [image contract](image-send-recovery.md) defines bounded authenticated
+HTTP upload/media, original plus JPEG variants, `messages.images`, host-advertised
+image limits and authoritative `view.recovery`. Submission identity includes ordered
+references and explicit replacement source IDs. Upload is not admission; recovery
+eligibility is native authority and uncertain delivery cannot authorize replacement.
+Image data is never replicated over WS or stored in pending metadata.
