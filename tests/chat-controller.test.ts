@@ -1,3 +1,4 @@
+import { panelsFixture } from "./panels-fixture.ts";
 import { expect, test } from "bun:test";
 import { ChatController } from "../apps/web/src/lib/chat-controller.ts";
 import {
@@ -10,7 +11,7 @@ import {
 } from "../packages/contracts/src/server.ts";
 import { eventually } from "./chat.test.ts";
 
-test("moving live window retains observed history and explicit unconsumed sends", async () => {
+test("moving live window retains history/unconsumed sends and rejects previous-session panel reads", async () => {
   const message = (id: number): ChatMessage => ({
     id: String(id),
     role: "user",
@@ -23,7 +24,9 @@ test("moving live window retains observed history and explicit unconsumed sends"
   let sessionId = "history-fixture";
   let active: string | null = null;
   let stopped = false;
+  const panels = panelsFixture();
   const backend: ChatBackend = {
+    ...panels.backend,
     async read() {
       return {
         version: 1,
@@ -136,11 +139,35 @@ test("moving live window retains observed history and explicit unconsumed sends"
     expect(
       JSON.parse(saved.get("lamplit.pending:history-fixture")!)[0].state,
     ).toBe("unconsumed");
+    let release!: () => void;
+    panels.delays.set(
+      "relationship",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    panels.delays.set("diaryList", panels.delays.get("relationship")!);
+    const staleRelationship = controller.refreshRelationship(true);
+    const staleDiary = controller.readPanel("diaryList", { cursor: null });
+    // Capture the rejection immediately; no test-owned request may leak an unhandled rejection.
+    const staleDiaryResult = staleDiary.then(
+      () => "resolved",
+      () => "stale",
+    );
     sessionId = "different-fixture";
     live = [message(100)];
     host.close();
     host = await createChatHost(backend);
     await eventually(() => controller.view?.sessionId === sessionId);
+    expect(controller.relationship).toBeUndefined();
+    expect(controller.relationshipHistory.records).toEqual([]);
+    release();
+    panels.delays.clear();
+    await staleRelationship;
+    expect(await staleDiaryResult).toBe("stale");
+    await controller.refreshRelationship(true);
+    expect(controller.relationshipHistory.scope).toBe("fixture-relationship");
+    expect(controller.relationship?.current.affinity).toBe(65);
     expect(controller.older).toEqual([]);
     expect(controller.pending).toEqual([]);
   } finally {

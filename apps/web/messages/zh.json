@@ -87,7 +87,7 @@
   "drawer.diary": "日记",
   "drawer.images": "相册",
   "drawer.alarms": "自动唤醒",
-  "alarm.source": "自设提醒",
+  "alarm.source": "应用提醒",
   "alarm.once": "一次性",
   "alarm.interval": "每 {minutes} 分钟",
   "alarm.daily": "每天 {time} · {zone}",
@@ -265,5 +265,8 @@
   "voice.ready": "识别结果已加入草稿。",
   "alarm.intro": "到点后，会在这段聊天里继续。",
   "alarm.next": "接下来",
-  "alarm.emptyHint": "可以在聊天中请她设一个提醒。"
+  "alarm.emptyHint": "可以在聊天中请她设一个提醒。",
+  "alarm.intervalSeconds": "每 {seconds} 秒",
+  "diary.missing": "这篇日记已不存在。",
+  "gallery.unavailable": "图片不可用"
 }

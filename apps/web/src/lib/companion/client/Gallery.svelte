@@ -3,6 +3,7 @@
   import { f7, f7ready } from "framework7-svelte";
   import type { VirtualList } from "framework7/components/virtual-list";
   import type { GalleryRow, GalleryImage } from "./gallery.ts";
+  export let unavailableLabel = "Image unavailable";
   export let rows: GalleryRow[];
   export let hasMore: boolean;
   export let loading: boolean;
@@ -80,12 +81,14 @@
                 aria-label={image.filename}
                 disabled={!image.available}
                 on:click={() => pick(image)}
-                ><img
-                  src={image.url}
-                  alt={image.filename}
-                  loading="lazy"
-                  decoding="async"
-                /></button
+                >{#if image.available}<img
+                    src={image.url}
+                    alt={image.filename}
+                    loading="lazy"
+                    decoding="async"
+                  />{:else}<span
+                    >{image.filename}<br /><span>{unavailableLabel}</span></span
+                  >{/if}</button
               >{/each}
           </div>{/if}
       {/each}

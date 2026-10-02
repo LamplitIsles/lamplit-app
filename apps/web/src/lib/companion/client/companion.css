@@ -713,7 +713,11 @@
   object-fit: cover;
 }
 .companion-gallery-tile:disabled {
-  opacity: 0.4;
+  opacity: 1;
+  color: var(--f7-text-color);
+  cursor: default;
+  padding: 8px;
+  overflow-wrap: anywhere;
 }
 .companion-voice {
   display: flex;

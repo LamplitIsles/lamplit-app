@@ -110,3 +110,11 @@ remains an editable draft until explicit send. Cancel, session change, disposal,
 disconnect and a changed draft invalidate old results. Chat send still uses its
 16,000 UTF-16-unit trimmed-text limit; a longer transcript remains editable, with
 send disabled until shortened. No automatic send, interim preview or reply TTS.
+
+## Companion panels
+
+The same service now includes six bounded, validated read methods; see
+[companion-panels](companion-panels.md) for exact request/response fields, native
+adapter responsibilities and frozen acceptance commands. Reminder provenance is
+persisted in the optional message `source` field. No panel reads use CFL-only JSON
+endpoints, and image bytes remain on authenticated same-origin HTTP.

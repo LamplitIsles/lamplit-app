@@ -127,10 +127,10 @@ capability at 390px and 1280px. Worklet tests check PCM conversion/downmix, part
 flush ordering and the five-minute sample cap. No test reads live host state or
 uses provider credentials.
 
-**Voice cross-host acceptance is gated, not passed:** spec #3044 (Pi/workerd) and
-#3045 (CFL/Node) consume this compiled contract. After both backend implementations
-complete, Owner verifies the identical browser build against both real isolated
-hosts with fake speech, including finalized sentence ordering/replacement, cleanup
-and disabled settings, before any voice PR merges. Baseline text acceptance above
-is not voice acceptance. These PRs do not deploy, replace existing frontends or
-restart production services.
+The text/voice baseline has passed same-build acceptance against isolated real
+Pi/workerd and CFL/Node hosts with fake providers. The companion-panels batch adds
+six required `ChatBackend` read methods and optional persisted message provenance.
+See [companion panels](companion-panels.md) for the authoritative public contract,
+frozen compiled-package handoff, native fixture requirements and actual-host
+commands. Its same-artifact two-backend acceptance remains pending the Owner gate.
+No deployment or production service restart is part of that acceptance.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { affinityStage } from "./lib/companion/domain.ts";
   import { onMount } from "svelte";
   import { f7, f7ready } from "framework7-svelte";
   import Companion from "./lib/companion/client/Companion.svelte";
@@ -34,6 +35,13 @@
   let systemDark = $state(preferences.systemDark);
   const scheme = $derived(resolveScheme(appearance, systemDark));
   const t = $derived(companionTranslate(language));
+  const stageKeys = {
+    疏离: "affinity.distant",
+    生疏: "affinity.unfamiliar",
+    熟悉: "affinity.familiar",
+    亲近: "affinity.close",
+    深厚: "affinity.deep",
+  } as const;
   $effect(() => {
     document.documentElement.lang = language === "zh" ? "zh-Hans" : "en";
     const dark = scheme === "dark";
@@ -50,6 +58,11 @@
           before: controller.before,
           loadingOlder: controller.loadingOlder,
           error: controller.error,
+          relationship: controller.relationship,
+          history: controller.relationshipHistory,
+          relationshipStatus: controller.relationshipStatus,
+          loadingEarlier: controller.loadingRelationshipHistory,
+          panelRevision: controller.panelRevision,
         }
       : undefined;
   });
@@ -61,7 +74,8 @@
       (m) =>
         ({
           id: m.id,
-          side: m.role === "user" ? "outgoing" : "incoming",
+          alarm: m.source?.kind === "reminder",
+          side: m.role === "user" && !m.source ? "outgoing" : "incoming",
           time: m.createdAt,
           pending:
             m.role === "user" && !!m.delivery && m.delivery !== "consumed",
@@ -80,7 +94,7 @@
               id: m.id,
               messageKey: m.id,
               kind: m.role === "notice" ? "notice" : "text",
-              side: m.role === "user" ? "outgoing" : "incoming",
+              side: m.role === "user" && !m.source ? "outgoing" : "incoming",
               text: m.text,
             },
           ],
@@ -137,6 +151,10 @@
         throw new CompanionPreControllerError("请先核对尚未确认的消息。");
       await controller.send(text, () => retire?.({ reason: "observed" }));
     },
+    readPanel: (method, input) => controller.readPanel(method, input),
+    refreshRelationship: (history) => controller.refreshRelationship(history),
+    retryHistory: () => void controller.refreshRelationship(true),
+    loadEarlierHistory: () => controller.loadRelationshipHistory(),
     stop: () => controller.stop(),
     loadOlder: () => controller.loadOlder(),
   };
@@ -182,6 +200,14 @@
   locale={language}
   {appearance}
   chatOnly
+  panelRevision={chatState?.panelRevision ?? 0}
+  history={{
+    status: chatState?.relationshipStatus ?? "loading",
+    records: chatState?.history.records ?? [],
+    hasEarlier: !!chatState?.history.nextCursor,
+    predecessor: chatState?.history.predecessor ?? undefined,
+    loadingEarlier: chatState?.loadingEarlier,
+  }}
   onLanguageChange={(value) => {
     language = value;
     writePreference(LANGUAGE_STORAGE_KEY, value);
@@ -199,13 +225,23 @@
     companionName: chatState?.view?.name ?? "Lamplit",
     userName: "你",
     preferredAddress: "你",
-    signature: "",
-    moodLabel: "",
-    mood: "neutral",
+    signature: chatState?.relationship?.current.signature ?? t("loading"),
+    moodLabel: chatState?.relationship
+      ? t(`mood.${chatState.relationship.current.mood}`)
+      : t(
+          chatState?.relationshipStatus === "error"
+            ? "relationship.failed"
+            : "loading",
+        ),
+    mood: chatState?.relationship?.current.mood ?? "neutral",
+    moodNote: chatState?.relationship?.current.note,
+    affinity: chatState?.relationship?.current.affinity,
+    affinityStage: chatState?.relationship
+      ? t(stageKeys[affinityStage(chatState.relationship.current.affinity)])
+      : undefined,
   }}
   workspaceReadiness={chatState?.view ? "ready" : "loading"}
   sessionReadiness={chatState?.view ? "ready" : "loading"}
-  relationshipReadiness="ready"
 />
 {#if chatState?.pending.some((p) => p.state === "missing")}
   <div class="pending-retry">

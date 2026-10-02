@@ -1,4 +1,9 @@
 import {
+  panelMethods,
+  validatePanelResult,
+  type PanelBackend,
+} from "./panels.ts";
+import {
   RemoteServiceProvider,
   replicatedState,
   createServiceStateEncoder,
@@ -23,7 +28,7 @@ import {
 import { decodeFrame, readCall, type WireSocket } from "./wire.ts";
 
 /** Engine adapters own durable admission and execution. Socket disposal never cancels them. */
-export interface ChatBackend {
+export interface ChatBackend extends PanelBackend {
   read(): Promise<ChatView>;
   history(before: string): Promise<HistoryPage>;
   submit(input: Submission): Promise<Receipt>;
@@ -64,7 +69,24 @@ export async function createChatHost(
     })();
     return refreshTask;
   };
+  const panels = Object.fromEntries(
+    Object.entries(panelMethods).map(([method, schemas]) => [
+      method,
+      async (input: unknown) => {
+        const read = validate(schemas[0], input);
+        if (read.sessionId !== view.value.sessionId)
+          throw new Error("Wrong session");
+        const result = await (
+          backend[method as keyof PanelBackend] as (
+            input: unknown,
+          ) => Promise<unknown>
+        )(read);
+        return validatePanelResult(method as keyof PanelBackend, result);
+      },
+    ]),
+  ) as unknown as PanelBackend;
   provider.provide(Chat, {
+    ...panels,
     view,
     async history(before: string) {
       return validate(PageSchema, await backend.history(validateId(before)));
@@ -184,7 +206,13 @@ export async function createChatHost(
           if (
             call.serviceId !== Chat.id ||
             call.instance ||
-            !["history", "submit", "lookup", "stop"].includes(call.member) ||
+            ![
+              "history",
+              "submit",
+              "lookup",
+              "stop",
+              ...Object.keys(panelMethods),
+            ].includes(call.member) ||
             call.args.length !== 1
           )
             throw new Error("Invalid method");

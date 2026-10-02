@@ -87,7 +87,7 @@
   "drawer.diary": "Diary",
   "drawer.images": "Album",
   "drawer.alarms": "Auto wake",
-  "alarm.source": "Self-set alarm",
+  "alarm.source": "App reminder",
   "alarm.once": "One time",
   "alarm.interval": "Every {minutes} minutes",
   "alarm.daily": "Daily at {time} · {zone}",
@@ -265,5 +265,8 @@
   "voice.ready": "Transcript added to your draft.",
   "alarm.intro": "When it is time, this conversation continues here.",
   "alarm.next": "Up next",
-  "alarm.emptyHint": "Ask for a reminder in the conversation."
+  "alarm.emptyHint": "Ask for a reminder in the conversation.",
+  "alarm.intervalSeconds": "Every {seconds} seconds",
+  "diary.missing": "This diary entry is missing.",
+  "gallery.unavailable": "Image unavailable"
 }

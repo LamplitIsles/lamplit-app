@@ -31,3 +31,10 @@ That source is Apache-2.0, covered by this repository's retained Apache-2.0 lice
 The adaptation uses the shared public contracts and the existing Framework7
 composer instead of the imported CFL batch MediaRecorder/transcription path.
 No provider keys, recordings, transcripts or runtime state were imported.
+
+The companion-panels adaptation connects the imported relationship history, diary,
+gallery, reminder drawer and native image-saving flow to app-owned public RPC
+actions. It removes CFL-only JSON reads and relation readiness as a chat gate,
+retains the imported visual language, and fixes Framework7 browser download
+routing and signed affinity changes. No new upstream source was imported; the
+source commits and license above remain the attribution authority.

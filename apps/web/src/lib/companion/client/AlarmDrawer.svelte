@@ -25,7 +25,12 @@
     const schedule = alarm.schedule;
     if (schedule.kind === "once") return t("alarm.once");
     if (schedule.kind === "interval")
-      return t("alarm.interval", { minutes: schedule.everyMinutes });
+      return (
+        t("alarm.intervalSeconds", { seconds: schedule.everySeconds }) +
+        (schedule.anchor === undefined
+          ? ""
+          : ` · ${new Date(schedule.anchor).toLocaleString(language)}`)
+      );
     const time = `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
     if (schedule.kind === "daily")
       return t("alarm.daily", { time, zone: schedule.timeZone });
@@ -41,6 +46,7 @@
   <div class="companion-alarms-heading">
     <h3>{t("drawer.alarms")}</h3>
     <Button
+      type="button"
       round
       class="companion-alarm-refresh"
       disabled={loading}
@@ -59,7 +65,7 @@
     <Block class="companion-alarm-empty" role="alert"
       ><CircleAlert size={30} aria-hidden="true" />
       <h4>{t("alarm.failed")}</h4>
-      <Button tonal onClick={refresh}>{t("retry")}</Button></Block
+      <Button type="button" tonal onClick={refresh}>{t("retry")}</Button></Block
     >
   {:else if !alarms.length}
     <Block class="companion-alarm-empty"
@@ -73,7 +79,9 @@
       {#each alarms as alarm (alarm.id)}
         <ListItem
           accordionItem
-          title={scheduleLabel(alarm)}
+          title={alarm.title
+            ? `${alarm.title} · ${scheduleLabel(alarm)}`
+            : scheduleLabel(alarm)}
           text={alarm.message}
         >
           {#snippet media()}

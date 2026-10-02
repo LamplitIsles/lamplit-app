@@ -14,7 +14,9 @@
     "test:browser": "bun tests/browser.mjs && bun tests/voice-browser.mjs",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "test:panels-browser": "bun tests/panels-browser.mjs",
+    "freeze:panels": "bun tests/freeze-panels.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261002.1",

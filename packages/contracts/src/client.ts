@@ -1,4 +1,9 @@
 import {
+  panelMethods,
+  validatePanelResult,
+  type PanelBackend,
+} from "./panels.ts";
+import {
   createRemoteServiceBinding,
   createServiceCatalogueCall,
   createServiceSubscribeCall,
@@ -74,7 +79,6 @@ export async function openChat(
       if (closed) return reject(new Error("Offline"));
       const id = String(++sequence);
       const timer = setTimeout(() => {
-        socket.close();
         reject(new Error("Request timed out"));
         pending.delete(id);
       }, 30000);
@@ -216,7 +220,23 @@ export async function openChat(
         finish();
       }
     });
+    const panels = Object.fromEntries(
+      Object.entries(panelMethods).map(([method, schemas]) => [
+        method,
+        async (input: unknown) => {
+          const read = validate(schemas[0], input);
+          const result = await (
+            service[method as keyof PanelBackend] as (
+              input: unknown,
+              context: Context,
+            ) => Promise<unknown>
+          )(read, BACKGROUND_CONTEXT);
+          return validatePanelResult(method as keyof PanelBackend, result);
+        },
+      ]),
+    ) as unknown as PanelBackend;
     const api = {
+      ...panels,
       async history(before: string) {
         return validate(
           PageSchema,

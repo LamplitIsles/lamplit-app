@@ -16,6 +16,8 @@ export async function saveImage(url: string, filename: string): Promise<void> {
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = objectUrl;
+    // Framework7 must let the browser download the authenticated original bytes.
+    link.className = "external";
     link.download = /\.[a-z\d]+$/i.test(name)
       ? name
       : `${name}.${blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png"}`;

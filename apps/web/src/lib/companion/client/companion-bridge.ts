@@ -1,3 +1,4 @@
+import type { PanelBackend } from "@lamplit/contracts";
 import type { CompanionTranslate } from "./locale.js";
 import type { CompanionProjection } from "../projection.js";
 import type {
@@ -29,6 +30,11 @@ export interface CompanionActions {
     images: readonly CompanionImageDraft[],
     onRetire?: (retirement: PendingSubmissionRetirement) => void,
   ) => Promise<void>;
+  readPanel?: <K extends keyof PanelBackend>(
+    method: K,
+    input: Omit<Parameters<PanelBackend[K]>[0], "sessionId">,
+  ) => Promise<Awaited<ReturnType<PanelBackend[K]>>>;
+  refreshRelationship?: (history?: boolean) => Promise<void>;
   stop?: () => Promise<void>;
   loadOlder?: () => Promise<void>;
   attachmentUrl?: (attachment: unknown) => Promise<string>;
@@ -62,7 +68,7 @@ export interface CompanionHistoryView {
   sourceWorkspaceId?: string;
   records: readonly CompanionStateRecord[];
   hasEarlier: boolean;
-  nextBefore?: number;
+  nextCursor?: string;
   predecessor?: CompanionStateRecord;
   loadingEarlier?: boolean;
 }
@@ -78,7 +84,6 @@ export interface CompanionBridgeProps {
   /** Explicit presentation lifecycle; unknown data remains neutral until settled. */
   workspaceReadiness: CompanionReadiness;
   sessionReadiness: CompanionReadiness;
-  relationshipReadiness: CompanionReadiness;
   /** Browser-only draft images must not cross an active Session switch. */
   sessionId?: string;
   /** Host-advertised image capability and intake limits; absent means unavailable. */

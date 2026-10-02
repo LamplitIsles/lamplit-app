@@ -1,5 +1,8 @@
-import { Type, type Static, type TSchema } from "typebox";
-import { Value } from "typebox/value";
+import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
+export * from "./panels.ts";
+import { Type, type Static } from "typebox";
+import { validate } from "./validation.ts";
+export { validate } from "./validation.ts";
 import {
   defineService,
   type ReplicatedState,
@@ -40,6 +43,7 @@ export const ReceiptSchema = Type.Object(
 );
 export const MessageSchema = Type.Object(
   {
+    source: Type.Optional(ReminderSourceSchema),
     delivery: Type.Optional(
       Type.Union([
         Type.Literal("pending"),
@@ -94,7 +98,13 @@ export type Receipt = Static<typeof ReceiptSchema>;
 export type ChatMessage = Static<typeof MessageSchema>;
 export type HistoryPage = Static<typeof PageSchema>;
 export type ChatView = Static<typeof ViewSchema>;
-export interface ChatService {
+type PanelService = {
+  [K in keyof PanelBackend]: (
+    input: Parameters<PanelBackend[K]>[0],
+    context: Context,
+  ) => ReturnType<PanelBackend[K]>;
+};
+export interface ChatService extends PanelService {
   view: ReplicatedState<ChatView>;
   history(before: string, context: Context): Promise<HistoryPage>;
   submit(input: Submission, context: Context): Promise<Receipt>;
@@ -102,13 +112,6 @@ export interface ChatService {
   stop(turnId: string, context: Context): Promise<{ stopped: boolean }>;
 }
 export const Chat = defineService<ChatService>("lamplit.chat.v1");
-export function validate<T extends TSchema>(
-  schema: T,
-  value: unknown,
-): Static<T> {
-  if (!Value.Check(schema, value)) throw new Error("Invalid chat payload");
-  return value as Static<T>;
-}
 export function validateId(value: unknown): string {
   return validate(Id, value);
 }

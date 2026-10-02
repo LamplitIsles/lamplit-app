@@ -1,3 +1,4 @@
+import { panelsFixture } from "./panels-fixture.ts";
 import {
   capabilities,
   type ChatMessage,
@@ -22,7 +23,9 @@ export function fixtureBackend() {
     turnId: active,
     error: null,
   });
+  const panels = panelsFixture();
   const backend: ChatBackend = {
+    ...panels.backend,
     async read(): Promise<ChatView> {
       return {
         version: 1,
@@ -83,6 +86,19 @@ export function fixtureBackend() {
   };
   return {
     backend,
+    panels,
+    remind() {
+      messages.push({
+        id: crypto.randomUUID(),
+        role: "user",
+        text: "应用提醒正文",
+        source: { kind: "reminder", reminderId: "once" },
+        createdAt: Date.now(),
+        operationId: null,
+        turnId: null,
+      });
+      changed();
+    },
     get executions() {
       return executions;
     },

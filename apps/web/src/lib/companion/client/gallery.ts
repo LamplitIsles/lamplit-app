@@ -5,6 +5,7 @@ export type GalleryImage = {
   origin: string;
   available: boolean;
   url: string;
+  originalUrl: string;
 };
 export type GalleryGrouping = "day" | "week";
 export type GalleryRow =
@@ -69,7 +70,7 @@ export function galleryRows(
       : weekLabel;
   const grouped = new Map<string, { start: Date; images: GalleryImage[] }>();
   for (const image of [...images].sort(
-    (a, b) => b.created - a.created || b.id.localeCompare(a.id),
+    (a, b) => b.created - a.created || (b.id > a.id ? 1 : b.id < a.id ? -1 : 0),
   )) {
     const start = period(image.created);
     const key = String(start.getTime());

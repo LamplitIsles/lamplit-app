@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshCw from "lucide-svelte/icons/refresh-cw";
   import { visibleViewport, followTimelineResize } from "./viewport.js";
   import { MAX_MESSAGE_LENGTH } from "../../message-input.ts";
   import { normalizeVoiceTranscription } from "./voice-input.js";
@@ -146,18 +147,7 @@
     affinity?: number;
     affinityStage?: string;
   }
-  interface CompanionActions {
-    send: (
-      text: string,
-      images: readonly CompanionImageDraft[],
-      onRetire?: (retirement: PendingSubmissionRetirement) => void,
-    ) => Promise<void>;
-    stop?: () => Promise<void>;
-    loadOlder?: () => Promise<void>;
-    attachmentUrl?: (attachment: unknown) => Promise<string>;
-    loadEarlierHistory?: () => Promise<void>;
-    retryHistory?: () => void;
-  }
+  import type { CompanionActions } from "./companion-bridge.ts";
 
   export let projection: CompanionProjection = {
     items: [],
@@ -182,7 +172,6 @@
   export let actions: CompanionActions = { send: async () => undefined };
   export let workspaceReadiness: CompanionReadiness = "loading";
   export let sessionReadiness: CompanionReadiness = "loading";
-  export let relationshipReadiness: CompanionReadiness = "loading";
   export let sessionId: string | undefined;
   export let imageLimits:
     | import("./contracts.js").ImageAttachmentLimits
@@ -198,6 +187,7 @@
   };
   export let onHistoryOpenChange: ((open: boolean) => void) | undefined;
   export let chatOnly = false;
+  export let panelRevision = 0;
   export let appearance: CompanionAppearance = "system";
   export let onAppearanceChange: (
     appearance: CompanionAppearance,
@@ -243,12 +233,17 @@
   let galleryLoading = false;
   let galleryError = false;
   $: galleryRowsValue = galleryRows(galleryImages, locale, galleryGrouping);
+  let diaryCursor: string | null = null;
+  let diaryMissing = false;
+  let diarySelected: string | undefined;
+  let panelGeneration = 0;
+  let panelSession: string | undefined;
+  let lastPanelRevision = -1;
   let diaryEntries: string[] = [];
   let diaryEntry: { name: string; text: string } | undefined;
   let diaryLoading = false;
   let diaryError = false;
   let diaryTooLarge = false;
-  let diaryRequest: AbortController | undefined;
   interface ImagePreviewTarget {
     id: string;
     alt: string;
@@ -284,6 +279,7 @@
   let lightboxReturnFocus: HTMLElement | undefined;
   let relationshipDrawer: HTMLElement;
   let photoBrowser: PhotoBrowser.PhotoBrowser | undefined;
+  let imageSessionGeneration = 0;
   let preferencesPanel: HTMLElement;
   let searchOpen = false;
 
@@ -334,12 +330,33 @@
 
   $: effectiveWorkspaceReadiness = workspaceReadiness;
   $: effectiveSessionReadiness = sessionReadiness;
-  $: effectiveRelationshipReadiness = relationshipReadiness;
-  $: if (
-    detailOpen &&
-    (effectiveWorkspaceReadiness !== "ready" ||
-      effectiveRelationshipReadiness !== "ready")
-  )
+  $: if (sessionId !== panelSession) {
+    imageSessionGeneration++;
+    dismissMessageMenu();
+    imagePress?.destroy();
+    imagePress = undefined;
+    lightboxReturnFocus = undefined;
+    photoBrowser?.close();
+    lightbox = undefined;
+    lightboxUrl = "";
+    panelSession = sessionId;
+    panelGeneration++;
+    galleryImages = [];
+    galleryCursor = undefined;
+    diaryEntries = [];
+    diaryEntry = undefined;
+    alarms = [];
+    diarySelected = undefined;
+    diaryCursor = null;
+    diaryLoading = false;
+    galleryLoading = false;
+    alarmsLoading = false;
+  }
+  $: if (panelRevision !== lastPanelRevision) {
+    lastPanelRevision = panelRevision;
+    if (detailOpen) refreshVisiblePanel();
+  }
+  $: if (detailOpen && effectiveWorkspaceReadiness !== "ready")
     finishDetailClose(false);
   $: statusText =
     projection.status === "offline"
@@ -1456,16 +1473,15 @@
   }
   function openDetail(): void {
     detailOpen = true;
-    if (drawerTab === "alarms") void openAlarms();
+    refreshVisiblePanel();
     onHistoryOpenChange?.(true);
   }
   function finishDetailClose(_restoreFocus = true): void {
     detailOpen = false;
+    panelGeneration++;
     onHistoryOpenChange?.(false);
   }
   function closeDetail(_restoreFocus = true): void {
-    diaryRequest?.abort();
-    diaryRequest = undefined;
     const panel = relationshipDrawer && f7.panel.get(relationshipDrawer);
     if (panel) panel.close(false);
     else finishDetailClose();
@@ -1474,6 +1490,7 @@
     lightboxReturnFocus = captureReadingFocus(document);
     lightbox = item;
     lightboxUrl = item.previewUrl ?? imageUrls[item.id] ?? "";
+    let photoElement: HTMLElement;
     const params = {
       photos: [{ url: lightboxUrl }],
       type: "popup" as const,
@@ -1490,6 +1507,7 @@
       swiper: { zoom: { enabled: true, maxRatio: 4 }, spaceBetween: 0 },
       on: {
         open() {
+          photoElement = browser.el;
           syncSystemBars(true);
           browser.el.setAttribute("role", "dialog");
           browser.el.setAttribute("aria-modal", "true");
@@ -1499,7 +1517,14 @@
             browser.el.querySelector<HTMLElement>(".popup-close");
           if (closeLink) {
             closeLink.setAttribute("aria-label", t("image.close"));
+            closeLink.setAttribute("role", "button");
             closeLink.tabIndex = 0;
+            closeLink.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                browser.close();
+              }
+            });
             closeLink.focus();
           }
           const image = browser.el.querySelector<HTMLImageElement>(
@@ -1537,7 +1562,7 @@
         closed() {
           dismissMessageMenu();
           syncSystemBars(document.documentElement.classList.contains("dark"));
-          browser.el.removeEventListener("keydown", photoKeydown);
+          photoElement.removeEventListener("keydown", photoKeydown);
           imagePress?.destroy();
           imagePress = undefined;
           photoBrowser = undefined;
@@ -1606,12 +1631,14 @@
   }
   function showImageMenu(url: string, name: string, target: HTMLElement): void {
     if (!url) return;
+    const generation = imageSessionGeneration;
     messageMenu(
       target,
       [
         {
           text: t("image.save"),
           run: async () => {
+            if (generation !== imageSessionGeneration) return;
             try {
               await saveImage(url, name);
               showToast(t("image.saved"));
@@ -1637,91 +1664,122 @@
     await tick();
     if (timeline) timeline.scrollTop += timeline.scrollHeight - previousHeight;
   }
-  function beginDiaryRequest(): AbortController {
-    diaryRequest?.abort();
-    const request = new AbortController();
-    diaryRequest = request;
+  function refreshVisiblePanel(): void {
+    if (drawerTab === "history") {
+      panelGeneration++;
+      void actions.refreshRelationship?.(true);
+    } else if (drawerTab === "diary") {
+      if (diarySelected) void openDiaryEntry(diarySelected);
+      else void openDiary();
+    } else if (drawerTab === "images") void openGallery();
+    else void openAlarms();
+  }
+  function beginPanel(tab: typeof drawerTab, summary = true): number {
+    if (summary) void actions.refreshRelationship?.();
+    drawerTab = tab;
+    return ++panelGeneration;
+  }
+  async function openDiary(append = false): Promise<void> {
+    const generation = beginPanel("diary", !append);
+    diarySelected = undefined;
+    diaryEntry = undefined;
+    diaryMissing = false;
+    diaryTooLarge = false;
     diaryLoading = true;
     diaryError = false;
-    diaryTooLarge = false;
-    return request;
-  }
-  async function openDiary(): Promise<void> {
-    drawerTab = "diary";
-    diaryEntry = undefined;
-    const request = beginDiaryRequest();
+    if (!append) {
+      diaryEntries = [];
+      diaryCursor = null;
+    }
     try {
-      const response = await fetch("/api/diary", { signal: request.signal });
-      if (!response.ok) throw new Error();
-      if (diaryRequest === request)
-        diaryEntries = ((await response.json()) as { entries: string[] })
-          .entries;
-    } catch (error) {
-      if (diaryRequest === request && (error as Error).name !== "AbortError")
-        diaryError = true;
+      if (!actions.readPanel) throw new Error();
+      const page = await actions.readPanel("diaryList", {
+        cursor: append ? diaryCursor : null,
+      });
+      if (generation !== panelGeneration) return;
+      diaryEntries = [...new Set([...diaryEntries, ...page.entries])];
+      diaryCursor = page.nextCursor;
+    } catch {
+      if (generation === panelGeneration) diaryError = true;
     } finally {
-      if (diaryRequest === request) diaryLoading = false;
+      if (generation === panelGeneration) diaryLoading = false;
     }
   }
   async function openAlarms(): Promise<void> {
-    drawerTab = "alarms";
+    const generation = beginPanel("alarms");
     alarmsLoading = true;
     alarmsError = false;
     try {
-      const response = await fetch("/api/alarms");
-      if (!response.ok) throw new Error();
-      alarms = ((await response.json()) as { alarms: AlarmView[] }).alarms;
+      if (!actions.readPanel) throw new Error();
+      const page = await actions.readPanel("reminders", {});
+      if (generation === panelGeneration) alarms = page.reminders;
     } catch {
-      alarmsError = true;
+      if (generation === panelGeneration) alarmsError = true;
     } finally {
-      alarmsLoading = false;
+      if (generation === panelGeneration) alarmsLoading = false;
     }
   }
-  async function openGallery(force = false): Promise<void> {
-    drawerTab = "images";
-    if (galleryLoading || (!force && galleryImages.length)) return;
+  async function openGallery(append = false): Promise<void> {
+    if (append && galleryLoading) return;
+    const generation = beginPanel("images", !append);
     galleryLoading = true;
     galleryError = false;
+    if (!append) {
+      galleryImages = [];
+      galleryCursor = undefined;
+    }
     try {
-      const response = await fetch(
-        `/api/conversation-images?limit=30${galleryCursor ? `&cursor=${encodeURIComponent(galleryCursor)}` : ""}`,
-      );
-      if (!response.ok) throw new Error();
-      const page = (await response.json()) as {
-        images: GalleryImage[];
-        nextCursor?: string;
-      };
-      galleryImages = [...galleryImages, ...page.images];
-      galleryCursor = page.nextCursor;
+      if (!actions.readPanel) throw new Error();
+      const page = await actions.readPanel("album", {
+        cursor: append ? (galleryCursor ?? null) : null,
+      });
+      if (generation !== panelGeneration) return;
+      galleryImages = [
+        ...new Map(
+          [
+            ...galleryImages,
+            ...page.images.map((image) => ({
+              ...image,
+              created: image.createdAt,
+              url: image.previewUrl ?? "",
+              originalUrl: image.originalUrl ?? "",
+            })),
+          ].map((image) => [image.id, image]),
+        ).values(),
+      ];
+      galleryCursor = page.nextCursor ?? undefined;
     } catch {
-      galleryError = true;
+      if (generation === panelGeneration) galleryError = true;
     } finally {
-      galleryLoading = false;
+      if (generation === panelGeneration) galleryLoading = false;
     }
   }
   async function openDiaryEntry(name: string): Promise<void> {
-    const request = beginDiaryRequest();
+    const generation = beginPanel("diary", false);
+    diarySelected = name;
+    diaryEntry = undefined;
+    diaryLoading = true;
+    diaryError = false;
+    diaryMissing = false;
+    diaryTooLarge = false;
     try {
-      const response = await fetch(`/api/diary/${encodeURIComponent(name)}`, {
-        signal: request.signal,
-      });
-      if (response.status === 413) {
-        if (diaryRequest === request) diaryTooLarge = true;
-        return;
-      }
-      if (!response.ok) throw new Error();
-      if (diaryRequest === request) diaryEntry = await response.json();
-    } catch (error) {
-      if (diaryRequest === request && (error as Error).name !== "AbortError")
-        diaryError = true;
+      if (!actions.readPanel) throw new Error();
+      const entry = await actions.readPanel("diaryRead", { name });
+      if (generation !== panelGeneration) return;
+      if (entry.status === "found") diaryEntry = entry;
+      else if (entry.status === "missing") diaryMissing = true;
+      else diaryTooLarge = true;
+    } catch {
+      if (generation === panelGeneration) diaryError = true;
     } finally {
-      if (diaryRequest === request) diaryLoading = false;
+      if (generation === panelGeneration) diaryLoading = false;
     }
   }
 
   onDestroy(() => {
     dismissMessageMenu();
     imagePress?.destroy();
+    panelGeneration++;
     photoBrowser?.destroy();
     for (const el of [
       relationshipDrawer,
@@ -1736,7 +1794,6 @@
     clearWaitingTimers();
     clearContinuityStatusTimer();
     voiceGeneration += 1;
-    diaryRequest?.abort();
     voiceController.dispose();
     for (const audio of document.querySelectorAll<HTMLAudioElement>(
       "#dsh-companion .companion-voice audio",
@@ -1757,7 +1814,7 @@
   {#snippet fixedContent()}
     <Navbar class="companion-header">
       <div>
-        {#if !chatOnly}<button
+        {#if actions.refreshRelationship}<button
             type="button"
             class="button button-tonal button-round companion-history-toggle"
             aria-label={t("relationship.view")}
@@ -1947,7 +2004,7 @@
         </Popover>
       </div>
     </Navbar>
-    {#if effectiveWorkspaceReadiness === "ready" && effectiveRelationshipReadiness === "ready" && effectiveSessionReadiness === "ready" && projection.openState !== "error"}
+    {#if effectiveWorkspaceReadiness === "ready" && effectiveSessionReadiness === "ready" && projection.openState !== "error"}
       <Messagebar
         textareaId="companion-textarea"
         bind:this={messagebarComponent}
@@ -2207,38 +2264,6 @@
             <div class="companion-mood-orb" aria-hidden="true"></div>
             <h1>{t("workspace.failed")}</h1>
             <p>{t("workspace.reconnectHint")}</p>
-            <button
-              class="button button-fill"
-              on:click={() => dispatch("recovery")}>{t("reconnect")}</button
-            >
-          </section>
-        {:else if effectiveRelationshipReadiness === "loading"}
-          <section
-            class="companion-loading-shell"
-            role="status"
-            aria-label={t("loading.label")}
-          >
-            <Preloader class="preloader  " aria-hidden="true" /><span
-              >{t("loading.progress")}</span
-            >
-          </section>
-        {:else if effectiveRelationshipReadiness === "missing"}
-          <section class="companion-recovery" role="alert">
-            <div class="companion-mood-orb" aria-hidden="true"></div>
-            <h1>{t("workspace.empty")}</h1>
-            <p>{t("workspace.chooseHint")}</p>
-            <a
-              class="button button-fill"
-              href="/"
-              aria-label={t("workspace.settingsLabel")}
-              on:click={() => dispatch("recovery")}>{t("settings.open")}</a
-            >
-          </section>
-        {:else if effectiveRelationshipReadiness === "error"}
-          <section class="companion-recovery" role="alert">
-            <div class="companion-mood-orb" aria-hidden="true"></div>
-            <h1>{t("relationship.failed")}</h1>
-            <p>{t("relationship.reconnectHint")}</p>
             <button
               class="button button-fill"
               on:click={() => dispatch("recovery")}>{t("reconnect")}</button
@@ -2661,7 +2686,7 @@
   <Panel
     left
     cover
-    swipe={!chatOnly}
+    swipe={!!actions.refreshRelationship}
     swipeOnlyClose
     opened={detailOpen}
     closeByBackdropClick={false}
@@ -2689,6 +2714,13 @@
       <h2>{identity.companionName}</h2>
       <button
         type="button"
+        class="button button-tonal button-small"
+        aria-label={t("alarm.refresh")}
+        on:click={refreshVisiblePanel}
+        ><RefreshCw size={16} aria-hidden="true" /></button
+      >
+      <button
+        type="button"
         class="button button-tonal button-round button-small"
         aria-label={t("relationship.close")}
         on:click={() => closeDetail()}
@@ -2705,7 +2737,11 @@
         class="button"
         class:button-tonal={drawerTab === "history"}
         aria-label={t("drawer.history")}
-        on:click={() => (drawerTab = "history")}
+        on:click={() => {
+          panelGeneration++;
+          drawerTab = "history";
+          void actions.refreshRelationship?.(true);
+        }}
         ><Heart size={20} aria-hidden="true" /><span>{t("drawer.history")}</span
         ></button
       >
@@ -2779,7 +2815,7 @@
               <button
                 type="button"
                 class="button button-tonal button-small"
-                on:click={() => void openGallery(true)}>{t("retry")}</button
+                on:click={() => void openGallery()}>{t("retry")}</button
               >
             </div>
           {:else if galleryLoading && !galleryImages.length}<p
@@ -2817,14 +2853,15 @@
             </div>
             <Gallery
               rows={galleryRowsValue}
-              hasMore={!!galleryCursor}
+              unavailableLabel={t("gallery.unavailable")}
+              hasMore={!!galleryCursor && !galleryError}
               loading={galleryLoading}
               loadMore={() => openGallery(true)}
               pick={(image) =>
                 openLightbox({
                   id: image.id,
                   alt: image.filename,
-                  previewUrl: image.url,
+                  previewUrl: image.originalUrl,
                 })}
             />{#if galleryLoading}<p
                 class="companion-history-state"
@@ -2835,12 +2872,16 @@
         </section>
       {:else if drawerTab === "diary"}
         <section class="companion-diary">
+          {#if diarySelected && !diaryEntry}<button
+              type="button"
+              class="button button-tonal button-small"
+              on:click={() => void openDiary()}>← {t("diary.back")}</button
+            >{/if}
           {#if diaryEntry}
             <button
               type="button"
               class="button button-tonal button-small companion-diary-back"
-              on:click={() => (diaryEntry = undefined)}
-              >← {t("diary.back")}</button
+              on:click={() => void openDiary()}>← {t("diary.back")}</button
             >
             <article class="companion-diary-page">
               <time datetime={diaryEntry.name.slice(0, -3)}
@@ -2850,6 +2891,12 @@
             </article>
           {:else if diaryLoading}
             <p class="companion-history-state" role="status">{t("loading")}</p>
+          {:else if diaryMissing}<p
+              class="companion-history-state"
+              role="alert"
+            >
+              {t("diary.missing")}
+            </p>
           {:else if diaryTooLarge}
             <p class="companion-history-state" role="alert">
               {t("diary.tooLarge")}
@@ -2860,7 +2907,10 @@
               <button
                 type="button"
                 class="button button-tonal button-small"
-                on:click={() => void openDiary()}>{t("retry")}</button
+                on:click={() =>
+                  diarySelected
+                    ? void openDiaryEntry(diarySelected)
+                    : void openDiary()}>{t("retry")}</button
               >
             </div>
           {:else if !diaryEntries.length}
@@ -2879,6 +2929,12 @@
                 </button>
               {/each}
             </div>
+            {#if diaryCursor}<button
+                type="button"
+                class="button button-tonal"
+                on:click={() => void openDiary(true)}
+                >{t("history.earlier")}</button
+              >{/if}
           {/if}
         </section>
       {:else}
@@ -2969,7 +3025,9 @@
                               )}</span
                             >{#if change.dimension === "affinity" && change.delta}<strong
                                 class="companion-history-growth"
-                                >+{change.delta}</strong
+                                >{change.delta > 0
+                                  ? "+"
+                                  : ""}{change.delta}</strong
                               >{/if}
                           </div>
                           {#if change.reason}<p

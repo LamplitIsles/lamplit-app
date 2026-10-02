@@ -27,7 +27,7 @@ export function companionHistoryChanges(
     changes.push({
       dimension: "affinity",
       after: { value: record.state.affinity },
-      ...(predecessor && record.state.affinity > predecessor.state.affinity
+      ...(predecessor && record.state.affinity !== predecessor.state.affinity
         ? { delta: record.state.affinity - predecessor.state.affinity }
         : {}),
       ...(record.changes.affinity.reason === undefined

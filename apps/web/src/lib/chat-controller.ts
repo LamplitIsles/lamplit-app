@@ -1,3 +1,8 @@
+import type {
+  PanelBackend,
+  Relationship,
+  RelationshipHistory,
+} from "@lamplit/contracts";
 import {
   CHAT_PATH,
   SubmissionSchema,
@@ -32,11 +37,90 @@ export class ChatController {
     private changed: () => void,
     private storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
   ) {}
+  relationship?: Relationship;
+  relationshipHistory: RelationshipHistory = {
+    scope: "unloaded",
+    records: [],
+    nextCursor: null,
+    predecessor: null,
+  };
+  relationshipStatus: "loading" | "ready" | "error" = "loading";
+  loadingRelationshipHistory = false;
+  panelRevision = 0;
+  private relationshipGeneration = 0;
+  async readPanel<K extends keyof PanelBackend>(
+    method: K,
+    input: Omit<Parameters<PanelBackend[K]>[0], "sessionId">,
+  ): Promise<Awaited<ReturnType<PanelBackend[K]>>> {
+    const client = this.client,
+      sessionId = this.view?.sessionId;
+    if (!client || !sessionId) throw new Error("Offline");
+    const result = await (
+      client[method] as (input: unknown) => Promise<unknown>
+    )({ ...input, sessionId });
+    if (
+      this.client !== client ||
+      this.view?.sessionId !== sessionId ||
+      this.closed
+    )
+      throw new Error("Stale request");
+    return result as Awaited<ReturnType<PanelBackend[K]>>;
+  }
+  async refreshRelationship(history = false) {
+    const generation = ++this.relationshipGeneration;
+    this.relationshipStatus = "loading";
+    this.loadingRelationshipHistory = false;
+    this.changed();
+    try {
+      const current = await this.readPanel("relationship", {});
+      const page = history
+        ? await this.readPanel("relationshipHistory", { cursor: null })
+        : undefined;
+      if (generation !== this.relationshipGeneration) return;
+      this.relationship = current;
+      if (page && page.scope !== current.scope)
+        throw new Error("Wrong relationship scope");
+      if (page) this.relationshipHistory = page;
+      this.relationshipStatus = "ready";
+    } catch {
+      if (generation === this.relationshipGeneration)
+        this.relationshipStatus = "error";
+    } finally {
+      if (generation === this.relationshipGeneration) this.changed();
+    }
+  }
+  async loadRelationshipHistory() {
+    const cursor = this.relationshipHistory.nextCursor;
+    if (!cursor || this.loadingRelationshipHistory) return;
+    const generation = this.relationshipGeneration;
+    this.loadingRelationshipHistory = true;
+    this.changed();
+    try {
+      const page = await this.readPanel("relationshipHistory", { cursor });
+      if (generation !== this.relationshipGeneration) return;
+      if (page.scope !== this.relationshipHistory.scope)
+        throw new Error("Wrong scope");
+      this.relationshipHistory = {
+        ...page,
+        records: [...this.relationshipHistory.records, ...page.records],
+      };
+      this.relationshipStatus = "ready";
+    } catch {
+      if (generation === this.relationshipGeneration)
+        this.relationshipStatus = "error";
+    } finally {
+      if (generation === this.relationshipGeneration) {
+        this.loadingRelationshipHistory = false;
+        this.changed();
+      }
+    }
+  }
   start() {
     void this.connect();
   }
   close() {
     this.closed = true;
+    this.relationshipGeneration++;
     clearTimeout(this.timer);
     this.client?.close();
     this.socket?.close();
@@ -56,6 +140,14 @@ export class ChatController {
     this.older = [];
     this.before = null;
     this.retirements.clear();
+    this.relationshipGeneration++;
+    this.relationship = undefined;
+    this.relationshipHistory = {
+      scope: "unloaded",
+      records: [],
+      nextCursor: null,
+      predecessor: null,
+    };
     try {
       const raw: unknown = JSON.parse(this.storage.getItem(key) ?? "[]");
       if (Array.isArray(raw))
@@ -98,6 +190,13 @@ export class ChatController {
       this.retirements.delete(p.operationId);
       return false;
     });
+    if (
+      (previous?.activeTurnId && !view.activeTurnId) ||
+      (previous && previous.sessionId !== view.sessionId && this.client)
+    ) {
+      this.panelRevision++;
+      void this.refreshRelationship();
+    }
     this.save();
     this.changed();
     if (this.pending.length && this.client)
@@ -123,6 +222,7 @@ export class ChatController {
   private disconnected = () => {
     if (this.closed) return;
     this.connected = false;
+    this.relationshipGeneration++;
     this.client = undefined;
     this.changed();
     clearTimeout(this.timer);
@@ -149,6 +249,8 @@ export class ChatController {
       }
       this.client = client;
       this.connected = true;
+      this.panelRevision++;
+      void this.refreshRelationship();
       this.error = "";
       this.changed();
       await this.reconcile();
