@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "env": {
+    "browser": true,
+    "node": true,
+    "svelte": true
+  },
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/build/**",
+    "apps/web/src/lib/paraglide/**",
+    ".scratch/**",
+    "**/.svelte-check/**"
+  ]
+}

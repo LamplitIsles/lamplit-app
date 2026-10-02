@@ -1,0 +1,32 @@
+{
+  "name": "@lamplit/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@inlang/paraglide-js": "2.25.2",
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "svelte-check": "4.7.6",
+    "typescript": "6.0.3",
+    "vite": "8.2.2"
+  },
+  "dependencies": {
+    "@capacitor-community/media": "9.1.0",
+    "@capacitor/app": "8.1.1",
+    "@capacitor/camera": "8.2.3",
+    "@capacitor/clipboard": "8.0.1",
+    "@capacitor/core": "8.5.1",
+    "@fontsource/noto-sans-sc": "5.3.0",
+    "@humanspeak/svelte-markdown": "1.8.5",
+    "@lamplit/contracts": "workspace:*",
+    "framework7": "9.2.0",
+    "framework7-svelte": "9.2.0",
+    "katex": "0.16.47",
+    "lucide-svelte": "1.0.1",
+    "svelte": "5.57.0"
+  }
+}

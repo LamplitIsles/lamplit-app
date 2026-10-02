@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build/
+.scratch/
+.wrangler/
+apps/web/src/lib/paraglide/
+**/.svelte-check/
