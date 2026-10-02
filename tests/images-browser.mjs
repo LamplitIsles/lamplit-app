@@ -147,13 +147,14 @@ try {
       .poll(() => drafts.first().evaluate((img) => img.naturalWidth))
       .toBe(180);
     const thumbnail = await drafts.first().boundingBox();
-    expect(thumbnail.width).toBe(96);
-    expect(thumbnail.height).toBe(96);
+    // Pinned CFL Framework7 native measurement; attachments scroll in one row.
+    expect(thumbnail.width).toBe(72);
+    expect(thumbnail.height).toBe(72);
     const remove = page.getByRole("button", { name: "移除图片", exact: true });
     const target = await remove.boundingBox();
     expect(target.width).toBe(44);
     expect(target.height).toBe(44);
-    expect((await input.boundingBox()).y).toBeGreaterThan(thumbnail.y);
+    expect((await input.boundingBox()).width).toBeGreaterThan(0);
     await expect(send).toBeEnabled();
     const nativeLimits = (await control({ action: "state" })).limits;
     await choose.setInputFiles(
@@ -197,14 +198,22 @@ try {
       );
     }, image);
     await expect(drafts).toHaveCount(1);
+    // Bare compact with images is refused before upload/chat admission.
+    await input.fill("/compact");
+    await send.click();
+    await expect(input).toHaveValue("/compact");
+    await expect(drafts).toHaveCount(1);
+    expect((await control({ action: "state" })).submissions).toEqual([]);
+    expect(uploads).toEqual([]);
+    await input.fill("");
     if (width === 320) {
       await choose.setInputFiles(file);
       await expect(drafts).toHaveCount(2);
-      expect((await drafts.nth(1).boundingBox()).y).toBeGreaterThan(
+      expect((await drafts.nth(1).boundingBox()).y).toBe(
         (await drafts.first().boundingBox()).y,
       );
       await page.screenshot({
-        path: `${evidence}/attachment-wrap-320.png`,
+        path: `${evidence}/attachment-overflow-320.png`,
         fullPage: true,
       });
       expect(

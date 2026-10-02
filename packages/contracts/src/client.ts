@@ -30,6 +30,11 @@ import {
   validateSubmission,
   type ChatView,
 } from "./index.ts";
+import {
+  CompactInputSchema,
+  CompactResultSchema,
+  type CompactInput,
+} from "./compact.ts";
 import { decodeFrame, sendFrame } from "./wire.ts";
 
 export async function openChat(
@@ -241,6 +246,16 @@ export async function openChat(
     ) as unknown as PanelBackend;
     const api = {
       ...panels,
+      async compact(input: CompactInput) {
+        const value = validate(CompactInputSchema, input);
+        const result = validate(
+          CompactResultSchema,
+          await service.compact(value, BACKGROUND_CONTEXT),
+        );
+        if (result.sessionId !== value.sessionId)
+          throw new Error("Wrong compact session");
+        return result;
+      },
       async history(before: string) {
         return validate(
           PageSchema,

@@ -36,6 +36,7 @@ bun run test
 bun run test:browser
 bun run test:panels-browser
 bun run test:images-browser
+bun run test:compact-browser
 ```
 
 Browser acceptance uses an isolated Chrome context and a test-owned fake backend.
@@ -99,3 +100,20 @@ See [image protocol and frozen native acceptance](docs/image-send-recovery.md).
 `bun run freeze:images` freezes committed browser/contracts and the reusable runner
 once into ignored scratch. Specs #3097/#3098 consume those exact archives; actual
 Pi/CFL acceptance remains the Owner gate for #3096 before merge, with no deployment.
+
+## Context and compaction
+
+The existing context ring displays native active-context usage. Missing usage shows
+an empty ring and zero while retaining known capacity. Type `/compact` (or choose
+its existing slash suggestion) without images to ask the native engine to compact
+an idle conversation. Busy/refused commands keep the draft; running and failed
+states remain visible. Success is silent, including automatic and historical
+compactions. Completion clears stale usage until fresh native data arrives.
+Reconnect reads native state and never automatically repeats the command.
+
+See [native contract and common acceptance](docs/quiet-compaction.md).
+`bun run prepare:compact` records a candidate browser/contracts/runner identity
+from committed source. Owner review precedes final freeze; actual isolated Pi/CFL
+acceptance for #3119/#3120/#3121 remains pending. The complete old Composer redesign,
+including the 96px attachment mockup, is superseded by pinned native CFL Framework7
+presentation. No deployment or native release is included.

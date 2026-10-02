@@ -7,7 +7,7 @@ import { mkdir } from "node:fs/promises";
 const fixture = fixtureBackend();
 const host = await createChatHost(fixture.backend);
 const channels = new Map();
-const assets = resolve("apps/web/build");
+const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,

@@ -84,8 +84,9 @@ workspace files and staged uploads alone are not chat or album membership.
 
 ## User behavior
 
-Choose files, paste images or use the existing native photo hook. Real 96px
-thumbnails appear above text; remove targets are 44px. Images can be sent alone.
+Choose files, paste images or use the existing native photo hook. Attachments use
+the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
+44px removal targets and native preview/gallery behavior. Images can be sent alone.
 Preparation/upload failure returns editable text and Files without admission.
 Once submitted, bounded reference-only pending metadata is saved per session;
 storage failure is visible. Reconnect looks up exact operations. The existing
@@ -199,3 +200,7 @@ The delayed-media and delayed-upload probes release their held requests and awai
 `page.unrouteAll({ behavior: "wait" })` before advancing. Ordinary `unroute` does
 not await handlers and can race a later fulfillment. No route exceptions are
 suppressed; a genuine handler failure still fails the acceptance process.
+
+# Design authority update — 2026-10-03
+
+The former Composer/attachment mockup requirements are superseded. CFL's existing Framework7 UI is the shared frontend baseline; see [current direction](ui-baseline-and-compaction.md). The earlier 96px acceptance described the historical image slice, not a continuing requirement. Spec #3119 restores native CFL presentation and replaces the superseded sizing/wrapping assertions; image sending, safe recovery and route teardown remain required. See [quiet compaction handoff](quiet-compaction.md) for the new common candidate artifact.

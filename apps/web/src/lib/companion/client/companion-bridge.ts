@@ -2,7 +2,7 @@ import type { PanelBackend } from "@lamplit/contracts";
 import type { CompanionTranslate } from "./locale.js";
 import type { CompanionProjection } from "../projection.js";
 import type {
-  CompanionContinuitySnapshot,
+  CompactionLifecycleState,
   ContextPressureProjection,
 } from "../continuity.js";
 import type { ImageAttachmentLimits } from "./contracts.js";
@@ -55,7 +55,7 @@ export interface CompanionContinuityView {
   /** Host-projected context pressure; absent means the meter is unavailable. */
   contextPressure?: ContextPressureProjection;
   /** Session-scoped compaction lifecycle facts from the public view registry. */
-  lifecycle?: CompanionContinuitySnapshot;
+  lifecycle?: CompactionLifecycleState | null;
 }
 
 export interface CompanionRecoveredDraft {

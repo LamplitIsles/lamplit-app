@@ -1,6 +1,13 @@
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
 export * from "./images.ts";
+export * from "./compact.ts";
+import {
+  ContextUsageSchema,
+  CompactionSchema,
+  type CompactInput,
+  type CompactResult,
+} from "./compact.ts";
 import {
   OperationIdSchema,
   ImageRefSchema,
@@ -88,6 +95,8 @@ export const ViewSchema = Type.Object(
     sessionId: Id,
     name: Type.String(),
     activeTurnId: NullableId,
+    contextUsage: ContextUsageSchema,
+    compaction: CompactionSchema,
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),
     before: NullableId,
     recovery: Type.Array(RecoverySchema, { maxItems: 20 }),
@@ -116,6 +125,7 @@ type PanelService = {
 };
 export interface ChatService extends PanelService {
   view: ReplicatedState<ChatView>;
+  compact(input: CompactInput, context: Context): Promise<CompactResult>;
   history(before: string, context: Context): Promise<HistoryPage>;
   submit(input: Submission, context: Context): Promise<Receipt>;
   lookup(operationId: string, context: Context): Promise<Receipt>;
@@ -144,5 +154,7 @@ export function validateSubmission(value: unknown): Submission {
       input.images.some((r) => r.availability !== "available"))
   )
     throw new Error("Invalid submitted images");
+  if (input.text === "/compact" && !input.images?.length)
+    throw new Error("Use native compact command");
   return input;
 }

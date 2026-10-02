@@ -26,11 +26,18 @@ import {
   type Receipt,
   type Submission,
 } from "./index.ts";
+import {
+  CompactInputSchema,
+  CompactResultSchema,
+  type CompactInput,
+  type CompactResult,
+} from "./compact.ts";
 import { decodeFrame, readCall, type WireSocket } from "./wire.ts";
 
 /** Engine adapters own durable admission and execution. Socket disposal never cancels them. */
 export interface ChatBackend extends PanelBackend {
   read(): Promise<ChatView>;
+  compact(input: CompactInput): Promise<CompactResult>;
   history(before: string): Promise<HistoryPage>;
   submit(input: Submission): Promise<Receipt>;
   lookup(operationId: string): Promise<Receipt>;
@@ -68,6 +75,8 @@ export async function createChatHost(
               draft.sessionId = next.sessionId;
               draft.capabilities = next.capabilities;
               draft.recovery = next.recovery;
+              draft.contextUsage = next.contextUsage;
+              draft.compaction = next.compaction;
             });
         }
       } finally {
@@ -95,6 +104,25 @@ export async function createChatHost(
   provider.provide(Chat, {
     ...panels,
     view,
+    async compact(input: CompactInput) {
+      const value = validate(CompactInputSchema, input);
+      await refresh();
+      if (value.sessionId !== view.value.sessionId)
+        throw new Error("Wrong session");
+      if (
+        view.value.activeTurnId ||
+        view.value.compaction?.status === "running"
+      )
+        return { sessionId: value.sessionId, accepted: false };
+      const result = validate(
+        CompactResultSchema,
+        await backend.compact(value),
+      );
+      if (result.sessionId !== value.sessionId)
+        throw new Error("Wrong compact session");
+      await refresh();
+      return result;
+    },
     async history(before: string) {
       return validate(PageSchema, await backend.history(validateId(before)));
     },
@@ -219,6 +247,7 @@ export async function createChatHost(
               "submit",
               "lookup",
               "stop",
+              "compact",
               ...Object.keys(panelMethods),
             ].includes(call.member) ||
             call.args.length !== 1

@@ -32,11 +32,16 @@ export function fixtureBackend() {
         sessionId: "fixture-session",
         name: "Mica",
         activeTurnId: active,
+        contextUsage: { tokens: null, capacity: null },
+        compaction: null,
         messages: [...messages].slice(-30),
         before: null,
         capabilities,
         recovery: [],
       };
+    },
+    async compact(input) {
+      return { sessionId: input.sessionId, accepted: false };
     },
     async history() {
       return { messages: [], before: null };

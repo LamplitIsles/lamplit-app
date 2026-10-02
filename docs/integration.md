@@ -147,3 +147,17 @@ browser-prepared JPEG variants; CFL uses original bytes. No server transcoding o
 new execution service is needed. See [image-send-recovery](image-send-recovery.md)
 for exact DTOs, native controls, limits and frozen runner commands. Backend workers
 must use the frozen archives instead of rebuilding their own browser/package.
+
+## Quiet compaction handoff
+
+Specs #3120 (Pi) and #3121 (CFL) consume the reviewed App #3119 browser, compiled
+contracts and unchanged acceptance runners after Owner freezes the common bytes.
+Before that handoff both backend specs remain blocked. Implement native nullable
+active-context observations, native lifecycle/admission and the test-only controls
+in [quiet compaction](quiet-compaction.md). Adapter ownership and atomic admission
+checks remain mandatory even when the shared host has checked its current view.
+Never retry native compaction automatically after reconnect/lost acknowledgement.
+Do not remove native records required for continuation or search. Remove completion
+presentation in both manual/automatic history paths. Use only isolated test-owned
+storage and fake engines for joint acceptance; report actual-host results separately
+from App fixture acceptance. No native release, deployment or merge is included.

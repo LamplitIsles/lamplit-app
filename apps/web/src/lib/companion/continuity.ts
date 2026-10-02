@@ -1,74 +1,24 @@
-export type ContextPressureProjection = {
-  contextWindow: number;
-  projectedTokens?: number;
-  pressureTokens?: number;
-};
-export const COMPACTION_STATUS_DURATION_MS = 8_000;
-
-/** A safe, provider-neutral capacity value suitable for Companion copy. */
+import type { ContextUsage, Compaction } from "@lamplit/contracts";
+export type ContextPressureProjection = ContextUsage;
+export type CompactionLifecycleState = NonNullable<Compaction>;
 export interface ContextCapacity {
   readonly usedTokens: number;
   readonly contextWindow: number;
   readonly percentage: number;
 }
-
-/** Lifecycle states intentionally contain no checkpoint, prompt, or summary text. */
-export type CompactionLifecycleStatus = "running" | "complete" | "failed";
-
-export interface CompactionLifecycleState {
-  readonly compactionId: string;
-  readonly status: CompactionLifecycleStatus;
-  readonly startSeq: number;
-  readonly startedAt: number;
-  readonly endSeq?: number;
-  readonly endedAt?: number;
-}
-
-export interface CompanionContinuitySnapshot {
-  readonly lifecycles: readonly CompactionLifecycleState[];
-  readonly latest?: CompactionLifecycleState;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function positiveFinite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-/**
- * Resolve the token-meter projection into the only capacity facts Companion
- * needs. A present projected value is authoritative; the provider anchor is
- * used only when projection is absent. Malformed telemetry is hidden rather
- * than guessed at.
- */
+/** Missing native usage renders an empty ring while known capacity is retained. */
 export function resolveContextCapacity(
-  value: unknown,
-): ContextCapacity | undefined {
-  const record = asRecord(value);
-  if (!record || !positiveFinite(record.contextWindow)) return undefined;
-  const hasProjection =
-    Object.hasOwn(record, "projectedTokens") &&
-    record.projectedTokens !== undefined;
-  const selected = hasProjection
-    ? record.projectedTokens
-    : record.pressureTokens;
-  if (
-    typeof selected !== "number" ||
-    !Number.isFinite(selected) ||
-    selected < 0
-  )
-    return undefined;
+  value: ContextUsage | undefined,
+): ContextCapacity {
+  const usedTokens = value?.tokens ?? 0;
+  const contextWindow = value?.capacity ?? 0;
   return {
-    usedTokens: selected,
-    contextWindow: record.contextWindow,
-    percentage: Math.min(
-      100,
-      Math.max(0, Math.round((selected / record.contextWindow) * 100)),
-    ),
+    usedTokens,
+    contextWindow,
+    percentage:
+      contextWindow > 0
+        ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
+        : 0,
   };
 }
 

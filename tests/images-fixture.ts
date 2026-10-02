@@ -120,6 +120,8 @@ export function imagesFixture() {
         sessionId: "fixture-session",
         name: "Mica",
         activeTurnId: active,
+        contextUsage: { tokens: null, capacity: null },
+        compaction: null,
         messages: messages.slice(-30),
         before: messages.length > 30 ? messages.at(-30)!.id : null,
         capabilities: {
@@ -128,6 +130,9 @@ export function imagesFixture() {
         },
         recovery: [...recovery],
       };
+    },
+    async compact(input) {
+      return { sessionId: input.sessionId, accepted: false };
     },
     async history(before) {
       const end = messages.findIndex((m) => m.id === before);

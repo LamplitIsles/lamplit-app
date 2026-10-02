@@ -53,6 +53,7 @@
     return controller
       ? {
           view: controller.view,
+          compactPending: controller.compactPending,
           older: controller.older,
           pending: controller.pending,
           recovery: controller.recovery,
@@ -163,15 +164,17 @@
               : []),
           ],
         });
+    const compacting =
+      !!chatState?.compactPending || view?.compaction?.status === "running";
     return {
       items: units.flatMap((u) => u.items),
       messageUnits: units,
       pendingCount: chatState?.pending.length ?? 0,
       running: !!view?.activeTurnId,
-      canSubmit: !!chatState?.connected,
+      canSubmit: !!chatState?.connected && !compacting,
       status: !chatState?.connected
         ? "offline"
-        : view?.activeTurnId
+        : view?.activeTurnId || compacting
           ? "working"
           : "ready",
       openState: view ? "open" : "loading",
@@ -186,6 +189,7 @@
         throw new CompanionPreControllerError("请等待连接恢复后发送文字。");
       if (controller.pending.length >= 20)
         throw new CompanionPreControllerError("请先核对尚未确认的消息。");
+      const originSession = controller.view?.sessionId;
       try {
         await controller.send(
           text,
@@ -194,6 +198,8 @@
           sources,
         );
       } catch (error) {
+        if (controller.view?.sessionId !== originSession)
+          throw new CompanionPreControllerError("会话已改变");
         controller.error = error instanceof Error ? error.message : "发送失败";
         revision += 1;
         throw new CompanionPreControllerError(controller.error);
@@ -252,6 +258,10 @@
 <svelte:head><title>{chatState?.view?.name ?? "Lamplit"}</title></svelte:head>
 <Companion
   {projection}
+  continuity={{
+    contextPressure: chatState?.view?.contextUsage,
+    lifecycle: chatState?.view?.compaction,
+  }}
   {actions}
   {t}
   locale={language}

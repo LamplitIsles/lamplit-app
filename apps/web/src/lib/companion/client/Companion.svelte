@@ -80,7 +80,6 @@
     type GalleryImage,
   } from "./gallery.js";
   import {
-    COMPACTION_STATUS_DURATION_MS,
     formatTokenCount,
     resolveContextCapacity,
     type CompactionLifecycleState,
@@ -294,8 +293,6 @@
   let contextMeterButton: HTMLButtonElement;
   let contextMeterPopover: HTMLElement;
   let continuityStatus: CompactionLifecycleState | undefined;
-  let continuityStatusKey = "";
-  let continuityStatusTimer: ReturnType<typeof setTimeout> | undefined;
   let imageDrafts: CompanionImageDraft[] = [];
   let imageIntakeFailure: CompanionMessage | undefined;
   let imageDraftSessionId: string | undefined;
@@ -373,10 +370,9 @@
       (item.state === "running" || item.state === "loading"),
   );
   $: typingVisible = projection.running && !imageGenerationRunning;
-  $: commandSuggestion =
-    chatOnly || imageDrafts.length
-      ? undefined
-      : findComposerCommand(composer.draft, t);
+  $: commandSuggestion = imageDrafts.length
+    ? undefined
+    : findComposerCommand(composer.draft, t);
   $: voiceBusy =
     voiceStatus === "starting" ||
     voiceStatus === "recording" ||
@@ -384,7 +380,7 @@
     voiceStatus === "transcribing";
   $: if (imageDrafts) void scheduleComposerResize();
   $: contextCapacity = resolveContextCapacity(continuity?.contextPressure);
-  $: latestContinuityLifecycle = latestLifecycle(continuity?.lifecycle);
+  $: latestContinuityLifecycle = continuity?.lifecycle ?? undefined;
   $: syncContinuityStatus(latestContinuityLifecycle);
   $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
   $: syncWaitingState(
@@ -707,53 +703,10 @@
     waitingRotationTimer = undefined;
   }
 
-  function latestLifecycle(
-    value: CompanionContinuityView["lifecycle"],
-  ): CompactionLifecycleState | undefined {
-    const rows = value?.lifecycles ?? (value?.latest ? [value.latest] : []);
-    return [...rows]
-      .sort(
-        (left, right) =>
-          (left.endSeq ?? left.startSeq) - (right.endSeq ?? right.startSeq) ||
-          left.startSeq - right.startSeq,
-      )
-      .at(-1);
-  }
-
-  function clearContinuityStatusTimer(): void {
-    if (continuityStatusTimer !== undefined)
-      clearTimeout(continuityStatusTimer);
-    continuityStatusTimer = undefined;
-  }
-
   function syncContinuityStatus(
     lifecycle: CompactionLifecycleState | undefined,
   ): void {
-    const key = lifecycle
-      ? `${lifecycle.compactionId}:${lifecycle.status}:${lifecycle.endSeq ?? ""}:${lifecycle.endedAt ?? ""}`
-      : "";
-    if (key === continuityStatusKey) return;
-    clearContinuityStatusTimer();
-    continuityStatusKey = key;
-    continuityStatus = undefined;
-    if (!lifecycle) return;
-    if (lifecycle.status === "running") {
-      continuityStatus = lifecycle;
-      return;
-    }
-    const endedAt =
-      typeof lifecycle.endedAt === "number" &&
-      Number.isFinite(lifecycle.endedAt)
-        ? lifecycle.endedAt
-        : Date.now();
-    const remaining = endedAt + COMPACTION_STATUS_DURATION_MS - Date.now();
-    if (remaining <= 0) return;
-    continuityStatus = lifecycle;
-    continuityStatusTimer = setTimeout(() => {
-      continuityStatus = undefined;
-      continuityStatusKey = key;
-      continuityStatusTimer = undefined;
-    }, remaining);
+    continuityStatus = lifecycle?.status === "complete" ? undefined : lifecycle;
   }
 
   function closePopover(node: HTMLElement | undefined): boolean {
@@ -1226,6 +1179,7 @@
         } else if (error instanceof CompanionPreControllerError) {
           releaseSubmissionImages(submittedDrafts);
         }
+        if (sessionId !== originSessionId) return;
         liveAnnouncement =
           error instanceof Error && error.message === "compact-with-images"
             ? { key: "error.compactImages" }
@@ -1828,7 +1782,6 @@
     releaseDeferredPreviewReleases();
     releaseSubmissionImages(imageDrafts);
     clearWaitingTimers();
-    clearContinuityStatusTimer();
     voiceGeneration += 1;
     voiceController.dispose();
     for (const audio of document.querySelectorAll<HTMLAudioElement>(
@@ -1900,13 +1853,11 @@
             class:companion-context-meter-open={contextMeterOpen}
             data-state={continuityStatus?.status === "running"
               ? "active"
-              : continuityStatus?.status === "complete"
-                ? "complete"
-                : continuityStatus?.status === "failed"
-                  ? "failed"
-                  : contextCapacity.percentage >= 80
-                    ? "warning"
-                    : "idle"}
+              : continuityStatus?.status === "failed"
+                ? "failed"
+                : contextCapacity.percentage >= 80
+                  ? "warning"
+                  : "idle"}
             type="button"
             aria-label={t("context.percentage", {
               percentage: contextCapacity.percentage,
@@ -2098,7 +2049,7 @@
                   "compact.running",
                 )}{:else if continuityStatus.status === "failed"}{t(
                   "compact.failed",
-                )}{:else}{t("compact.done")}{/if}
+                )}{/if}
             </div>
           {/if}
         {/snippet}
@@ -2468,17 +2419,9 @@
                       <p>{t("welcome.prompt")}</p>
                     </div>
                   {/if}
-                  {#each displayedProjection.messageUnits as unit (unit.id)}
+                  {#each displayedProjection.messageUnits.filter((unit) => unit.items[0]?.kind !== "continuity") as unit (unit.id)}
                     {@const first = unit.items[0]}
-                    {#if first?.kind === "continuity"}
-                      <div
-                        class="companion-continuity-record"
-                        data-testid={`continuity-record-${first.compactionId}`}
-                        aria-live="off"
-                      >
-                        {t("compact.record")}
-                      </div>
-                    {:else if first?.kind === "notice"}
+                    {#if first?.kind === "notice"}
                       <div
                         class="companion-recovery"
                         role={first.tone === "error" ? "alert" : "status"}

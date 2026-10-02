@@ -18,7 +18,9 @@
     "test:panels-browser": "bun tests/panels-browser.mjs",
     "freeze:panels": "bun tests/freeze-panels.mjs",
     "test:images-browser": "bun tests/images-browser.mjs",
-    "freeze:images": "bun tests/freeze-images.mjs"
+    "freeze:images": "bun tests/freeze-images.mjs",
+    "test:compact-browser": "bun tests/compact-browser.mjs",
+    "prepare:compact": "bun tests/prepare-compact.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261002.1",

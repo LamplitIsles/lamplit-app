@@ -33,11 +33,16 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
         sessionId,
         name: "Fixture",
         activeTurnId: active,
+        contextUsage: { tokens: null, capacity: null },
+        compaction: null,
         messages: live,
         before: "11",
         capabilities,
         recovery: [],
       };
+    },
+    async compact(input) {
+      return { sessionId: input.sessionId, accepted: false };
     },
     async history() {
       return {

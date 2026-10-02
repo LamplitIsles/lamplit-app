@@ -27,6 +27,8 @@ export class ChatController {
   older: ChatMessage[] = [];
   pending: PendingSend[] = [];
   connected = false;
+  compactPending = false;
+  private compactGeneration = 0;
   recovery: InputRecovery[] = [];
   private dismissed = new Set<string>();
   loadingOlder = false;
@@ -129,6 +131,8 @@ export class ChatController {
   close() {
     this.closed = true;
     this.connectionGeneration++;
+    this.compactGeneration++;
+    this.compactPending = false;
     for (const retire of this.retirements.values()) retire();
     this.retirements.clear();
     this.relationshipGeneration++;
@@ -150,6 +154,9 @@ export class ChatController {
     const key = `lamplit.pending:${sessionId}`;
     if (this.storageKey === key) return;
     this.storageKey = key;
+    this.error = "";
+    this.compactGeneration++;
+    this.compactPending = false;
     this.pending = [];
     this.older = [];
     this.before = null;
@@ -251,6 +258,11 @@ export class ChatController {
   private disconnected = () => {
     if (this.closed) return;
     this.connected = false;
+    if (this.compactPending) {
+      this.compactGeneration++;
+      this.compactPending = false;
+      this.error = "对话整理结果尚未确认，请等待连接恢复后检查。";
+    }
     this.relationshipGeneration++;
     this.client = undefined;
     this.changed();
@@ -290,7 +302,7 @@ export class ChatController {
       this.connected = true;
       this.panelRevision++;
       void this.refreshRelationship();
-      this.error = "";
+      if (!this.error.includes("整理结果尚未确认")) this.error = "";
       this.changed();
       await this.reconcile();
     } catch {
@@ -335,12 +347,59 @@ export class ChatController {
     this.recovery = this.recovery.filter((r) => r.sourceId !== sourceId);
     this.changed();
   }
+  async compact() {
+    const client = this.client,
+      sessionId = this.view?.sessionId;
+    if (!client || !sessionId) throw new Error("连接已断开");
+    if (
+      this.compactPending ||
+      this.view?.activeTurnId ||
+      this.view?.compaction?.status === "running"
+    )
+      throw new Error("请等待当前工作完成后整理对话。");
+    const generation = ++this.compactGeneration;
+    this.compactPending = true;
+    this.error = "";
+    this.changed();
+    const current = () =>
+      !this.closed &&
+      this.client === client &&
+      this.view?.sessionId === sessionId &&
+      generation === this.compactGeneration;
+    try {
+      const result = await client.compact({ sessionId });
+      if (!current()) throw new Error("连接已改变，请检查对话整理状态。");
+      if (!result.accepted) throw new Error("请等待当前工作完成后整理对话。");
+    } catch (error) {
+      if (current()) {
+        this.error =
+          error instanceof Error && error.message.includes("等待当前")
+            ? error.message
+            : "对话整理结果尚未确认，请检查当前状态。";
+        this.changed();
+      }
+      throw error;
+    } finally {
+      if (current()) {
+        this.compactPending = false;
+        this.changed();
+      }
+    }
+  }
   async send(
     text: string,
     retired?: () => void,
     images: readonly CompanionImageDraft[] = [],
     replacementSourceIds: readonly string[] = [],
   ) {
+    if (text === "/compact") {
+      if (images.length) throw new Error("compact-with-images");
+      await this.compact();
+      retired?.();
+      return;
+    }
+    if (this.compactPending || this.view?.compaction?.status === "running")
+      throw new Error("请等待对话整理完成。");
     const client = this.client,
       sessionId = this.view?.sessionId;
     if (!client || !sessionId) throw new Error("连接已断开");

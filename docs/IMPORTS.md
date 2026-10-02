@@ -46,3 +46,11 @@ from local read-only `LamplitIsles/lamplit-chat`, commit
 bytes and bounded 480px preview / 1200px model JPEG variants, replacing Pi-only
 hardcoded limits/DTOs with the public host-advertised contract. No native source,
 configuration, state or credentials were changed/imported.
+
+The quiet-compaction slice restores attachment presentation against read-only
+`LamplitIsles/codex-for-love` at `63616953a28158e2224aca633b639c5b27123d28`,
+`apps/partner/src/lib/companion/client/Companion.svelte` and `companion.css`.
+An isolated test-owned copy of the native component was used for rendered comparison
+with synthetic images; no other CFL features or runtime state were imported.
+The complete prior Composer redesign and 96px attachment mockup are superseded.
+Existing Apache-2.0 source attribution and imported dependency licenses remain.

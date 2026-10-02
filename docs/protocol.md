@@ -12,6 +12,7 @@ Static assets and media continue to use HTTP.
 | `history(before)`                                               | Previous page of completed messages and user submissions                                |
 | `submit({ operationId, text, images?, replacementSourceIds? })` | New input; the engine adapter starts or steers its native conversation                  |
 | `lookup(operationId)`                                           | Reconcile admission after lost acknowledgement                                          |
+| `compact({ sessionId })`                                        | Explicit native idle compaction; refusal preserves drafts, success has no chat message  |
 | `stop(turnId)`                                                  | Stop this specific turn; a stale turn returns `stopped: false`                          |
 
 Chord method contracts include an invocation context as their last parameter.
@@ -127,3 +128,13 @@ image limits and authoritative `view.recovery`. Submission identity includes ord
 references and explicit replacement source IDs. Upload is not admission; recovery
 eligibility is native authority and uncertain delivery cannot authorize replacement.
 Image data is never replicated over WS or stored in pending metadata.
+
+## Native context and compaction
+
+The required session-scoped `contextUsage` and `compaction` fields and explicit
+`compact` member are defined in [quiet compaction](quiet-compaction.md). They use
+the same runtime-validated Chord service. Missing native usage remains nullable on
+the wire. Native completion invalidates stale tokens until fresh usage exists;
+it never adds a terminal notice or historical marker to chat. Native running and
+failed lifecycle facts remain observable. Commands are not submission operations,
+are not stored in pending input and are never replayed after a lost response.
