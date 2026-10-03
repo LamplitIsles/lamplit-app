@@ -1,3 +1,4 @@
+import { searchFixture } from "./search-fixture.ts";
 import { panelsFixture } from "./panels-fixture.ts";
 import { expect, test } from "bun:test";
 import { ChatController } from "../apps/web/src/lib/chat-controller.ts";
@@ -11,7 +12,7 @@ import {
 } from "../packages/contracts/src/server.ts";
 import { eventually } from "./chat.test.ts";
 
-test("moving live window retains history/unconsumed sends and rejects previous-session panel reads", async () => {
+test("moving live window retains history/unconsumed sends and rejects previous-session archive/panel reads", async () => {
   const message = (id: number): ChatMessage => ({
     id: String(id),
     role: "user",
@@ -25,8 +26,10 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
   let active: string | null = null;
   let stopped = false;
   const panels = panelsFixture();
+  const search = searchFixture();
   const backend: ChatBackend = {
     ...panels.backend,
+    ...search.backend,
     async read() {
       return {
         version: 1,
@@ -159,6 +162,11 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
       }),
     );
     panels.delays.set("diaryList", panels.delays.get("relationship")!);
+    search.delays.set("灯塔", panels.delays.get("relationship")!);
+    const staleSearch = controller.readSearch("search", { query: "灯塔" }).then(
+      () => "resolved",
+      () => "stale",
+    );
     const staleRelationship = controller.refreshRelationship(true);
     const staleDiary = controller.readPanel("diaryList", { cursor: null });
     // Capture the rejection immediately; no test-owned request may leak an unhandled rejection.
@@ -177,6 +185,7 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
     panels.delays.clear();
     await staleRelationship;
     expect(await staleDiaryResult).toBe("stale");
+    expect(await staleSearch).toBe("stale");
     await controller.refreshRelationship(true);
     expect(controller.relationshipHistory.scope).toBe("fixture-relationship");
     expect(controller.relationship?.current.affinity).toBe(65);

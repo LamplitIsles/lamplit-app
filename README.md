@@ -11,7 +11,7 @@ completed-message delivery, targeted stop, and reconnect reconciliation. Agent
 messages appear when each message is complete, as in an IM app. Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
 reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
-use the same native contract. Album browsing and saving originals work independently; search, generic attachments, TTS
+use the same native contract. Album browsing and saving originals work independently; generic attachments, TTS
 and native releases remain outside this slice. The existing frontends remain in
 service until full product coverage is verified.
 
@@ -37,6 +37,7 @@ bun run test:browser
 bun run test:panels-browser
 bun run test:images-browser
 bun run test:compact-browser
+bun run test:search-browser
 ```
 
 Browser acceptance uses an isolated Chrome context and a test-owned fake backend.
@@ -117,3 +118,17 @@ from committed source. Owner review precedes final freeze; actual isolated Pi/CF
 acceptance for #3119/#3120/#3121 remains pending. The complete old Composer redesign,
 including the 96px attachment mockup, is superseded by pinned native CFL Framework7
 presentation. No deployment or native release is included.
+
+## Conversation archive search
+
+Use the header search button to search preserved chat text and compaction summaries.
+Each hit opens complete text and bounded nearby context in the existing separate
+reader. Back returns to results; reading preserves the active chat and unsent draft.
+Loading, empty, failure/retry and context-truncation states retain the CFL design.
+Results are bounded to 20; a missing native total shows the returned result count.
+
+See [search contract, native fixture and candidate handoff](docs/conversation-search.md).
+`bun run prepare:search` freezes committed browser/contracts/acceptance bytes with
+source HEAD and hashes in ignored scratch. The runner accepts external test-owned
+native base/control URLs. Owner approval precedes native adapter work; both native
+acceptances and joint user review remain the merge gate for #3142/#3143/#3144.

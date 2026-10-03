@@ -161,3 +161,15 @@ Do not remove native records required for continuation or search. Remove complet
 presentation in both manual/automatic history paths. Use only isolated test-owned
 storage and fake engines for joint acceptance; report actual-host results separately
 from App fixture acceptance. No native release, deployment or merge is included.
+
+## Conversation search candidate
+
+Implement required `ChatBackend.search` and `searchRead` using each native archive:
+Pi direct record FTS rows with summary hits; CFL unchanged FlickLog search/get/context.
+The authenticated companion scope applies to cross-session record IDs. Preserve
+native matching and complete selected content; omit private source paths.
+See [search acceptance](conversation-search.md#deterministic-acceptance-fixture)
+for the exact external-host runner and test-only controls, and
+[candidate verification](conversation-search.md#candidate-preparation-and-hash-verification)
+for frozen browser/contracts/runner hashes. Owner approval of App candidate #3142
+precedes native work; actual Pi/CFL acceptance and joint approval gate all merges.

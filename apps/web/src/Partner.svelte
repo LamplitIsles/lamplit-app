@@ -214,6 +214,8 @@
       if (!response.ok) throw new Error("Missing image");
       return URL.createObjectURL(await response.blob());
     },
+    search: (input) => controller.readSearch("search", input),
+    searchRead: (input) => controller.readSearch("searchRead", input),
     readPanel: (method, input) => controller.readPanel(method, input),
     refreshRelationship: (history) => controller.refreshRelationship(history),
     retryHistory: () => void controller.refreshRelationship(true),
@@ -266,7 +268,6 @@
   {t}
   locale={language}
   {appearance}
-  chatOnly
   panelRevision={chatState?.panelRevision ?? 0}
   history={{
     status: chatState?.relationshipStatus ?? "loading",

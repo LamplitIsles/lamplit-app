@@ -1,5 +1,6 @@
 import type {
   PanelBackend,
+  SearchBackend,
   Relationship,
   RelationshipHistory,
 } from "@lamplit/contracts";
@@ -75,6 +76,24 @@ export class ChatController {
     )
       throw new Error("Stale request");
     return result as Awaited<ReturnType<PanelBackend[K]>>;
+  }
+  async readSearch<K extends keyof SearchBackend>(
+    method: K,
+    input: Parameters<SearchBackend[K]>[0],
+  ): Promise<Awaited<ReturnType<SearchBackend[K]>>> {
+    const client = this.client,
+      sessionId = this.view?.sessionId;
+    if (!client || !sessionId) throw new Error("Offline");
+    const result = await (
+      client[method] as (input: unknown) => Promise<unknown>
+    )(input);
+    if (
+      this.client !== client ||
+      this.view?.sessionId !== sessionId ||
+      this.closed
+    )
+      throw new Error("Stale request");
+    return result as Awaited<ReturnType<SearchBackend[K]>>;
   }
   async refreshRelationship(history = false) {
     const generation = ++this.relationshipGeneration;

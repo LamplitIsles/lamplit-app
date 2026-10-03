@@ -1,4 +1,11 @@
 import {
+  validateSearchInput,
+  validateSearchResult,
+  validateSearchReadResult,
+  SearchReadInputSchema,
+  type SearchBackend,
+} from "./search.ts";
+import {
   panelMethods,
   validatePanelResult,
   type PanelBackend,
@@ -35,7 +42,7 @@ import {
 import { decodeFrame, readCall, type WireSocket } from "./wire.ts";
 
 /** Engine adapters own durable admission and execution. Socket disposal never cancels them. */
-export interface ChatBackend extends PanelBackend {
+export interface ChatBackend extends PanelBackend, SearchBackend {
   read(): Promise<ChatView>;
   compact(input: CompactInput): Promise<CompactResult>;
   history(before: string): Promise<HistoryPage>;
@@ -104,6 +111,18 @@ export async function createChatHost(
   provider.provide(Chat, {
     ...panels,
     view,
+    async search(input) {
+      return validateSearchResult(
+        await backend.search(validateSearchInput(input)),
+      );
+    },
+    async searchRead(input) {
+      const value = validate(SearchReadInputSchema, input);
+      return validateSearchReadResult(
+        await backend.searchRead(value),
+        value.id,
+      );
+    },
     async compact(input: CompactInput) {
       const value = validate(CompactInputSchema, input);
       await refresh();
@@ -248,6 +267,8 @@ export async function createChatHost(
               "lookup",
               "stop",
               "compact",
+              "search",
+              "searchRead",
               ...Object.keys(panelMethods),
             ].includes(call.member) ||
             call.args.length !== 1
@@ -258,7 +279,14 @@ export async function createChatHost(
             BACKGROUND_CONTEXT,
           )) as JsonValue;
         }
-        deliver({ type: "result", id, result: result ?? null });
+        const reply = { type: "result", id, result: result ?? null };
+        // Method results fail in isolation before the transport would disconnect.
+        if (
+          new TextEncoder().encode(JSON.stringify(reply)).byteLength >
+          2 * 1024 * 1024
+        )
+          throw new Error("Method result exceeds frame limit");
+        deliver(reply);
       } catch (error) {
         if (!id) {
           socket.close(1002, "Invalid frame");

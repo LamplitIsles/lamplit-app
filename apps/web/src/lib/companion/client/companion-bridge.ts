@@ -1,4 +1,4 @@
-import type { PanelBackend } from "@lamplit/contracts";
+import type { PanelBackend, SearchBackend } from "@lamplit/contracts";
 import type { CompanionTranslate } from "./locale.js";
 import type { CompanionProjection } from "../projection.js";
 import type {
@@ -25,6 +25,8 @@ export interface CompanionIdentityView {
   affinityStage?: string;
 }
 export interface CompanionActions {
+  search?: SearchBackend["search"];
+  searchRead?: SearchBackend["searchRead"];
   send: (
     text: string,
     images: readonly CompanionImageDraft[],

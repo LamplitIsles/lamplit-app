@@ -1,4 +1,12 @@
 import {
+  validateSearchInput,
+  validateSearchResult,
+  validateSearchReadResult,
+  SearchReadInputSchema,
+  type SearchInput,
+  type SearchReadInput,
+} from "./search.ts";
+import {
   panelMethods,
   validatePanelResult,
   type PanelBackend,
@@ -246,6 +254,18 @@ export async function openChat(
     ) as unknown as PanelBackend;
     const api = {
       ...panels,
+      async search(input: SearchInput) {
+        return validateSearchResult(
+          await service.search(validateSearchInput(input), BACKGROUND_CONTEXT),
+        );
+      },
+      async searchRead(input: SearchReadInput) {
+        const value = validate(SearchReadInputSchema, input);
+        return validateSearchReadResult(
+          await service.searchRead(value, BACKGROUND_CONTEXT),
+          value.id,
+        );
+      },
       async compact(input: CompactInput) {
         const value = validate(CompactInputSchema, input);
         const result = validate(

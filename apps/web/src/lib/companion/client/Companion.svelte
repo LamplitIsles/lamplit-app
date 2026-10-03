@@ -185,7 +185,6 @@
     hasEarlier: false,
   };
   export let onHistoryOpenChange: ((open: boolean) => void) | undefined;
-  export let chatOnly = false;
   export let panelRevision = 0;
   export let appearance: CompanionAppearance = "system";
   export let onAppearanceChange: (
@@ -1918,14 +1917,14 @@
           </Popover>
         </div>
       {/if}
-      {#if !chatOnly}<button
-          type="button"
-          class="button button-tonal button-round companion-search-trigger"
-          aria-label={t("search.open")}
-          aria-haspopup="dialog"
-          on:click={openSearch}
-          ><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button
-        >{/if}
+      <button
+        type="button"
+        class="button button-tonal button-round companion-search-trigger"
+        aria-label={t("search.open")}
+        aria-haspopup="dialog"
+        on:click={openSearch}
+        ><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button
+      >
       <div class="companion-preferences">
         <button
           bind:this={preferencesButton}
@@ -3120,6 +3119,7 @@
     </div>
   </Panel>
   {#if searchOpen}<ConversationSearch
+      {actions}
       {t}
       {locale}
       companionName={identity.companionName}

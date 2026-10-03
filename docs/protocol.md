@@ -138,3 +138,13 @@ the wire. Native completion invalidates stale tokens until fresh usage exists;
 it never adds a terminal notice or historical marker to chat. Native running and
 failed lifecycle facts remain observable. Commands are not submission operations,
 are not stored in pending input and are never replayed after a lost response.
+
+## Conversation archive reads
+
+`search({ query })` and `searchRead({ id })` are on-demand, runtime-validated reads
+on `lamplit.chat.v1`; they never alter replicated view or execute the engine.
+See [search schemas and bounds](conversation-search.md#public-app-contract) for
+individual message/summary cards, nullable totals, native metadata, opaque record
+identity and bounded nearby context. No cwd/source paths cross the public boundary.
+An oversized serialized method reply becomes an RPC error before delivery, retaining
+the normal chat connection; slow-consumer output backpressure still reconnects.

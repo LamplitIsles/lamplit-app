@@ -1,3 +1,4 @@
+import { searchFixture } from "./search-fixture.ts";
 import { panelsFixture } from "./panels-fixture.ts";
 import {
   capabilities,
@@ -26,6 +27,7 @@ export function fixtureBackend() {
   const panels = panelsFixture();
   const backend: ChatBackend = {
     ...panels.backend,
+    ...searchFixture().backend,
     async read(): Promise<ChatView> {
       return {
         version: 1,
@@ -93,6 +95,13 @@ export function fixtureBackend() {
   return {
     backend,
     panels,
+    reset() {
+      active = null;
+      messages.length = 0;
+      submissions.clear();
+      executions = 0;
+      changed();
+    },
     remind() {
       messages.push({
         id: crypto.randomUUID(),

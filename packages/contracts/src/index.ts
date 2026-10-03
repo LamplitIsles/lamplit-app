@@ -1,3 +1,5 @@
+export * from "./search.ts";
+import type { SearchBackend } from "./search.ts";
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
 export * from "./images.ts";
@@ -123,7 +125,13 @@ type PanelService = {
     context: Context,
   ) => ReturnType<PanelBackend[K]>;
 };
-export interface ChatService extends PanelService {
+type SearchService = {
+  [K in keyof SearchBackend]: (
+    input: Parameters<SearchBackend[K]>[0],
+    context: Context,
+  ) => ReturnType<SearchBackend[K]>;
+};
+export interface ChatService extends PanelService, SearchService {
   view: ReplicatedState<ChatView>;
   compact(input: CompactInput, context: Context): Promise<CompactResult>;
   history(before: string, context: Context): Promise<HistoryPage>;

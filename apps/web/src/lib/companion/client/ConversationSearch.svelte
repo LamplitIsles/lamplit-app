@@ -33,33 +33,12 @@
     textParts,
   } from "./conversation-search-highlight.js";
 
-  type Card = {
-    id: string;
-    kind: "message" | "compaction";
-    sessionId: string;
-    sessionName?: string;
-    cwd: string;
-    role?: "user" | "assistant";
-    phase?: string;
-    createdAt?: string;
-    snippet: string;
-  };
-  type RecordItem = Omit<Card, "snippet"> & { content: string };
-  type ContextItem = {
-    sourceRecordIndex: number;
-    kind: "message" | "compaction" | "tool";
-    role?: "user" | "assistant";
-    content: string;
-    truncated?: boolean;
-  };
-  type Expanded = {
-    record: RecordItem;
-    context: {
-      targetSourceRecordIndex: number;
-      truncated: boolean;
-      items: ContextItem[];
-    };
-  };
+  import type {
+    SearchCard as Card,
+    SearchReadResult as Expanded,
+  } from "@lamplit/contracts";
+  import type { CompanionActions } from "./companion-bridge.ts";
+  export let actions: CompanionActions;
 
   export let t: CompanionTranslate;
   export let locale: string;
@@ -71,7 +50,8 @@
   let query = "";
   let searched = "";
   let results: Card[] = [];
-  let estimatedTotal = 0;
+  let estimatedTotal: number | null = null;
+  let limited = false;
   let searchedOnce = false;
   let searching = false;
   let searchError = false;
@@ -112,6 +92,8 @@
     searchRequest?.abort();
     const request = new AbortController();
     searchRequest = request;
+    readRequest?.abort();
+    readRequest = undefined;
     searched = value;
     searchedOnce = true;
     searching = true;
@@ -120,18 +102,12 @@
     selected = undefined;
     expanded = undefined;
     try {
-      const response = await fetch(
-        `/api/conversation-search?q=${encodeURIComponent(value)}`,
-        { signal: request.signal },
-      );
-      if (!response.ok) throw new Error("Search unavailable");
-      const data = (await response.json()) as {
-        estimatedTotalHits: number;
-        hits: Card[];
-      };
+      if (!actions.search) throw new Error("Search unavailable");
+      const data = await actions.search({ query: value });
       if (searchRequest !== request) return;
       results = data.hits;
       estimatedTotal = data.estimatedTotalHits;
+      limited = data.limited;
     } catch (error) {
       if (searchRequest === request && (error as Error).name !== "AbortError")
         searchError = true;
@@ -148,19 +124,16 @@
     reading = true;
     readError = false;
     try {
-      const response = await fetch(`/api/conversation-search/${card.id}`, {
-        signal: request.signal,
-      });
-      if (!response.ok) throw new Error("Record unavailable");
-      const data = (await response.json()) as Expanded;
-      if (readRequest === request) expanded = data;
+      if (!actions.searchRead) throw new Error("Record unavailable");
+      const data = await actions.searchRead({ id: card.id });
+      if (readRequest === request && !request.signal.aborted) expanded = data;
     } catch (error) {
       if (readRequest === request && (error as Error).name !== "AbortError")
         readError = true;
     } finally {
       if (readRequest === request) reading = false;
     }
-    if (readRequest !== request || !expanded) return;
+    if (readRequest !== request || request.signal.aborted || !expanded) return;
     await tick();
     reader = dialog.querySelector<HTMLDivElement>(".companion-search-reader")!;
     if (readRequest !== request || selected?.id !== card.id) return;
@@ -188,6 +161,7 @@
   }
   function backToResults() {
     readRequest?.abort();
+    readRequest = undefined;
     selected = undefined;
     expanded = undefined;
   }
@@ -360,8 +334,8 @@
         {:else}
           <BlockTitle aria-live="polite"
             >{t("search.count", {
-              count: estimatedTotal,
-            })}{#if estimatedTotal > results.length}
+              count: estimatedTotal ?? results.length,
+            })}{#if limited || (estimatedTotal !== null && estimatedTotal > results.length)}
               · {t("search.limit")}{/if}</BlockTitle
           >
           <List mediaList strong inset dividers class="companion-search-list">

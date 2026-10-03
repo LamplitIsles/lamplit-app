@@ -1,3 +1,4 @@
+import { searchFixture } from "./search-fixture.ts";
 import {
   capabilities,
   mediaUrl,
@@ -111,6 +112,7 @@ export function imagesFixture() {
   ];
   const backend: ChatBackend = {
     ...panels.backend,
+    ...searchFixture().backend,
     async album() {
       return { images: album().slice(-30), nextCursor: null };
     },
