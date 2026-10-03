@@ -246,9 +246,6 @@
 .companion-message-time {
   display: block;
 }
-.companion-row-pending .message-bubble {
-  opacity: 0.6;
-}
 .companion-meta {
   margin-top: 4px;
 }

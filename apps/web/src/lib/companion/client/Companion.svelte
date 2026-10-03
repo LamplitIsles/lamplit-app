@@ -296,6 +296,7 @@
   let imageIntakeFailure: CompanionMessage | undefined;
   let imageDraftSessionId: string | undefined;
   let recoveredDraftKey = "";
+  let recoveredPendingKey = "";
   let recoveredDraftToken = 0;
   let replacementSourceIds: readonly string[] = [];
   let missingRecoveryImages = false;
@@ -393,6 +394,7 @@
     imageDrafts = [];
     imageDraftSessionId = sessionId;
     recoveredDraftKey = "";
+    recoveredPendingKey = "";
     recoveredDraftToken += 1;
     replacementSourceIds = [];
     missingRecoveryImages = false;
@@ -408,6 +410,7 @@
   ) {
     replacementSourceIds = [];
     recoveredDraftKey = "";
+    recoveredPendingKey = "";
   }
   $: if (projection.canSubmit === false && voiceBusy) void cancelVoiceInput();
   $: if (sessionId !== voiceSessionId) {
@@ -481,6 +484,7 @@
   ): Promise<void> {
     const token = ++recoveredDraftToken;
     recoveredDraftKey = draft.key;
+    recoveredPendingKey = draft.localPendingKey ?? "";
     if (sessionId !== imageDraftSessionId) return;
     if (
       composer.draft.trim() ||
@@ -516,6 +520,7 @@
       recoveredDraft.state === "uncertain"
     ) {
       recoveredDraftKey = "";
+      recoveredPendingKey = "";
       return;
     }
     composer = { ...composer, draft: draft.input, composing: false };
@@ -680,9 +685,10 @@
     if (sessionId === originSessionId && sessionId === imageDraftSessionId) {
       composer = {
         ...composer,
-        draft: composer.draft
-          ? `${restoreText}\n${composer.draft}`
-          : restoreText,
+        draft:
+          restoreText && composer.draft
+            ? `${restoreText}\n${composer.draft}`
+            : restoreText || composer.draft,
         composing: false,
       };
       imageDrafts = [...imageDrafts, ...images];
@@ -1137,6 +1143,9 @@
     const originSessionId = sessionId;
     const sources = replacementSourceIds;
     replacementSourceIds = [];
+    // Local recovery ownership is independent of native replacement sources.
+    if (recoveredPendingKey) actions.dismissRecovery?.(recoveredPendingKey);
+    recoveredPendingKey = "";
     composer = {
       ...reduceComposer(composer, { type: "submit" }),
       draft: "",
@@ -1147,6 +1156,10 @@
     void tick().then(returnToLatest);
     void scheduleComposerResize();
     const onRetire = (retirement: PendingSubmissionRetirement): void => {
+      if (retirement.reason === "failed" && sessionId === originSessionId)
+        replacementSourceIds = [
+          ...new Set([...replacementSourceIds, ...sources]),
+        ];
       retireSubmission(
         submittedDrafts,
         retirement,
@@ -1165,9 +1178,10 @@
         ) {
           composer = {
             ...composer,
-            draft: composer.draft
-              ? `${restoreText}\n${composer.draft}`
-              : restoreText,
+            draft:
+              restoreText && composer.draft
+                ? `${restoreText}\n${composer.draft}`
+                : restoreText || composer.draft,
             composing: false,
           };
           imageDrafts = [...imageDrafts, ...submittedDrafts];
@@ -2127,6 +2141,7 @@
                 on:click={() => {
                   actions.dismissRecovery?.(recoveredDraftKey);
                   recoveredDraftKey = "";
+                  recoveredPendingKey = "";
                   releaseSubmissionImages(imageDrafts);
                   imageDrafts = [];
                   composer = { ...composer, draft: "", composing: false };

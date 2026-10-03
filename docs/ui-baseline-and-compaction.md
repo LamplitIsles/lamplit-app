@@ -35,3 +35,10 @@ The interactive `modes/interactive/components/footer.ts` displays the value dire
 Pi-on-Workers uses a different harness facade from the coding-agent TUI. Reuse its supported active-context projection and estimation primitives to reproduce these semantics; do not import the interactive session/controller or add a TUI dependency. The supported Workers facade and post-compaction semantics passed isolated native acceptance.
 
 Out of scope: changing compaction prompts or algorithms, changing automatic thresholds, message search implementation, replying aloud, plugin infrastructure, deployment or product code changes during this design discussion.
+
+## Optimistic outgoing appearance
+
+Spec #3222 supersedes dimmed pending-send presentation: outgoing text/images use
+the existing normal sent colors immediately, without sending/receipt/consumption
+labels or success toast. Connection feedback stays in the header. Layout, themes
+and the superseded Penpot boundary remain unchanged.

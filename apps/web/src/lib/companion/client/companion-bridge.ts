@@ -62,6 +62,8 @@ export interface CompanionContinuityView {
 
 export interface CompanionRecoveredDraft {
   key: string;
+  /** Local pending record retired when this restored draft is intentionally submitted. */
+  localPendingKey?: string;
   sourceIds: readonly string[];
   input: string;
   state: "rejected" | "unconsumed" | "uncertain";

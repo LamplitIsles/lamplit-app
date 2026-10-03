@@ -7,7 +7,11 @@ contracts package. A deployment selects one engine; the frontend does not select
 or switch engines inside a conversation.
 
 The app supports main-session text history, sending and steering,
-completed-message delivery, targeted stop, and reconnect reconciliation. Agent
+completed-message delivery, targeted stop, and reconnect reconciliation. Online
+sends appear immediately as normal outgoing bubbles, including images before
+upload finishes. Success is silent; offline text/images stay editable. Confirmed
+nonadmission returns failed content alongside newer edits. Lost replies keep the
+optimistic message while its exact operation is looked up, without automatic replay. Agent
 messages appear when each message is complete, as in an IM app. Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
 reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
@@ -37,6 +41,7 @@ bun run build
 bun run test:browser
 bun run test:panels-browser
 bun run test:images-browser
+bun tests/optimistic-send-browser.mjs
 bun run test:compact-browser
 bun run test:search-browser
 bun run test:route-lifecycle-browser
@@ -119,7 +124,7 @@ field definitions, limits and native integration requirements.
 
 Choose or paste supported images, preview/remove them, and send alone or with text.
 The connected host advertises its limits: Pi up to six / 8 MB each / 24 MB originals
-per operation; CFL five / 5 MiB / 20 MiB. Failed upload retains editable selections.
+per operation; CFL five / 5 MiB / 20 MiB. Failed upload restores editable selections alongside newer drafts.
 Submitted input recovery offers explicit inspection/restoration without replacing
 current edits. Missing originals require explicit removal; uncertain delivery is
 inspected and never automatically retried. Unsent drafts are not saved across reload.

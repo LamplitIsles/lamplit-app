@@ -24,6 +24,7 @@ bun run build
 bun run test:browser
 bun run test:panels-browser
 bun run test:images-browser
+bun tests/optimistic-send-browser.mjs
 bun run test:compact-browser
 bun run test:search-browser
 bun run test:route-lifecycle-browser
@@ -32,7 +33,7 @@ bun tests/notifications-browser.mjs
 
 `test:browser` runs text and voice separately: seven feature runners in total
 (text, voice, panels, images, compact, search, notifications), plus the route
-lifecycle regression. Notifications use a recording native API fake; the other
+lifecycle regression and a synthetic optimistic-send admission-gate runner. Notifications use a recording native API fake; the other
 App runners inject denied permission so they never request real OS permission.
 The route lifecycle regression uses real intercepted requests and waits for held
 handlers to settle; genuine route errors fail the process. All fixture hosts use
@@ -52,7 +53,8 @@ an existing identity. Historical artifacts are never overwritten. The single
 `lamplit-default-shared-frontend.tgz` contains `browser/`, `contracts/package/`,
 `acceptance/`, three per-file SHA256 manifests and `SOURCE_HEAD`. The acceptance
 package includes all seven feature runners, route regression, their fixtures/helpers
-(including `notification-permission.mjs`), the notification acceptance guide,
+(including `notification-permission.mjs` and the synthetic-only
+`optimistic-send-browser.mjs`), the notification acceptance guide,
 licenses, source attribution and native-control docs. Its package pins Playwright;
 compiled contracts retain their declared Chord/TypeBox dependencies.
 `identity.json` records exact committed source HEAD, fixed baseline, archive hash
@@ -78,7 +80,9 @@ frozen source. For extracted App fixture acceptance, from `acceptance/` set
 `APP_ACCEPTANCE_ASSETS=../browser` and run each of `bun browser.mjs`,
 `bun voice-browser.mjs`, `bun panels-browser.mjs`, `bun images-browser.mjs`,
 `bun compact-browser.mjs`, `bun search-browser.mjs`,
-`bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs`. Set
+`bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs` and `bun optimistic-send-browser.mjs`.
+The latter uses isolated image/WS fixtures, held upload/receipt gates, computed
+opacity/color and 390/1280 light/dark screenshots; it has no actual-host mode. Set
 `APP_ACCEPTANCE_EVIDENCE` to a separate
 absolute test-owned directory for each feature. Repeat all three per-file checks
 and archive/manifest hash checks after every native run; never rebuild or edit
@@ -108,7 +112,7 @@ Both new controls accept JSON POST and return state after the action. Text uses
 
 Keep fake turns held until `complete` or actual native stop. Text verifies completed
 reply after offline/reconnect, refresh, stop before reply, explicit missing-operation
-retry under the actual session's localStorage key with no automatic/duplicate
+restoration under the actual session's localStorage key with no automatic/duplicate
 execution, safe external links, keyboard/mouse menus, theme and language.
 The external-link page is a separate test-owned loopback HTTP origin; no browser
 route fulfillment or product API mock is used.

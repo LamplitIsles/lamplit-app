@@ -19,7 +19,11 @@ import {
 import { openChat } from "@lamplit/contracts/client";
 import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
+import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
 export type PendingSend = Submission & {
+  /** Sticky native admission fact; execution rejection cannot revoke it. */
+  admitted?: boolean;
+  previews?: readonly { id: string; name: string; previewUrl: string }[];
   createdAt: number;
   state:
     | "submitting"
@@ -50,7 +54,11 @@ export class ChatController {
   private connectionGeneration = 0;
   private storageKey = "";
   private receiptChecks = Promise.resolve();
-  private retirements = new Map<string, () => void>();
+  private retirements = new Map<
+    string,
+    (result: PendingSubmissionRetirement) => void
+  >();
+  private inFlight = new Set<string>();
   constructor(
     private changed: () => void,
     private storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
@@ -160,8 +168,10 @@ export class ChatController {
     this.connectionGeneration++;
     this.compactGeneration++;
     this.compactPending = false;
-    for (const retire of this.retirements.values()) retire();
+    for (const retire of this.retirements.values())
+      retire({ reason: "observed" });
     this.retirements.clear();
+    this.inFlight.clear();
     this.relationshipGeneration++;
     clearTimeout(this.timer);
     this.client?.close();
@@ -171,7 +181,12 @@ export class ChatController {
     try {
       this.storage.setItem(
         this.storageKey,
-        JSON.stringify(this.pending.slice(-20)),
+        JSON.stringify(
+          this.pending
+            .filter((p) => !p.previews || p.images)
+            .slice(-20)
+            .map(({ previews: _previews, ...input }) => input),
+        ),
       );
     } catch {
       this.error = "无法保存发送状态，请保持此页面打开。";
@@ -187,8 +202,10 @@ export class ChatController {
     this.pending = [];
     this.older = [];
     this.before = null;
-    for (const retire of this.retirements.values()) retire();
+    for (const retire of this.retirements.values())
+      retire({ reason: "observed" });
     this.retirements.clear();
+    this.inFlight.clear();
     this.recovery = [];
     this.dismissed.clear();
     this.relationshipGeneration++;
@@ -220,7 +237,15 @@ export class ChatController {
             this.pending.push({
               ...input,
               createdAt: item.createdAt,
-              state: "uncertain",
+              admitted: item.admitted === true,
+              state:
+                item.admitted === true && item.state === "rejected"
+                  ? "rejected"
+                  : ["accepted", "consumed"].includes(item.state)
+                    ? "accepted"
+                    : item.state === "unconsumed"
+                      ? "unconsumed"
+                      : "uncertain",
             });
         }
     } catch {
@@ -248,7 +273,7 @@ export class ChatController {
     const observed = new Set(view.messages.map((m) => m.operationId));
     this.pending = this.pending.filter((p) => {
       if (!observed.has(p.operationId)) return true;
-      this.retirements.get(p.operationId)?.();
+      this.retirements.get(p.operationId)?.({ reason: "observed" });
       this.retirements.delete(p.operationId);
       return false;
     });
@@ -274,9 +299,16 @@ export class ChatController {
     const task = this.receiptChecks.then(async () => {
       if (!client || this.client !== client || this.storageKey !== key) return;
       for (const input of this.pending) {
-        if (input.state === "submitting" || input.state === "consumed")
+        if (this.inFlight.has(input.operationId) || input.state === "consumed")
           continue;
-        const receipt = await client.lookup(input.operationId);
+        let receipt = await client.lookup(input.operationId);
+        if (this.client !== client || this.storageKey !== key) return;
+        // A missing lookup must be settled and rechecked before withdrawing input.
+        if (
+          receipt.state === "missing" &&
+          !this.inFlight.has(input.operationId)
+        )
+          receipt = await client.lookup(input.operationId);
         if (this.client !== client || this.storageKey !== key) return;
         this.applyReceipt(receipt);
       }
@@ -346,31 +378,45 @@ export class ChatController {
     }
   }
   private applyReceipt(receipt: Receipt) {
-    if (receipt.state === "consumed") {
-      // The replicated message may arrive after its receipt; retain local echo until observed.
-      this.pending = this.pending.map((p) =>
-        p.operationId === receipt.operationId ? { ...p, state: "consumed" } : p,
-      );
+    const pending = this.pending.find(
+      (p) => p.operationId === receipt.operationId,
+    );
+    if (!pending) return; // Native observation or a session change already retired it.
+    const admitted =
+      receipt.messageId !== null ||
+      ["accepted", "consumed", "unconsumed"].includes(receipt.state) ||
+      pending.admitted === true ||
+      pending.state === "accepted" ||
+      pending.state === "consumed" ||
+      pending.state === "unconsumed";
+    if (admitted && ["missing", "uncertain"].includes(receipt.state)) {
+      if (!pending.admitted) {
+        this.pending = this.pending.map((p) =>
+          p === pending ? { ...p, admitted: true } : p,
+        );
+        this.save();
+        this.changed();
+      }
+      return;
+    }
+    if (receipt.state === "missing" && this.inFlight.has(receipt.operationId))
+      return;
+    const retire = this.retirements.get(receipt.operationId);
+    if (
+      !admitted &&
+      (receipt.state === "rejected" || receipt.state === "missing") &&
+      retire
+    ) {
+      this.pending = this.pending.filter((p) => p !== pending);
+      this.retirements.delete(receipt.operationId);
+      retire({ reason: "failed" });
+      this.error = "消息未发送，请编辑后重试。";
     } else {
       this.pending = this.pending.map((p) =>
-        p.operationId === receipt.operationId
-          ? {
-              ...p,
-              state:
-                receipt.state === "rejected"
-                  ? "rejected"
-                  : receipt.state === "unconsumed"
-                    ? "unconsumed"
-                    : receipt.state === "accepted"
-                      ? "accepted"
-                      : receipt.state === "missing"
-                        ? "missing"
-                        : "uncertain",
-            }
-          : p,
+        p === pending ? { ...p, state: receipt.state, admitted } : p,
       );
-      if (receipt.state === "rejected")
-        this.error = receipt.error ?? "消息未被接收，请检查聊天记录。";
+      if (receipt.state === "rejected" || receipt.state === "unconsumed")
+        this.error = "这条消息未能继续处理，请检查并恢复编辑。";
     }
     this.updateRecovery();
     this.save();
@@ -403,6 +449,23 @@ export class ChatController {
     );
   }
   dismissRecovery(sourceId: string) {
+    const local = this.pending.find(
+      (p) =>
+        p.operationId === sourceId &&
+        (p.state === "missing" || p.state === "rejected"),
+    );
+    if (local) {
+      this.retirements.get(sourceId)?.({ reason: "observed" });
+      this.retirements.delete(sourceId);
+    }
+    this.pending = this.pending.filter(
+      (p) =>
+        !(
+          p.operationId === sourceId &&
+          (p.state === "missing" || p.state === "rejected")
+        ),
+    );
+    this.save();
     this.dismissed.add(sourceId);
     this.recovery = this.recovery.filter((r) => r.sourceId !== sourceId);
     this.changed();
@@ -448,14 +511,14 @@ export class ChatController {
   }
   async send(
     text: string,
-    retired?: () => void,
+    retired?: (result: PendingSubmissionRetirement) => void,
     images: readonly CompanionImageDraft[] = [],
     replacementSourceIds: readonly string[] = [],
   ) {
     if (text === "/compact") {
       if (images.length) throw new Error("compact-with-images");
       await this.compact();
-      retired?.();
+      retired?.({ reason: "observed" });
       return;
     }
     if (this.compactPending || this.view?.compaction?.status === "running")
@@ -485,94 +548,124 @@ export class ChatController {
         throw new Error("恢复状态已改变，请检查聊天记录。");
     };
     checkReplacement();
-    let refs: Submission["images"];
-    if (images.length) {
-      const limits = this.view!.capabilities.images;
-      if (!limits) throw new Error("图片暂不可用");
-      const upload = await preparePhotoUploads(
-        sessionId,
-        operationId,
-        images,
-        limits,
-      );
-      if (!current()) throw new Error("连接已改变，请重新发送");
-      const response = await fetch(new URL(UPLOAD_PATH, location.href), {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(upload),
-      });
-      if (!response.ok) throw new Error("图片上传失败，请重试。");
-      const result = validate(UploadResultSchema, await response.json());
-      if (
-        result.sessionId !== sessionId ||
-        result.operationId !== operationId ||
-        result.images.length !== images.length ||
-        result.images.some((r) => r.availability !== "available")
-      )
-        throw new Error("图片上传结果无效");
-      refs = result.images;
-    }
-    if (!current()) throw new Error("连接已改变，请重新发送");
-    checkReplacement();
-    if (this.pending.length >= 20) throw new Error("请先核对尚未确认的消息");
-    const input = validateSubmission({
+    const pending: PendingSend = {
       operationId,
       text,
-      ...(refs ? { images: refs } : {}),
+      createdAt: Date.now(),
+      state: "submitting",
       ...(replacements.length ? { replacementSourceIds: replacements } : {}),
-    });
-    this.pending = [
-      ...this.pending,
-      { ...input, createdAt: Date.now(), state: "submitting" },
-    ];
-    if (retired) this.retirements.set(input.operationId, retired);
+      ...(images.length
+        ? {
+            previews: images.map((draft) => ({
+              id: draft.id,
+              name: draft.file.name,
+              previewUrl: draft.previewUrl,
+            })),
+          }
+        : {}),
+    };
+    this.pending = [...this.pending, pending];
+    if (retired) this.retirements.set(operationId, retired);
+    this.inFlight.add(operationId);
     this.error = "";
     this.updateRecovery();
     this.save();
     this.changed();
+    let submitted = false;
+    const sameSession = () =>
+      this.view?.sessionId === sessionId && !this.closed;
     try {
+      let refs: Submission["images"];
+      if (images.length) {
+        const limits = this.view!.capabilities.images;
+        if (!limits) throw new Error("图片暂不可用");
+        const upload = await preparePhotoUploads(
+          sessionId,
+          operationId,
+          images,
+          limits,
+        );
+        if (!current()) throw new Error("连接已改变，请重新发送");
+        const response = await fetch(new URL(UPLOAD_PATH, location.href), {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(upload),
+        });
+        if (!response.ok) throw new Error("图片上传失败，请重试。");
+        const result = validate(UploadResultSchema, await response.json());
+        if (
+          result.sessionId !== sessionId ||
+          result.operationId !== operationId ||
+          result.images.length !== images.length ||
+          result.images.some((r) => r.availability !== "available")
+        )
+          throw new Error("图片上传结果无效");
+        refs = result.images;
+      }
+      if (!current()) throw new Error("连接已改变，请重新发送");
+      checkReplacement();
+      const input = validateSubmission({
+        operationId,
+        text,
+        ...(refs ? { images: refs } : {}),
+        ...(replacements.length ? { replacementSourceIds: replacements } : {}),
+      });
+      this.pending = this.pending.map((p) =>
+        p.operationId === operationId ? { ...p, ...input } : p,
+      );
+      this.save();
+      this.changed();
+      submitted = true;
       const receipt = await client.submit(input);
-      if (current()) this.applyReceipt(receipt);
-    } catch {
-      if (current()) {
+      if (sameSession()) {
+        if (receipt.state === "missing") {
+          this.pending = this.pending.map((p) =>
+            p.operationId === operationId && p.state === "submitting"
+              ? { ...p, state: "uncertain" }
+              : p,
+          );
+          this.save();
+          this.changed();
+        } else this.applyReceipt(receipt);
+      }
+    } catch (error) {
+      if (!submitted) {
+        if (sameSession()) {
+          this.pending = this.pending.filter(
+            (p) => p.operationId !== operationId,
+          );
+          const retire = this.retirements.get(operationId);
+          this.retirements.delete(operationId);
+          retire?.({ reason: "failed" });
+          this.error =
+            error instanceof Error ? error.message : "消息未发送，请重试。";
+          this.updateRecovery();
+          this.save();
+          this.changed();
+          if (!retire) throw error;
+        }
+      } else if (sameSession()) {
+        // A transport error cannot undo durable admission or native observation.
         this.pending = this.pending.map((p) =>
-          p.operationId === operationId ? { ...p, state: "uncertain" } : p,
+          p.operationId === operationId && p.state === "submitting"
+            ? { ...p, state: "uncertain" }
+            : p,
         );
         this.updateRecovery();
         this.save();
-        this.error = "消息尚未确认，连接恢复后会核对发送结果。";
         this.changed();
       }
-    }
-  }
-  async retryMissing() {
-    const client = this.client,
-      key = this.storageKey;
-    if (!client) return;
-    for (const p of [...this.pending].filter((p) => p.state === "missing")) {
-      try {
-        const receipt = await client.lookup(p.operationId);
-        if (this.client !== client || this.storageKey !== key) return;
-        if (receipt.state === "missing") {
-          const next = await client.submit(
-            validateSubmission({
-              operationId: p.operationId,
-              text: p.text,
-              ...(p.images ? { images: p.images } : {}),
-              ...(p.replacementSourceIds
-                ? { replacementSourceIds: p.replacementSourceIds }
-                : {}),
-            }),
-          );
-          if (this.client !== client || this.storageKey !== key) return;
-          this.applyReceipt(next);
-        } else this.applyReceipt(receipt);
-      } catch {
-        this.error = "消息尚未确认，请稍后再试。";
-        this.changed();
-        break;
-      }
+    } finally {
+      this.inFlight.delete(operationId);
+      if (
+        sameSession() &&
+        this.client &&
+        this.pending.some(
+          (p) => p.operationId === operationId && p.state === "uncertain",
+        )
+      )
+        void this.reconcile().catch(() => {});
     }
   }
   async stop() {

@@ -113,6 +113,12 @@ See [notification contract and physical acceptance](desktop-companion-notificati
 
 [Protocol](protocol.md) is the public interface authority. Completed assistant
 messages remain IM-style; unfinished model text never enters the public view.
+App sends use immediate normal optimistic text/image bubbles and silent success.
+Offline drafts stay editable; only definite nonadmission or settled, rechecked
+missing lookup returns content. Unknown results reconcile the same operation
+without replay; later native execution failure does not undo accepted input.
+No host/DTO change is needed. This App-only change does not update a CFL source
+pin or deploy either host; consumption is a separate reviewed task.
 Stop targets one native turn and never follows an engine mismatch to a newer turn.
 Voice capability and stream require native authentication and same-origin upgrades.
 Missing/disabled/config-failed speech disables recording without breaking text.

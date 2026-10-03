@@ -87,11 +87,24 @@ workspace files and staged uploads alone are not chat or album membership.
 Choose files, paste images or use the existing native photo hook. Attachments use
 the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
 44px removal targets and native preview/gallery behavior. Images can be sent alone.
-Preparation/upload failure returns editable text and Files without admission.
-Once submitted, bounded reference-only pending metadata is saved per session;
-storage failure is visible. Reconnect looks up exact operations. The existing
-explicit missing-operation retry retains its exact payload and identity; uncertain
-input is never automatically executed.
+Online send immediately shows normal-color text and local image previews while
+the composer clears, before preparation/upload; no sending/receipt/consumption
+labels or success toast appear. Offline clicks keep editable text/images.
+Preparation/upload failure or rejection without durable admission withdraws the echo and merges
+text/Files with newer drafts in the originating session. Settled missing lookup
+is rechecked before rollback; generic RPC error/disconnect never proves failure.
+A receipt with a messageId proves durable admission, including a first rejected receipt
+or rejected lookup after a lost acknowledgement. Native execution failure keeps the
+normal echo and offers explicit human recovery; accepted/native-observed input survives
+stale missing/error. Durable recovery replaces its own admitted operation, not the sources
+that operation previously replaced. Submitting an intentionally restored local pending
+draft retires that local record even when the draft also carries native replacement sources.
+Page-owned previews live until observation/rollback and never enter storage. Only
+bounded reference-only pending metadata is saved once upload finishes; storage
+failure is visible. Reloaded nonadmitted input uses the existing restore-to-edit
+panel and authorized originals, without overwriting current drafts. It has no
+native replacement source unless one was already verified. A later explicit send
+creates a new operation; unknown input only looks up its exact existing identity.
 
 Recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
 current text/images are present; it cannot overwrite new edits. Original bytes are

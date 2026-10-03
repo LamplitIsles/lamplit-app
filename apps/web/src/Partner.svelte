@@ -88,18 +88,6 @@
           alarm: m.source?.kind === "reminder",
           side: m.role === "user" && !m.source ? "outgoing" : "incoming",
           time: m.createdAt,
-          pending:
-            m.role === "user" && !!m.delivery && m.delivery !== "consumed",
-          pendingLabel:
-            m.role !== "user" || !m.delivery || m.delivery === "consumed"
-              ? undefined
-              : m.delivery === "pending"
-                ? "等待接收"
-                : m.delivery === "unconsumed"
-                  ? "未消费"
-                  : m.delivery === "uncertain"
-                    ? "待确认"
-                    : "未被接收",
           items: [
             ...(m.images ?? []).map((image) => ({
               id: `${m.id}:${image.attachmentId}`,
@@ -131,35 +119,34 @@
           ],
         }) as TimelineMessageUnit,
     );
-    for (const p of chatState?.pending ?? [])
+    for (const p of (chatState?.pending ?? []).filter(
+      (p) => p.admitted || (p.state !== "missing" && p.state !== "rejected"),
+    ))
       if (!unique.some((m) => m.operationId === p.operationId))
         units.push({
           id: p.operationId,
           side: "outgoing",
           time: p.createdAt,
-          pending: true,
-          pendingLabel:
-            p.state === "missing"
-              ? "尚未发送"
-              : p.state === "unconsumed"
-                ? "未消费"
-                : p.state === "submitting"
-                  ? "发送中"
-                  : p.state === "accepted" || p.state === "consumed"
-                    ? "已接收"
-                    : p.state === "rejected"
-                      ? "未被接收"
-                      : "待确认",
           items: [
-            ...(p.images ?? []).map((image) => ({
-              id: `${p.operationId}:${image.attachmentId}`,
-              messageKey: p.operationId,
-              kind: "image" as const,
-              side: "outgoing" as const,
-              state: "ready" as const,
-              attachment: image,
-              alt: image.name,
-            })),
+            ...(p.previews
+              ? p.previews.map((image) => ({
+                  id: `${p.operationId}:${image.id}`,
+                  messageKey: p.operationId,
+                  kind: "image" as const,
+                  side: "outgoing" as const,
+                  state: "ready" as const,
+                  previewUrl: image.previewUrl,
+                  alt: image.name,
+                }))
+              : (p.images ?? []).map((image) => ({
+                  id: `${p.operationId}:${image.attachmentId}`,
+                  messageKey: p.operationId,
+                  kind: "image" as const,
+                  side: "outgoing" as const,
+                  state: "ready" as const,
+                  attachment: image,
+                  alt: image.name,
+                }))),
             ...(p.text
               ? [
                   {
@@ -168,7 +155,6 @@
                     kind: "text" as const,
                     side: "outgoing" as const,
                     text: p.text,
-                    pending: true,
                   },
                 ]
               : []),
@@ -193,6 +179,35 @@
       promptError: chatState?.error,
     };
   });
+  const recovered = $derived.by(() => {
+    const native = chatState?.recovery[0];
+    if (native)
+      return {
+        ...native,
+        sourceIds: [native.sourceId],
+        localPendingKey: chatState?.pending.find(
+          (p) =>
+            p.operationId === native.operationId &&
+            (p.state === "missing" || p.state === "rejected"),
+        )?.operationId,
+      };
+    const local = chatState?.pending.find(
+      (p) => p.state === "missing" || p.state === "rejected",
+    );
+    return local
+      ? {
+          sourceId: local.operationId,
+          sourceIds: local.admitted
+            ? [local.operationId]
+            : (local.replacementSourceIds ?? []),
+          localPendingKey: local.operationId,
+          text: local.text,
+          images: local.images ?? [],
+          state: "rejected" as const,
+          replacementEligible: true,
+        }
+      : undefined;
+  });
   const actions: CompanionActions = {
     async send(text, images, retire, sources) {
       if (!controller?.connected)
@@ -201,12 +216,7 @@
         throw new CompanionPreControllerError("请先核对尚未确认的消息。");
       const originSession = controller.view?.sessionId;
       try {
-        await controller.send(
-          text,
-          () => retire?.({ reason: "observed" }),
-          images,
-          sources,
-        );
+        await controller.send(text, retire, images, sources);
       } catch (error) {
         if (controller.view?.sessionId !== originSession)
           throw new CompanionPreControllerError("会话已改变");
@@ -315,14 +325,15 @@
     writePreference(APPEARANCE_STORAGE_KEY, value);
   }}
   imageLimits={chatState?.view?.capabilities.images || undefined}
-  recoveredDraft={chatState?.recovery[0]
+  recoveredDraft={recovered
     ? {
-        key: chatState.recovery[0].sourceId,
-        sourceIds: [chatState.recovery[0].sourceId],
-        input: chatState.recovery[0].text,
-        state: chatState.recovery[0].state,
-        replacementEligible: chatState.recovery[0].replacementEligible,
-        images: chatState.recovery[0].images.map((image) => ({
+        key: recovered.sourceId,
+        localPendingKey: recovered.localPendingKey,
+        sourceIds: recovered.sourceIds,
+        input: recovered.text,
+        state: recovered.state,
+        replacementEligible: recovered.replacementEligible,
+        images: recovered.images.map((image) => ({
           id: image.attachmentId,
           name: image.name,
           url: mediaUrl(image.attachmentId),
@@ -356,21 +367,3 @@
   workspaceReadiness={chatState?.view ? "ready" : "loading"}
   sessionReadiness={chatState?.view ? "ready" : "loading"}
 />
-{#if chatState?.pending.some((p) => p.state === "missing")}
-  <div class="pending-retry">
-    <button
-      class="button button-fill"
-      onclick={() => void controller.retryMissing()}>重试未发送消息</button
-    >
-  </div>
-{/if}
-
-<style>
-  .pending-retry {
-    position: fixed;
-    top: 80px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-  }
-</style>
