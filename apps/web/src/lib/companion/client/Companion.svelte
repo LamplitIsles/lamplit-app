@@ -2785,13 +2785,6 @@
       <h2>{identity.companionName}</h2>
       <button
         type="button"
-        class="button button-tonal button-small"
-        aria-label={t("alarm.refresh")}
-        on:click={refreshVisiblePanel}
-        ><RefreshCw size={16} aria-hidden="true" /></button
-      >
-      <button
-        type="button"
         class="button button-tonal button-round button-small"
         aria-label={t("relationship.close")}
         on:click={() => closeDetail()}

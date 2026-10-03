@@ -235,10 +235,13 @@ try {
         await drawer.locator('[role="alert"]').getByRole("button").click();
         await expect(drawer.locator('[role="alert"]')).toHaveCount(0);
         fixture.panels.empty.add(method);
-        await drawer
-          .getByRole("button", { name: "刷新", exact: true })
-          .first()
-          .click();
+        // History/diary/album reload through their tab; reminders keep their own refresh.
+        if (method !== "reminders")
+          await drawer.getByRole("tab", { name: tab, exact: true }).click();
+        else
+          await drawer
+            .getByRole("button", { name: "刷新", exact: true })
+            .click();
         await expect(
           drawer.getByText(
             {

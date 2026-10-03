@@ -2,7 +2,12 @@
 
 The browser opens a same-origin WebSocket at `/api/chat/socket`. A connection is
 an observation/control channel; closing it never means stopping engine execution.
-Static assets and media continue to use HTTP.
+Static assets and media continue to use HTTP. `GET /api/chat/appearance` returns
+validated display names, optional companion/user avatar URLs and optional
+landscape/portrait backgrounds from the deployment's existing configuration.
+The endpoint and its assets use the same owner authentication as chat; responses
+are not cached. Empty names use the chat name and the localized user label.
+Reloading the page reads updated configuration.
 
 `lamplit.chat.v1` is a Chord singleton with:
 
@@ -25,9 +30,15 @@ A reply is one complete agent message with a stable native identity. A turn can
 produce multiple messages. No unfinished text/token deltas enter the public view.
 A later failure or stop does not turn unfinished text into a successful message.
 Completed messages are retained independently of a turn's final outcome.
-Native terminal results are projected as stable notice messages, independently
-of assistant text: completed, failed or stopped. A stop before generation must
-still produce its stopped outcome.
+Successful completion clears the active turn without adding a chat notice.
+Failed and stopped results remain stable notice messages, independently of
+assistant text. A stop before generation must still produce its stopped outcome.
+A new send appears locally while its submission is in flight. A consumed receipt
+retains that local message until the replicated message is observed, avoiding a
+blank interval between admission and transcript synchronization. Recovery does
+not offer the same uncertain input while local submission or confirmed admission
+is pending; failures/disconnection return it to uncertainty. Reloaded sends are
+always reconciled instead of trusting the previous page's in-flight state.
 The browser retains observed messages that leave the bounded live window and
 merges them with paged history by stable identity.
 

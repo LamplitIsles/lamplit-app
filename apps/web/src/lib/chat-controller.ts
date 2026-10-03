@@ -21,7 +21,14 @@ import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
 export type PendingSend = Submission & {
   createdAt: number;
-  state: "uncertain" | "missing" | "accepted" | "unconsumed" | "rejected";
+  state:
+    | "submitting"
+    | "consumed"
+    | "uncertain"
+    | "missing"
+    | "accepted"
+    | "unconsumed"
+    | "rejected";
 };
 export class ChatController {
   view?: ChatView;
@@ -232,9 +239,7 @@ export class ChatController {
       ).values(),
     ].filter((message) => !liveIds.has(message.id));
     this.view = view;
-    this.recovery = view.recovery.filter(
-      (r) => !this.dismissed.has(r.sourceId),
-    );
+
     if (!previous || previous.sessionId !== view.sessionId)
       this.before = view.before;
     else if (!this.older.length) this.before = view.before;
@@ -245,6 +250,7 @@ export class ChatController {
       this.retirements.delete(p.operationId);
       return false;
     });
+    this.updateRecovery();
     if (
       (previous?.activeTurnId && !view.activeTurnId) ||
       (previous && previous.sessionId !== view.sessionId && this.client)
@@ -266,6 +272,8 @@ export class ChatController {
     const task = this.receiptChecks.then(async () => {
       if (!client || this.client !== client || this.storageKey !== key) return;
       for (const input of this.pending) {
+        if (input.state === "submitting" || input.state === "consumed")
+          continue;
         const receipt = await client.lookup(input.operationId);
         if (this.client !== client || this.storageKey !== key) return;
         this.applyReceipt(receipt);
@@ -277,6 +285,11 @@ export class ChatController {
   private disconnected = () => {
     if (this.closed) return;
     this.connected = false;
+    this.pending = this.pending.map((p) =>
+      p.state === "submitting" ? { ...p, state: "uncertain" } : p,
+    );
+    this.updateRecovery();
+    if (this.storageKey) this.save();
     if (this.compactPending) {
       this.compactGeneration++;
       this.compactPending = false;
@@ -332,11 +345,10 @@ export class ChatController {
   }
   private applyReceipt(receipt: Receipt) {
     if (receipt.state === "consumed") {
-      this.pending = this.pending.filter(
-        (p) => p.operationId !== receipt.operationId,
+      // The replicated message may arrive after its receipt; retain local echo until observed.
+      this.pending = this.pending.map((p) =>
+        p.operationId === receipt.operationId ? { ...p, state: "consumed" } : p,
       );
-      this.retirements.get(receipt.operationId)?.();
-      this.retirements.delete(receipt.operationId);
     } else {
       this.pending = this.pending.map((p) =>
         p.operationId === receipt.operationId
@@ -358,8 +370,25 @@ export class ChatController {
       if (receipt.state === "rejected")
         this.error = receipt.error ?? "消息未被接收，请检查聊天记录。";
     }
+    this.updateRecovery();
     this.save();
     this.changed();
+  }
+  private updateRecovery() {
+    this.recovery = (this.view?.recovery ?? []).filter(
+      (r) =>
+        !this.dismissed.has(r.sourceId) &&
+        !(
+          r.state === "uncertain" &&
+          this.pending.some(
+            (p) =>
+              p.operationId === r.operationId &&
+              (p.state === "submitting" ||
+                p.state === "accepted" ||
+                p.state === "consumed"),
+          )
+        ),
+    );
   }
   dismissRecovery(sourceId: string) {
     this.dismissed.add(sourceId);
@@ -483,10 +512,11 @@ export class ChatController {
     });
     this.pending = [
       ...this.pending,
-      { ...input, createdAt: Date.now(), state: "uncertain" },
+      { ...input, createdAt: Date.now(), state: "submitting" },
     ];
     if (retired) this.retirements.set(input.operationId, retired);
     this.error = "";
+    this.updateRecovery();
     this.save();
     this.changed();
     try {
@@ -494,6 +524,11 @@ export class ChatController {
       if (current()) this.applyReceipt(receipt);
     } catch {
       if (current()) {
+        this.pending = this.pending.map((p) =>
+          p.operationId === operationId ? { ...p, state: "uncertain" } : p,
+        );
+        this.updateRecovery();
+        this.save();
         this.error = "消息尚未确认，连接恢复后会核对发送结果。";
         this.changed();
       }

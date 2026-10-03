@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { mediaUrl, type ImageRef } from "@lamplit/contracts";
+  import {
+    APPEARANCE_PATH,
+    validateChatAppearance,
+    type ChatAppearance,
+    mediaUrl,
+    type ImageRef,
+  } from "@lamplit/contracts";
   import { affinityStage } from "./lib/companion/domain.ts";
   import { onMount } from "svelte";
   import { f7, f7ready } from "framework7-svelte";
@@ -29,6 +35,7 @@
     "loading",
   );
   let revision = $state(0);
+  let profile = $state<ChatAppearance>();
   let controller: ChatController;
   const preferences = initialPreferences();
   let language = $state<CompanionLanguage>(preferences.language);
@@ -135,11 +142,13 @@
               ? "尚未发送"
               : p.state === "unconsumed"
                 ? "未消费"
-                : p.state === "accepted"
-                  ? "已接收"
-                  : p.state === "rejected"
-                    ? "未被接收"
-                    : "待确认",
+                : p.state === "submitting"
+                  ? "发送中"
+                  : p.state === "accepted" || p.state === "consumed"
+                    ? "已接收"
+                    : p.state === "rejected"
+                      ? "未被接收"
+                      : "待确认",
           items: [
             ...(p.images ?? []).map((image) => ({
               id: `${p.operationId}:${image.attachmentId}`,
@@ -231,6 +240,13 @@
     updateScheme();
     media.addEventListener("change", updateScheme);
     const abort = new AbortController();
+    void fetch(APPEARANCE_PATH, { signal: abort.signal, cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Appearance unavailable");
+        const value = validateChatAppearance(await response.json());
+        if (!abort.signal.aborted) profile = value;
+      })
+      .catch(() => {});
     void fetch(VOICE_CAPABILITY_PATH, {
       signal: abort.signal,
       cache: "no-store",
@@ -257,9 +273,13 @@
   });
 </script>
 
-<svelte:head><title>{chatState?.view?.name ?? "Lamplit"}</title></svelte:head>
+<svelte:head
+  ><title>{profile?.companionName || chatState?.view?.name || "Lamplit"}</title
+  ></svelte:head
+>
 <Companion
   {projection}
+  backgrounds={profile?.backgrounds}
   continuity={{
     contextPressure: chatState?.view?.contextUsage,
     lifecycle: chatState?.view?.compaction,
@@ -303,9 +323,11 @@
   sessionId={chatState?.view?.sessionId}
   {voiceCapability}
   identity={{
-    companionName: chatState?.view?.name ?? "Lamplit",
-    userName: "你",
-    preferredAddress: "你",
+    companionName: profile?.companionName || chatState?.view?.name || "Lamplit",
+    companionAvatar: profile?.companionAvatar,
+    userAvatar: profile?.userAvatar,
+    userName: profile?.userName || t("you"),
+    preferredAddress: profile?.userName || t("you"),
     signature: chatState?.relationship?.current.signature ?? t("loading"),
     moodLabel: chatState?.relationship
       ? t(`mood.${chatState.relationship.current.mood}`)

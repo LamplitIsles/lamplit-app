@@ -203,3 +203,136 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
     else Reflect.deleteProperty(globalThis, "location");
   }
 });
+
+test("an in-flight send stays visible until observed and is not offered as recovery", async () => {
+  const { fixtureBackend } = await import("./fixture.ts");
+  const fixture = fixtureBackend();
+  let submitted:
+    | import("../packages/contracts/src/index.ts").Submission
+    | undefined;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let observed = false;
+  const backend: ChatBackend = {
+    ...fixture.backend,
+    async read() {
+      const view = await fixture.backend.read();
+      return {
+        ...view,
+        messages: observed ? view.messages : [],
+        recovery:
+          submitted && !observed
+            ? [
+                {
+                  sourceId: submitted.operationId,
+                  operationId: submitted.operationId,
+                  text: submitted.text,
+                  images: [],
+                  state: "uncertain" as const,
+                  replacementEligible: false,
+                },
+              ]
+            : [],
+      };
+    },
+    async submit(input) {
+      submitted = input;
+      await gate;
+      return fixture.backend.submit(input);
+    },
+  };
+  const host = await createChatHost(backend);
+  const channels = new Map<object, ReturnType<typeof host.connect>>();
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      open(ws) {
+        channels.set(
+          ws,
+          host.connect(ws, async () => true),
+        );
+      },
+      message(ws, raw) {
+        void channels.get(ws)!.receive(String(raw));
+      },
+      close(ws) {
+        channels.get(ws)?.close();
+        channels.delete(ws);
+      },
+    },
+  });
+  const previousLocation = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "location",
+  );
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { href: `http://127.0.0.1:${server.port}/` },
+  });
+  const saved = new Map<string, string>();
+  const controller = new ChatController(() => {}, {
+    getItem: (key) => saved.get(key) ?? null,
+    setItem: (key, value) => {
+      saved.set(key, value);
+    },
+  });
+  let retired = 0;
+  try {
+    controller.start();
+    await eventually(() => controller.connected);
+    const send = controller.send("delayed native admission", () => {
+      retired++;
+    });
+    // Local echo must precede the native receipt.
+    expect(controller.pending.map((p) => p.text)).toEqual([
+      "delayed native admission",
+    ]);
+    await eventually(() => !!submitted);
+    await host.refresh();
+    await eventually(() => controller.view!.recovery.length === 1);
+    expect(controller.recovery).toEqual([]);
+    expect(controller.pending[0]!.state).toBe("submitting");
+    release();
+    await send;
+    // A consumed receipt can precede the replicated user message.
+    expect(controller.pending.map((p) => p.text)).toEqual([
+      "delayed native admission",
+    ]);
+    expect(retired).toBe(0);
+    observed = true;
+    await host.refresh();
+    await eventually(() =>
+      controller.view!.messages.some(
+        (m) => m.operationId === submitted!.operationId,
+      ),
+    );
+    expect(controller.pending).toEqual([]);
+    expect(controller.recovery).toEqual([]);
+    expect(retired).toBe(1);
+    // A real failed admission still exposes the backend's uncertain recovery.
+    backend.submit = async (input) => {
+      submitted = input;
+      observed = false;
+      await host.refresh();
+      throw new Error("Fixture lost acknowledgement");
+    };
+    await controller.send("failed native admission");
+    expect(controller.pending[0]!.state).toBe("uncertain");
+    expect(controller.recovery[0]!.text).toBe("failed native admission");
+  } finally {
+    release();
+    controller.close();
+    host.close();
+    void server.stop(true);
+    if (previousLocation)
+      Object.defineProperty(globalThis, "location", previousLocation);
+    else Reflect.deleteProperty(globalThis, "location");
+  }
+});

@@ -9,7 +9,45 @@ const external = process.env.APP_ACCEPTANCE_URL;
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
 const fixture = fixtureBackend();
-const host = await createChatHost(fixture.backend);
+let delayedInput;
+const backend = {
+  ...fixture.backend,
+  async read() {
+    const view = await fixture.backend.read();
+    return delayedInput
+      ? {
+          ...view,
+          messages: view.messages.filter(
+            (m) => m.operationId !== delayedInput.operationId,
+          ),
+          recovery: [
+            {
+              sourceId: delayedInput.operationId,
+              operationId: delayedInput.operationId,
+              text: delayedInput.text,
+              images: [],
+              state: "uncertain",
+              replacementEligible: false,
+            },
+          ],
+        }
+      : view;
+  },
+  async submit(input) {
+    if (!input.text.startsWith("hello-")) return fixture.backend.submit(input);
+    delayedInput = input;
+    await host.refresh();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const receipt = await fixture.backend.submit(input);
+    setTimeout(() => {
+      if (delayedInput?.operationId === input.operationId)
+        delayedInput = undefined;
+      void host.refresh();
+    }, 1000);
+    return receipt;
+  },
+};
+const host = await createChatHost(external ? fixture.backend : backend);
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -28,6 +66,25 @@ const server = external
             sessionId: (await fixture.backend.read()).sessionId,
           });
         }
+        if (path === "/api/chat/appearance")
+          return Response.json({
+            companionName: "Mica Display",
+            userName: "Neil Display",
+            companionAvatar: "/api/test/companion.png",
+            userAvatar: "/api/test/user.png",
+            backgrounds: {
+              landscape: "/api/test/wide.png",
+              portrait: "/api/test/tall.png",
+            },
+          });
+        if (path.startsWith("/api/test/") && path.endsWith(".png"))
+          return new Response(
+            Buffer.from(
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=",
+              "base64",
+            ),
+            { headers: { "content-type": "image/png" } },
+          );
         if (path === "/api/chat/socket" && server.upgrade(req)) return;
         return staticAssets(assets, path);
       },
@@ -124,11 +181,67 @@ try {
     }
     const input = page.locator("#companion-textarea");
     await expect(input).toBeVisible();
+    if (!external) {
+      await expect(page.locator(".companion-name")).toHaveText("Mica Display");
+      await expect(page.locator(".companion-avatar img")).toHaveAttribute(
+        "src",
+        "/api/test/companion.png",
+      );
+      await expect(page.locator(".companion-chat-background img")).toHaveCount(
+        2,
+      );
+      for (const image of await page
+        .locator(".companion-avatar img, .companion-chat-background img")
+        .all())
+        await expect
+          .poll(() =>
+            image.evaluate((img) => img.complete && img.naturalWidth > 0),
+          )
+          .toBe(true);
+      await page
+        .getByRole("button", { name: "查看 Companion 关系资料", exact: true })
+        .click();
+      await expect(
+        page.locator(".companion-history-controls button"),
+      ).toHaveCount(1);
+      await page.locator(".companion-history-controls button").click();
+    }
     await input.fill(`hello-${width}`);
+    if (!external)
+      await page.evaluate(() => {
+        window.recoveryFlashed = false;
+        window.recoveryObserver = new MutationObserver((records) => {
+          for (const record of records)
+            for (const node of record.addedNodes)
+              if (
+                node instanceof Element &&
+                (node.matches('[data-testid="input-recovery"]') ||
+                  node.querySelector('[data-testid="input-recovery"]'))
+              )
+                window.recoveryFlashed = true;
+        });
+        window.recoveryObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+      });
     await input.press("Enter");
+    if (!external)
+      await expect(
+        page.getByText(`hello-${width}`, { exact: true }),
+      ).toBeVisible({ timeout: 500 });
     await expect(
       page.getByText(`hello-${width}`, { exact: true }),
     ).toBeVisible();
+    if (!external) {
+      const avatar = page.locator(".message-sent .message-avatar img").first();
+      await expect(avatar).toHaveAttribute("src", "/api/test/user.png");
+      await expect
+        .poll(() =>
+          avatar.evaluate((img) => img.complete && img.naturalWidth > 0),
+        )
+        .toBe(true);
+    }
     await expect(
       page.locator('[data-testid="companion-typing-indicator"]'),
     ).toBeVisible();
@@ -143,14 +256,27 @@ try {
     await control({ action: "complete", text: reply });
     await context.setOffline(false);
     await expect(page.getByText(reply, { exact: true })).toBeVisible();
+    await expect(page.getByText("回复完成", { exact: true })).toHaveCount(0);
     await expect(
-      page.getByText("回复完成", { exact: true }).last(),
-    ).toBeVisible();
+      page.locator('[data-testid="companion-typing-indicator"]'),
+    ).toHaveCount(0);
+    if (!external) {
+      expect(
+        await page.evaluate(() => {
+          window.recoveryObserver.disconnect();
+          return window.recoveryFlashed;
+        }),
+      ).toBe(false);
+      await expect(
+        page.getByText(`hello-${width}`, { exact: true }),
+      ).toBeVisible();
+    }
     await page.reload();
     await expect(page.getByText(reply, { exact: true })).toBeVisible();
+    await expect(page.getByText("回复完成", { exact: true })).toHaveCount(0);
     await expect(
-      page.getByText("回复完成", { exact: true }).last(),
-    ).toBeVisible();
+      page.locator('[data-testid="companion-typing-indicator"]'),
+    ).toHaveCount(0);
     await input.fill(`stop-${width}`);
     await input.press("Enter");
     const stop = page.locator('[data-testid="companion-stop"]');

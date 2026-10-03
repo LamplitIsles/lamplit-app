@@ -1,3 +1,4 @@
+export * from "./appearance.ts";
 export * from "./search.ts";
 import type { SearchBackend } from "./search.ts";
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";

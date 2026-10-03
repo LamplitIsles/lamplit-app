@@ -127,14 +127,6 @@ export function fixtureBackend() {
         operationId: null,
         turnId: active,
       });
-      messages.push({
-        id: `turn:${active}:status`,
-        role: "notice",
-        text: "回复完成",
-        createdAt: Date.now(),
-        operationId: null,
-        turnId: active,
-      });
       active = null;
       changed();
     },
