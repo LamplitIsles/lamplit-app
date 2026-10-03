@@ -1,3 +1,4 @@
+import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
@@ -59,7 +60,11 @@ const controlUrl =
 const evidence =
   process.env.APP_ACCEPTANCE_EVIDENCE ?? ".scratch/image-send-recovery/browser";
 await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch({ headless: true, channel: "chrome" });
+const browser = await chromium.launch({
+  headless: true,
+  channel: "chrome",
+  executablePath: process.env.APP_ACCEPTANCE_BROWSER,
+});
 const results = [];
 try {
   for (const width of [390, 1280, 320]) {
@@ -79,6 +84,7 @@ try {
       return response.json();
     };
     await control({ action: "reset" });
+    await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     const errors = [];
     const albumMetadata = [];

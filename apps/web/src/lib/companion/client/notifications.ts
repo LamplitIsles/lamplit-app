@@ -1,34 +1,92 @@
-export interface NotificationTurnResult {
-  turnId: string;
-  status: string;
-}
+import type { ChatView } from "@lamplit/contracts";
 
-export function shouldNotifyForPageState(
-  visibilityState: DocumentVisibilityState,
-  hasFocus: boolean,
-): boolean {
-  return visibilityState === "hidden" || !hasFocus;
-}
+/** Native notices owned by one mounted chat page, discovered only from live views. */
+export class CompanionNotifications {
+  private session?: string;
+  private observed = new Set<string>();
+  private notices = new Set<Notification>();
+  private closed = false;
+  private attempted = false;
 
-/** Tracks completed turns observed by one live Companion page. */
-export class CompanionNotificationObserver {
-  readonly #completed = new Set<string>();
-  #ready = false;
+  constructor(
+    private window: Window & typeof globalThis,
+    private document: Document,
+    private label: () => { title: string; body: string },
+  ) {
+    document.addEventListener("click", this.firstClick, true);
+  }
 
-  observe(results: readonly NotificationTurnResult[]): string[] {
-    const completed = results.filter((result) => result.status === "completed");
-    if (!this.#ready) {
-      for (const result of completed) this.#completed.add(result.turnId);
-      this.#ready = true;
-      return [];
+  private firstClick = (event: MouseEvent) => {
+    if (this.closed || this.attempted || !event.isTrusted) return;
+    this.attempted = true;
+    this.document.removeEventListener("click", this.firstClick, true);
+    try {
+      if (this.available() && this.window.Notification.permission === "default")
+        // Keep the request inside the trusted gesture, before any async work.
+        void this.window.Notification.requestPermission().catch(() => {});
+    } catch {
+      // Permission failures must never interrupt chat.
     }
+  };
 
-    const fresh: string[] = [];
-    for (const result of completed) {
-      if (this.#completed.has(result.turnId)) continue;
-      this.#completed.add(result.turnId);
-      fresh.push(result.turnId);
+  private available() {
+    return this.window.isSecureContext && "Notification" in this.window;
+  }
+
+  observe(view: ChatView) {
+    if (this.closed) return;
+    const baseline = this.session !== view.sessionId;
+    if (baseline) {
+      this.session = view.sessionId;
+      this.observed.clear();
     }
-    return fresh;
+    for (const message of view.messages) {
+      if (this.observed.has(message.id)) continue;
+      this.observed.add(message.id);
+      if (baseline || message.role !== "agent") continue;
+      try {
+        if (
+          !this.available() ||
+          this.window.Notification.permission !== "granted" ||
+          (this.document.visibilityState !== "hidden" &&
+            this.document.hasFocus())
+        )
+          continue;
+        const { title, body } = this.label();
+        const notice = new this.window.Notification(title, { body });
+        this.notices.add(notice);
+        notice.onclick = () => {
+          if (this.closed) return;
+          try {
+            this.window.focus();
+          } catch {}
+          try {
+            notice.close();
+          } catch {}
+          this.release(notice);
+        };
+        notice.onclose = () => this.release(notice);
+        notice.onerror = () => this.release(notice);
+      } catch {
+        // Construction failures consume the observation and are never retried.
+      }
+    }
+  }
+
+  private release(notice: Notification) {
+    notice.onclick = notice.onclose = notice.onerror = null;
+    this.notices.delete(notice);
+  }
+
+  close() {
+    this.closed = true;
+    this.document.removeEventListener("click", this.firstClick, true);
+    for (const notice of this.notices) {
+      this.release(notice);
+      try {
+        notice.close();
+      } catch {}
+    }
+    this.observed.clear();
   }
 }

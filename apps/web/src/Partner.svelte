@@ -10,6 +10,7 @@
   import { onMount } from "svelte";
   import { f7, f7ready } from "framework7-svelte";
   import Companion from "./lib/companion/client/Companion.svelte";
+  import { CompanionNotifications } from "./lib/companion/client/notifications.ts";
   import { ChatController } from "./lib/chat-controller.ts";
   import type {
     CompanionProjection,
@@ -260,14 +261,23 @@
       .catch(() => {
         if (!abort.signal.aborted) voiceCapability = "unavailable";
       });
-    controller = new ChatController(() => {
-      revision += 1;
-    });
+    const notifications = new CompanionNotifications(window, document, () => ({
+      title: profile?.companionName || controller.view?.name || "Lamplit",
+      body: t("notifications.newMessage"),
+    }));
+    controller = new ChatController(
+      () => {
+        revision += 1;
+      },
+      localStorage,
+      (view) => notifications.observe(view),
+    );
     revision += 1;
     controller.start();
     return () => {
       media.removeEventListener("change", updateScheme);
       abort.abort();
+      notifications.close();
       controller.close();
     };
   });

@@ -1,3 +1,4 @@
+import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
@@ -74,7 +75,11 @@ const controlUrl =
 const evidence =
   process.env.APP_ACCEPTANCE_EVIDENCE ?? ".scratch/conversation-search/browser";
 await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch({ headless: true, channel: "chrome" });
+const browser = await chromium.launch({
+  headless: true,
+  channel: "chrome",
+  executablePath: process.env.APP_ACCEPTANCE_BROWSER,
+});
 try {
   for (const width of [390, 1280]) {
     const context = await browser.newContext({
@@ -95,6 +100,7 @@ try {
     await control({ action: "reset" });
     const initial = await control({ action: "state" });
     const ids = initial.recordIds;
+    await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));

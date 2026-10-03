@@ -40,10 +40,14 @@ bun run test:images-browser
 bun run test:compact-browser
 bun run test:search-browser
 bun run test:route-lifecycle-browser
+bun tests/notifications-browser.mjs
 ```
 
 Browser acceptance uses an isolated Chrome context and a test-owned fake backend.
-Chrome must be installed. It covers mobile/desktop rendering, completed replies,
+Chrome must be installed, or set `APP_ACCEPTANCE_BROWSER` to a test-owned
+Playwright Chromium executable. Notification checks use a recording native API
+fake; other runners deny notifications without requesting real permission. It covers
+mobile/desktop rendering, completed replies,
 connection recovery, refresh and stop. Voice checks use Chrome’s synthetic
 microphone and fake speech, including streaming PCM and responsive failure/cancel
 states. Engine integration tests live with each backend and use fake providers or
@@ -51,6 +55,30 @@ a fake official app-server.
 
 See [backend integration](docs/integration.md), [protocol](docs/protocol.md), and
 [source attribution](docs/IMPORTS.md).
+
+## Desktop companion notifications
+
+On desktop Safari/Chrome, the first trusted click on the open chat page requests
+notification permission if undecided, directly within the click before sending
+or waiting for network work. Each page lifetime attempts once, including a
+dismissed or rejected request; reloading allows another attempt if still undecided.
+Already granted/denied permissions do not prompt. Use a secure origin (HTTPS;
+loopback localhost is suitable for development).
+
+Each newly observed complete companion message can show a notice when the page
+is hidden or unfocused, including multiple messages in one turn and messages
+whose turn later fails/stops. Notices show the displayed companion name and a
+localized generic new-message body, with no preview. Click attempts to return to
+the originating window. Initial history, session changes, older-history reads and
+foreground observations are silent; repeated live views and same-session reconnect
+do not replay observed IDs. Permission/delivery failures do not block chat.
+
+Check the site's browser permission, macOS notification settings and Focus when
+notices are absent. The page must remain open and running; reload resets its
+baseline, and reconnect may discover new live messages but offers no missed-message
+guarantee. There is no Web Push, delivery after closure/suspension, or mobile support.
+See [notification acceptance](docs/desktop-companion-notifications.md) for the
+physical Mac Safari checklist. Linux fake-API checks do not prove OS display.
 
 ## Voice input
 
@@ -124,8 +152,9 @@ See [search contract and native fixture](docs/conversation-search.md).
 
 ## Complete artifact and native acceptance
 
-[Default frontend acceptance](docs/default-shared-frontend.md) documents all six
-runners, new external text/voice controls, exact native fixture operations,
+[Default frontend acceptance](docs/default-shared-frontend.md) documents all seven
+feature runners and the route regression, new external text/voice controls, exact
+native fixture operations,
 root/hosted asset and PWA boundaries, and verification limits. After committing
 verified source, `bun run prepare:default` exports one browser/contracts/all-runner
 archive with source HEAD and per-file hashes into ignored

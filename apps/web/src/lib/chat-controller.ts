@@ -54,6 +54,7 @@ export class ChatController {
   constructor(
     private changed: () => void,
     private storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
+    private liveView?: (view: ChatView) => void,
   ) {}
   relationship?: Relationship;
   relationshipHistory: RelationshipHistory = {
@@ -239,6 +240,7 @@ export class ChatController {
       ).values(),
     ].filter((message) => !liveIds.has(message.id));
     this.view = view;
+    this.liveView?.(view);
 
     if (!previous || previous.sessionId !== view.sessionId)
       this.before = view.before;

@@ -1,3 +1,4 @@
+import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
@@ -142,6 +143,7 @@ const server = external
 const browser = await chromium.launch({
   headless: true,
   channel: "chrome",
+  executablePath: process.env.APP_ACCEPTANCE_BROWSER,
   args: [
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
@@ -196,6 +198,7 @@ try {
         }
       };
     });
+    await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));

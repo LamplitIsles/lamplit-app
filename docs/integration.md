@@ -98,6 +98,17 @@ Owner follows the platform repository's final documented deploy step after joint
 review. App's standalone manifest uses `/` start/scope; no App service worker is
 registered. Real hosted auth/PWA and device behavior are still a joint live gate.
 
+## Desktop notifications
+
+The shared chat page uses the native browser Notifications API on a secure origin;
+hosts keep the existing complete-message ChatView contract. No backend endpoint,
+turn-result field, push subscription or service worker is added. Notify discovery
+uses authoritative live views only, not history/panel reads or optimistic sends.
+Deploy the App build through the host's existing procedure when Owner authorizes
+it; merging this feature alone does not deploy. Browser site permission and macOS
+notification/Focus settings govern presentation independently of host delivery.
+See [notification contract and physical acceptance](desktop-companion-notifications.md).
+
 ## Public behavior and verification
 
 [Protocol](protocol.md) is the public interface authority. Completed assistant
@@ -125,7 +136,8 @@ joint isolated Pi/workerd and CFL/Node acceptance and merged. Old pending handof
 statements are superseded; historical archive bytes remain evidence. That prior
 acceptance does not prove the new canonical-root build. The
 [complete default handoff](default-shared-frontend.md) defines full App check order,
-one source-HEAD archive, all six external runners and native controls, before/after
+one source-HEAD archive, all six external runners and native controls, the isolated
+notification runner and route regression, before/after
 manifests, Owner approval before native starts, screenshots and remaining limits.
 All automated state, credentials, ports and fake providers belong to fixtures.
 Live provider use, hosted integration and physical-device behavior remain later

@@ -1,3 +1,4 @@
+import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
@@ -110,7 +111,11 @@ const linkedPage = Bun.serve({
   fetch: () => new Response("External page"),
 });
 const linkUrl = `http://127.0.0.1:${linkedPage.port}/lamplit`;
-const browser = await chromium.launch({ headless: true, channel: "chrome" });
+const browser = await chromium.launch({
+  headless: true,
+  channel: "chrome",
+  executablePath: process.env.APP_ACCEPTANCE_BROWSER,
+});
 const url = external ?? `http://127.0.0.1:${server.port}/`;
 const controlUrl =
   process.env.APP_ACCEPTANCE_CONTROL_URL ?? new URL("/__test/text", url).href;
@@ -136,6 +141,7 @@ try {
       return response.json();
     };
     const initial = await control({ action: "reset" });
+    await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));

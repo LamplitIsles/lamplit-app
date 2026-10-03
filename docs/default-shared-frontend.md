@@ -11,7 +11,8 @@ a service worker. No Composer redesign or Penpot board applies.
 
 ## Checks, in order
 
-Use Bun 1.3.14, installed Chrome and test-owned state. From the App checkout:
+Use Bun 1.3.14, installed Chrome (or a test-owned Playwright Chromium executable
+selected by `APP_ACCEPTANCE_BROWSER`) and test-owned state. From the App checkout:
 
 ```sh
 bun install --frozen-lockfile
@@ -26,9 +27,13 @@ bun run test:images-browser
 bun run test:compact-browser
 bun run test:search-browser
 bun run test:route-lifecycle-browser
+bun tests/notifications-browser.mjs
 ```
 
-`test:browser` runs text and voice separately: six feature runners in total.
+`test:browser` runs text and voice separately: seven feature runners in total
+(text, voice, panels, images, compact, search, notifications), plus the route
+lifecycle regression. Notifications use a recording native API fake; the other
+App runners inject denied permission so they never request real OS permission.
 The route lifecycle regression uses real intercepted requests and waits for held
 handlers to settle; genuine route errors fail the process. All fixture hosts use
 canonical root paths and reject missing assets and `/slice`, without SPA fallback.
@@ -46,7 +51,8 @@ It builds once into ignored `.scratch/default-shared-frontend/candidate`, refusi
 an existing identity. Historical artifacts are never overwritten. The single
 `lamplit-default-shared-frontend.tgz` contains `browser/`, `contracts/package/`,
 `acceptance/`, three per-file SHA256 manifests and `SOURCE_HEAD`. The acceptance
-package includes all six runners, route regression, their fixtures/helpers,
+package includes all seven feature runners, route regression, their fixtures/helpers
+(including `notification-permission.mjs`), the notification acceptance guide,
 licenses, source attribution and native-control docs. Its package pins Playwright;
 compiled contracts retain their declared Chord/TypeBox dependencies.
 `identity.json` records exact committed source HEAD, fixed baseline, archive hash
@@ -71,8 +77,9 @@ These installs add dependencies inside the extraction, without building or chang
 frozen source. For extracted App fixture acceptance, from `acceptance/` set
 `APP_ACCEPTANCE_ASSETS=../browser` and run each of `bun browser.mjs`,
 `bun voice-browser.mjs`, `bun panels-browser.mjs`, `bun images-browser.mjs`,
-`bun compact-browser.mjs`, `bun search-browser.mjs`, then
-`bun route-lifecycle-browser.mjs`. Set `APP_ACCEPTANCE_EVIDENCE` to a separate
+`bun compact-browser.mjs`, `bun search-browser.mjs`,
+`bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs`. Set
+`APP_ACCEPTANCE_EVIDENCE` to a separate
 absolute test-owned directory for each feature. Repeat all three per-file checks
 and archive/manifest hash checks after every native run; never rebuild or edit
 approved files. Record native HEAD, fixture/fake-engine identity, command, exit
@@ -152,6 +159,14 @@ synthetic host login/cookies through its native fixture; never use real credenti
 Retain native revoked-auth, owner/session/media/same-origin checks in backend tests.
 
 ## Remaining runners and deployment boundary
+
+The [notification runner and physical checklist](desktop-companion-notifications.md)
+verify browser API wiring in an isolated ChatHost fixture using packaged assets
+and contracts. `APP_ACCEPTANCE_ASSETS` selects the extracted `browser/` bytes;
+`APP_ACCEPTANCE_BROWSER` selects the test-owned executable. This runner has no
+external/native-host mode. Its fake permission/delivery results do not establish
+physical Safari/macOS notification display; the manual device checklist remains
+separate and explicitly unverified until performed.
 
 Panels require the native seed facts and media bytes in
 [panels](companion-panels.md); external mode retains its existing native

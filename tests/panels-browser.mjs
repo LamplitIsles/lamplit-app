@@ -1,3 +1,4 @@
+import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
@@ -58,6 +59,7 @@ await mkdir(evidence, { recursive: true });
 const browser = await chromium.launch({
   headless: true,
   channel: "chrome",
+  executablePath: process.env.APP_ACCEPTANCE_BROWSER,
   args: [
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
@@ -80,6 +82,7 @@ try {
         : undefined,
     });
     context.setDefaultTimeout(10000);
+    await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     const errors = [];
     const albumMetadata = [];
