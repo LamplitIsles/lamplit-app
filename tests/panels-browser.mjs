@@ -1,3 +1,4 @@
+import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
 import { fixtureBackend } from "./fixture.ts";
@@ -31,16 +32,7 @@ const server = Bun.serve({
         headers: { "Content-Type": "image/png" },
       });
     }
-    const target = resolve(
-      assets,
-      path.replace(/^\/slice\/?/, "") || "index.html",
-    );
-    if (!target.startsWith(`${assets}/`))
-      return new Response(null, { status: 404 });
-    const file = Bun.file(target);
-    return (await file.exists())
-      ? new Response(file)
-      : new Response(null, { status: 404 });
+    return staticAssets(assets, path);
   },
   websocket: {
     open(ws) {
@@ -59,7 +51,7 @@ const server = Bun.serve({
   },
 });
 const external = process.env.APP_ACCEPTANCE_URL;
-const url = external ?? `http://127.0.0.1:${server.port}/slice/`;
+const url = external ?? `http://127.0.0.1:${server.port}/`;
 const evidence =
   process.env.APP_ACCEPTANCE_EVIDENCE ?? ".scratch/companion-panels/browser";
 await mkdir(evidence, { recursive: true });

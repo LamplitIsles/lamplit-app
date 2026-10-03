@@ -6,14 +6,14 @@ This repository owns the shared Framework7/Svelte frontend and the TypeScript
 contracts package. A deployment selects one engine; the frontend does not select
 or switch engines inside a conversation.
 
-The first slice supports main-session text history, sending and steering,
+The app supports main-session text history, sending and steering,
 completed-message delivery, targeted stop, and reconnect reconciliation. Agent
 messages appear when each message is complete, as in an IM app. Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
 reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
 use the same native contract. Album browsing and saving originals work independently; generic attachments, TTS
-and native releases remain outside this slice. The existing frontends remain in
-service until full product coverage is verified.
+and native releases remain outside this app. The shared app is the direct default
+frontend: standalone `/`, hosted `/chat`, with root-relative assets and no `/slice` alias.
 
 ## Development
 
@@ -25,7 +25,7 @@ bun run build
 CHAT_BACKEND=http://127.0.0.1:8787 bun run dev
 ```
 
-Open `http://127.0.0.1:5173/slice/`. Vite proxies the shared WebSocket endpoint to
+Open `http://127.0.0.1:5173/`. Vite proxies the shared WebSocket endpoint to
 `CHAT_BACKEND`; the built frontend always uses its own origin.
 
 ```sh
@@ -33,11 +33,13 @@ bun run check
 bun run lint
 bun run format:check
 bun run test
+bun run build
 bun run test:browser
 bun run test:panels-browser
 bun run test:images-browser
 bun run test:compact-browser
 bun run test:search-browser
+bun run test:route-lifecycle-browser
 ```
 
 Browser acceptance uses an isolated Chrome context and a test-owned fake backend.
@@ -63,11 +65,11 @@ existing session draft lifecycle still applies. Recording requires a secure brow
 actual 16 kHz AudioWorklet capture; there is no batch fallback, interim preview,
 automatic send or audio persistence.
 
-The merged text/voice baseline was verified on isolated Pi/workerd and CFL/Node
-hosts with fake providers. The new companion panels are verified locally with the
-fixture host. Actual panels acceptance on both backends remains the Owner/user
-joint merge gate for specs #3062/#3063/#3064. No deployment or production frontend
-replacement is included.
+The text/voice, panels, images/recovery, quiet compaction and search features have
+merged after joint isolated Pi/workerd and CFL/Node acceptance with fake providers
+(FlickNote #3062/#3096/#3119/#3142). The canonical-root candidate requires fresh
+same-artifact native/platform acceptance after Owner approval. Live providers,
+physical devices and deployment remain separate verification.
 
 ## Companion panels
 
@@ -82,11 +84,8 @@ The app owns bounded TypeScript/TypeBox schemas and runtime validation on the
 existing Chord/WebSocket connection. Image bytes use authenticated same-origin
 HTTP; saving keeps original bytes. Reminders retain native schedules and appear in
 chat as **App reminders**, with creation/editing still handled by Agent tools.
-See [public contract and frozen acceptance handoff](docs/companion-panels.md) for
-field definitions, limits, fixtures, archive/hash verification and actual-backend
-integration commands. `bun run freeze:panels` records the committed app HEAD and
-compiled contracts in ignored scratch artifacts; actual backends must accept that
-same artifact before any repository merges.
+See [public contract and native fixture facts](docs/companion-panels.md) for
+field definitions, limits and native integration requirements.
 
 ## Images and recovery
 
@@ -98,9 +97,6 @@ current edits. Missing originals require explicit removal; uncertain delivery is
 inspected and never automatically retried. Unsent drafts are not saved across reload.
 
 See [image protocol and frozen native acceptance](docs/image-send-recovery.md).
-`bun run freeze:images` freezes committed browser/contracts and the reusable runner
-once into ignored scratch. Specs #3097/#3098 consume those exact archives; actual
-Pi/CFL acceptance remains the Owner gate for #3096 before merge, with no deployment.
 
 ## Context and compaction
 
@@ -113,11 +109,8 @@ compactions. Completion clears stale usage until fresh native data arrives.
 Reconnect reads native state and never automatically repeats the command.
 
 See [native contract and common acceptance](docs/quiet-compaction.md).
-`bun run prepare:compact` records a candidate browser/contracts/runner identity
-from committed source. Owner review precedes final freeze; actual isolated Pi/CFL
-acceptance for #3119/#3120/#3121 remains pending. The complete old Composer redesign,
-including the 96px attachment mockup, is superseded by pinned native CFL Framework7
-presentation. No deployment or native release is included.
+The complete old Composer redesign, including its attachment mockup, is superseded
+by native CFL Framework7 presentation. No deployment or native release is included.
 
 ## Conversation archive search
 
@@ -127,8 +120,17 @@ reader. Back returns to results; reading preserves the active chat and unsent dr
 Loading, empty, failure/retry and context-truncation states retain the CFL design.
 Results are bounded to 20; a missing native total shows the returned result count.
 
-See [search contract, native fixture and candidate handoff](docs/conversation-search.md).
-`bun run prepare:search` freezes committed browser/contracts/acceptance bytes with
-source HEAD and hashes in ignored scratch. The runner accepts external test-owned
-native base/control URLs. Owner approval precedes native adapter work; both native
-acceptances and joint user review remain the merge gate for #3142/#3143/#3144.
+See [search contract and native fixture](docs/conversation-search.md).
+
+## Complete artifact and native acceptance
+
+[Default frontend acceptance](docs/default-shared-frontend.md) documents all six
+runners, new external text/voice controls, exact native fixture operations,
+root/hosted asset and PWA boundaries, and verification limits. After committing
+verified source, `bun run prepare:default` exports one browser/contracts/all-runner
+archive with source HEAD and per-file hashes into ignored
+`.scratch/default-shared-frontend/candidate`. Owner must approve these exact bytes
+before native workers start; both hosts use the identical archive without rebuilding.
+Historical feature artifacts stay unchanged. Production adjacent-checkout build
+and host procedures are in [integration](docs/integration.md); platform management,
+hosted manifest/service worker and auth remain independently owned.

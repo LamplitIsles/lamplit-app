@@ -1,7 +1,8 @@
 # Conversation archive search
 
 Design decisions reviewed on 2026-10-03; shared App implementation for spec #3142.
-Native adapters and joint acceptance remain pending Owner approval of the candidate.
+App/Pi/CFL joint isolated acceptance completed and merged (PR #6/#27/#66).
+The canonical-root candidate needs fresh Owner-approved exact-artifact acceptance.
 
 ## Product behavior
 
@@ -43,7 +44,7 @@ it; lookup failure uses the existing read-error and retry interaction.
 
 ## Shared protocol
 
-Add search and selected-record/context reads to the current runtime-validated
+Search and selected-record/context reads use the current runtime-validated
 Chord service. Keep the same frontend for both hosts. Backend adapters map native
 results into the existing UI's card and reader shape; native archives and indexes
 stay where they are. Search results are on-demand reads, not replicated history.
@@ -64,7 +65,7 @@ failure and must not break ordinary chat. Do not impose the previously proposed
 128 KiB text cutoff or introduce found/missing/too-large product states. Preserve
 existing context-truncation feedback and safe text/mark highlighting.
 
-## Required implementation
+## Implemented adapter responsibilities
 
 ### App
 
@@ -83,16 +84,15 @@ failure types. Do not duplicate Codex JSONL parsing or change FlickLog.
 ### Pi
 
 Reuse the registry FTS5 query and return its record rows directly. The current
-SQL already produces record rows; `groupSearchRows` adds session grouping and a
-ten-hit-per-session cap afterward. The shared search path bypasses that grouping,
-applies the result limit to records, and maps each row to one card. Keep native
+agent-facing search groups sessions separately. The shared search path bypasses
+that grouping, applies the result limit to records, and maps each row to one card. Keep native
 BM25 relevance; use record recency, rather than session update time, for recency
 tie-breaking. This changes the shared frontend search path; it does not require
 rewriting the separate agent-facing `session_search` tool or adding a second index.
 The shared search uses FTS text matching directly and does not accidentally expose
-the agent tool's `re:` dispatch as a public regex feature. Extend the native search
-projection to include compaction summaries, including summaries already stored. Use a targeted projection refresh for this missing record type; no full
-index lifecycle, transcript migration, second content store or general rebuild
+the agent tool's `re:` dispatch as a public regex feature. The native search
+projection includes compaction summaries, including summaries already stored, via
+a targeted projection refresh; no full index lifecycle, transcript migration, second content store or general rebuild
 framework. Ensure only supported chat/summary content reaches the reader.
 
 Read the selected record and nearby context from existing session storage or
@@ -119,7 +119,7 @@ seam; do not duplicate the full authentication test suite.
 
 No rewritten-log probe, corrupt-graph matrix, identical-rank comparison or new
 live environment is an acceptance requirement. Run checks relevant to each diff;
-use existing artifact verification when the coordinated slice is implemented.
+use the current complete artifact verification before and after native runs.
 
 ## Outside this slice
 
@@ -129,14 +129,14 @@ index-provider replacement and deployment changes.
 
 ## Repository evidence
 
-- App `ConversationSearch.svelte`: existing card/context reader, direct CFL HTTP
+- App `ConversationSearch.svelte`: service-backed card/context reader, shared Chord
   reads, loading/retry/truncation and stale-request handling.
 - Pi `pi-registry.ts`: existing FTS5 matching and bounded grouped results.
-- Pi `pi-session-storage.ts`: native entries/parent IDs; current index outbox
-  includes user/assistant text but omits compactions.
+- Pi `pi-session-storage.ts`: native entries/parent IDs; index projection
+  includes supported user/assistant text and compaction summaries.
 - Pi `pi-v4-storage.ts`: supported entry/branch reads.
-- Pi `history-archives.ts`: original imported nodes and parent IDs; current page
-  reads use insertion order.
+- Pi `history-archives.ts`: original imported nodes and parent IDs; shared context
+  reads follow native parent/successor paths.
 - CFL `conversation-search.ts`: existing FlickLog search/read dependency with
   workspace checks. The local installed FlickLog resolves to the inspected
   `experiments/flicklog` checkout.
@@ -158,7 +158,7 @@ existing search-error/retry state, with no new readiness endpoint or provisionin
 workflow.
 
 App schemas and host/client wiring are implemented below. Native summary projection
-refresh belongs to Pi. These details do not expand the slice into FlickLog, platform
+refresh remains owned by Pi. These details do not expand the slice into FlickLog, platform
 management, deployment or archive repair.
 
 ## Public App contract
@@ -242,40 +242,23 @@ compares session/messages before/after archive reads and sends only its final te
 message; no real history, credentials, paid providers or services are used.
 
 ```sh
-APP_ACCEPTANCE_URL=http://127.0.0.1:8787/slice/ \
+APP_ACCEPTANCE_URL=http://127.0.0.1:8787/ \
 APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:8787/__test/conversation-search \
 APP_ACCEPTANCE_EVIDENCE=/test-owned/evidence bun tests/search-browser.mjs
 ```
 
 Optional `APP_ACCEPTANCE_USERNAME`/`APP_ACCEPTANCE_PASSWORD` support isolated host
-HTTP authentication. Serve the candidate browser at the base URL, with authenticated
+HTTP authentication. Serve the approved browser at the base URL, with authenticated
 same-origin `/api/chat/socket`. The control URL may be on a separate test helper.
 No production or live-state URL may be used. `APP_ACCEPTANCE_ASSETS` selects local
 fixture assets only. Local contract tests additionally cover oversize read isolation
 and invalid host/browser payloads; native tests verify their archive ownership seam.
 
-## Candidate preparation and hash verification
+## Current complete handoff
 
-After all source/docs are committed and checks pass, `bun run prepare:search`
-builds once into `.scratch/conversation-search/candidate/`, refusing an existing
-identity. It records exact source HEAD and produces `lamplit-web-search.tgz`,
-`lamplit-contracts-search.tgz`, `lamplit-acceptance-search.tgz`, per-file SHA-256
-manifests and `identity.json` with archive/manifest hashes. Keep scratch untracked.
-Owner reviews these candidate bytes; native adapters start only after approval.
-Never rebuild/refreeze approved bytes without Owner reapproval. Local fixture
-success does not claim either native acceptance or Owner approval.
-
-Extract the archives into test-owned `browser/`, `contracts/`, `acceptance/`
-directories adjacent to each other. Check archive/manifest hashes against identity
-using `shasum -a 256`, then in browser and acceptance run
-`shasum -a 256 -c ../browser.sha256` / `../acceptance.sha256`; in
-`contracts/package` run `shasum -a 256 -c ../../contracts.sha256` (adjust manifest
-locations to extraction layout). First run `bun install` inside `contracts/package`
-to install its declared Chord/TypeBox dependencies. Then in acceptance run
-`bun install`, followed by the external command above as `bun search-browser.mjs`.
-Bun links the sibling package; its own dependencies must be installed at that real
-package location. This adds dependencies in test-owned extraction directories and
-does not rebuild or modify the frozen package files. Native hosts also consume that package and serve frozen browser
-bytes. Evidence includes 390px/1280px prompt/loading/results/reader/failure captures
-and `results.json`. Both native acceptances and joint user review gate merge;
-this repository does not deploy or merge.
+Use [default frontend acceptance](default-shared-frontend.md) for the current full
+check order, single committed-source archive, dependencies, all-runner commands,
+per-file/hash verification and Owner approval before native starts. Historical
+frozen-512ed66 bytes remain unchanged evidence; do not rebuild old identities.
+Both backends previously passed that search artifact at 390/1280, and #3142 merged.
+The new root-relative artifact still needs fresh native/platform acceptance.

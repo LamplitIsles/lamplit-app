@@ -1,3 +1,4 @@
+import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
 import { imagesFixture } from "./images-fixture.ts";
@@ -31,20 +32,9 @@ const server = external
             : null,
         );
         if (response) return response;
-        const target = resolve(
-          assets,
-          path.replace(/^\/slice\/?/, "") || "index.html",
-        );
-        if (!target.startsWith(`${assets}/`))
-          return new Response(null, { status: 404 });
-        const file = Bun.file(target);
-        return (await file.exists())
-          ? new Response(file, {
-              headers: {
-                "Set-Cookie": "fixture-owner=1; Path=/; SameSite=Strict",
-              },
-            })
-          : new Response(null, { status: 404 });
+        return staticAssets(assets, path, {
+          "Set-Cookie": "fixture-owner=1; Path=/; SameSite=Strict",
+        });
       },
       websocket: {
         open(ws) {
@@ -62,7 +52,7 @@ const server = external
         },
       },
     });
-const url = external ?? `http://127.0.0.1:${server.port}/slice/`;
+const url = external ?? `http://127.0.0.1:${server.port}/`;
 const controlUrl =
   process.env.APP_ACCEPTANCE_CONTROL_URL ??
   new URL("/__test/image-send-recovery", url).href;

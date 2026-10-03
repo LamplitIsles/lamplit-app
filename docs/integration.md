@@ -1,175 +1,132 @@
 # Backend integration
 
-One shared browser build and one contracts package serve both existing backends.
-The host adapters stay in their backend repositories. There is no additional
-adapter repository, execution service, or transcript database.
+One Framework7/Svelte browser build and one compiled contracts package serve Pi
+and CFL. Adapters and native execution stay in their backend repositories; there
+is no separate App Worker, execution service or transcript database. Standalone
+entry is `/`, hosted entry `/chat`, and common assets use root-relative paths.
+The obsolete `/slice` entry has no alias or fallback. Native/domain consumers
+remain independent of frontend build removal. Platform owns hosted manifest,
+service worker, management and authentication separately.
 
-## Public package
+## Adjacent checkout build
 
-`packages/contracts` publishes JavaScript and declarations from `dist`, compiled
-with TypeScript 6. Its root contains the schemas and Chord service token; `/client`
-contains the browser transport, and `/server` the portable Chord provider and
-WebSocket boundary. The package does not import Node, Worker or web-app modules.
-
-For the first slice, clone the repositories alongside one another. Build the
-public package before installing the backends. Both consume its built directory
-through their existing package managers:
+Use adjacent `lamplit-app`, `lamplit-chat` and `codex-for-love` checkouts. App uses
+Bun 1.3.14 and TypeScript 6; Pi uses npm and CFL pnpm. Build App first:
 
 ```sh
 # In lamplit-app
 bun install --frozen-lockfile
 bun run build
+CHAT_BACKEND=http://127.0.0.1:8787 bun run dev
+# Open http://127.0.0.1:5173/
+```
 
+`packages/contracts` exports compiled JavaScript/declarations from `dist`: root
+schemas/service, `/client` browser transport, `/server` portable Chord provider,
+WebSocket and image HTTP, `/voice` voice validators and `/wire` codecs. It imports
+no Node, Worker or private web-app modules. Backends consume the compiled package
+through their own declared file/archive dependency and package manager; never
+import `apps/web/src`. For an intentional adjacent-package refresh:
+
+```sh
 # In lamplit-chat
 npm install ../lamplit-app/packages/contracts
-
 # In codex-for-love
 pnpm --filter @lamplitisles/partner add @lamplit/contracts@file:../../../lamplit-app/packages/contracts
 ```
 
-After changing contracts, rebuild them and refresh the CFL file dependency; pnpm
-materializes a package copy. npm uses the adjacent local package. Do not import
-private `apps/web/src` from either backend. A registry/release workflow is outside
-this slice; these commands explicitly describe adjacent-checkout development.
+CFL's file dependency is materialized, so refresh it after contract builds. Frozen
+native acceptance instead installs the exact extracted package in test-owned
+locations using the [complete handoff](default-shared-frontend.md). Do not refresh
+or rebuild approved acceptance artifacts.
 
-## Pi / Cloudflare
+## Native hosting and Owner deployment
 
-`lamplit-chat/src/server/chat-adapter.ts` maps native Pi branch history and native
-admission receipts. `PiSession` owns the Chord provider and connection lifecycle.
-The Worker authenticates `/api/chat/socket` and selects the deployment's main
-session. Hosted instances resolve through their existing registry; browser-supplied
-session or instance IDs are not trusted.
+Canonical serving/build integration is coordinated with Pi #3163, CFL #3164 and
+platform #3165. Their final reviewed procedures must be verified before Owner
+runs them; this App PR does not deploy or edit those repositories. Production
+builds consume `../lamplit-app/apps/web/build`, rather than build a second chat
+frontend. Existing native runtime/domain/management dependencies remain required.
+A fresh build/deploy always builds App first; merging alone never deploys.
 
-For an independent local shared-UI preview:
+Pi's existing Worker and PiSession own auth, session selection, native admission,
+media and Chord lifecycle. The normal Wrangler configuration serves App assets,
+with authenticated `/api/chat/socket`, `/api/chat/images`, `/api/chat/media/*`,
+native album media and `/api/voice/*`. Browser IDs never select another instance.
+After the coordinated Pi change, Owner's documented backend commands are:
 
 ```sh
-# In lamplit-chat, after building lamplit-app and configuring development model/auth
-npx wrangler dev --config wrangler.slice.jsonc --local --port 8787
+# In lamplit-chat, after the App production build
+npm ci
+npm run build
+npm run deploy
 ```
 
-Visit `/slice/`. This config serves `../lamplit-app/apps/web/build`, uses local
-DOs and does not replace the production config. Existing host model/auth setup
-still applies. Do not run previews against production storage.
-
-The platform proxy admits `/api/chat/socket` and `/slice/*` using its existing
-session, same-origin and instance-bound authorization. The hosted worker must
-serve the shared build before this is a hosted UI deployment; proxy changes alone
-are not a deployment.
-
-## Codex / Node
-
-`codex-for-love/apps/partner/runtime/chat.ts` maps the Partner's native-history
-projection and durable submission metadata. It adds a WebSocket upgrade handler
-to the existing server. The official app-server retains execution ownership.
-
-To expose the shared UI alongside the old frontend:
+Do not execute these deployment commands in automated acceptance. For local native
+acceptance use a test-owned Wrangler config, fake loopback model/speech, local
+bindings and an explicit test-owned persistence directory:
 
 ```sh
-# In codex-for-love; use an independently configured development instance
+npx wrangler dev --config "$ACCEPTANCE_ROOT/pi-fixture.jsonc" \
+  --local --persist-to "$ACCEPTANCE_ROOT/pi-state" --port 8951
+```
+
+CFL's existing Partner Node server and official app-server integration retain
+native history, submission receipts, ownership and targeted stop. Build the shared
+App first, install CFL with its lockfile, then use its existing runtime command:
+
+```sh
+# In codex-for-love; Owner-configured instance only after review
+pnpm install --frozen-lockfile
 LAMPLIT_APP_ASSETS=/absolute/path/to/lamplit-app/apps/web/build \
-  pnpm --filter @lamplitisles/partner start -- /absolute/path/to/development.toml
+  pnpm --filter @lamplitisles/partner start -- /absolute/path/to/instance.toml
 ```
 
-The new UI is at `/slice/`; the original entry stays at `/`. If the environment
-variable is absent the server does not serve a shared-UI entry. The common socket
-uses the existing deployment/gateway authentication boundary, rejects foreign
-browser origins, and allows originless local clients only from loopback. This
-slice does not add a separate CFL account system or authorize public unauthenticated
-exposure.
+That explicit path selects shared assets; it never enables a legacy UI fallback.
+For native acceptance substitute extracted `browser/` and test-owned TOML,
+workspace/SQLite/Codex-home paths, fake official app-server and speech. No installed
+real engine executable or real config is used. Native configuration/auth remains
+the host's responsibility; this App adds no account/configuration framework.
+Workers never restart existing services. Owner later verifies the existing NUC
+services and physical devices together; the NUC is not an implementation environment.
 
-Completed Codex message IDs are recorded as presentation metadata, without copying
-reply text. In-progress text is not displayed. A targeted stop never follows an
-app-server mismatch to interrupt a newer turn.
+The platform remains the authenticated gateway for `/chat`, common assets and
+native media/voice/socket paths, preserving its same-origin and instance-bound
+authorization. It supplies its own hosted PWA manifest/service worker and keeps
+management independently available. Proxy changes alone are not deployment;
+Owner follows the platform repository's final documented deploy step after joint
+review. App's standalone manifest uses `/` start/scope; no App service worker is
+registered. Real hosted auth/PWA and device behavior are still a joint live gate.
 
-## Verification
+## Public behavior and verification
 
-- Common package: actual WebSocket transport, Chord snapshot/delta codecs,
-  provider reconstruction, submission validation and revoked authorization.
-- Pi: real workerd/DO with a synthetic model, duplicate admission and new-socket
-  lookup; backend typecheck and lint.
-- CFL: real Node host and official SDK with the existing fake app-server,
-  duplicate admission, identity conflict, steering, targeted stop and rehydration.
-- Platform: fake-bound proxy tests for authentication, origin and session headers.
-- Same production browser artifact was also checked against isolated Pi/workerd
-  and CFL/Node hosts with fake engines, including complete reply and refresh.
+[Protocol](protocol.md) is the public interface authority. Completed assistant
+messages remain IM-style; unfinished model text never enters the public view.
+Stop targets one native turn and never follows an engine mismatch to a newer turn.
+Voice capability and stream require native authentication and same-origin upgrades.
+Missing/disabled/config-failed speech disables recording without breaking text.
+Native Qwen sentence aggregation, lifecycle and transcript validation remain in
+host adapters. Shared capture uses real 16 kHz worklet PCM with no resampler,
+batch fallback, audio persistence, interim preview or reply TTS.
 
-All test conversations, credentials, state and ports belong to fixtures. No
-production service restart or frontend replacement is part of this slice.
+Panels use six bounded shared reads, image bytes use authenticated same-origin
+HTTP, and native reminder scheduling stays native. Images/recovery retain strict
+limits, immutable operation ownership, original/JPEG variants and verified atomic
+replacement. Quiet compact uses native nullable context observations/admission,
+preserves fresh complete-snapshot usage, and never replays after reconnect or
+renders success markers. Search uses each native archive and scoped record IDs,
+with bounded context, complete selected text and read failure isolated from chat.
+See [panels](companion-panels.md), [images](image-send-recovery.md),
+[compact](quiet-compaction.md) and [search](conversation-search.md) for schemas
+and native fixture/control facts.
 
-## Voice integration
-
-Build `packages/contracts` before dispatching backend work. The public
-`@lamplit/contracts/voice` subpath exports compiled `dist/voice.js` and
-`dist/voice.d.ts`: endpoint paths, sample rate, duration/PCM/frame/queue/control/event
-limits, error codes, capability/control/event TypeBox schemas and types,
-`validateVoiceCapability`, `validateVoiceControl`, `validateVoiceServerEvent`,
-`parseVoiceControl`, `parseVoiceServerEvent` and `validateVoiceFrameBytes`.
-Use the validators (including result code-point checking), not schemas alone,
-for admission. `validateVoiceFrameBytes(bytes, totalBytes)` returns the admitted
-new total; host state separately rejects audio before ready or after finish.
-The owned chat schema removes its obsolete fixed `voice: false` field, so refresh
-both backend package consumers atomically with their voice adapters.
-
-Both hosts must authenticate capability and stream through their existing boundary,
-check same-origin browser upgrades, and expose the two `/api/voice/*` paths alongside
-`/slice/`. Vite's existing `/api` proxy already covers both paths and WebSocket
-upgrades; no additional frontend config or credentials are needed. Keep the existing
-Qwen streaming provider/configuration in the hosts. Missing/disabled speech settings
-return `available: false`; config failures keep recording disabled without breaking
-text chat. No browser credentials, new provider framework, batch fallback, or audio
-persistence is introduced. Existing text operator configuration stays unchanged.
-
-`bun run test:browser` serves the production build from an isolated test-owned
-Bun host with fake speech events and Chrome's synthetic microphone. It checks
-streaming PCM before finish, final draft insertion and explicit send, cancel/stale
-results, failure, disconnect, microphone refusal, oversized drafts and disabled
-capability at 390px and 1280px. Worklet tests check PCM conversion/downmix, partial
-flush ordering and the five-minute sample cap. No test reads live host state or
-uses provider credentials.
-
-The text/voice baseline has passed same-build acceptance against isolated real
-Pi/workerd and CFL/Node hosts with fake providers. The companion-panels batch adds
-six required `ChatBackend` read methods and optional persisted message provenance.
-See [companion panels](companion-panels.md) for the authoritative public contract,
-frozen compiled-package handoff, native fixture requirements and actual-host
-commands. Its same-artifact two-backend acceptance remains pending the Owner gate.
-No deployment or production service restart is part of that acceptance.
-
-## Image sending and recovery
-
-Spec #3096 extends the compiled root with strict original/preview/model upload,
-host image limits, reference/availability and native recovery DTOs. `view.recovery`
-is required (empty when no recoverable submitted input). Mount the portable
-`imageHttp` from `/server` before static routing or implement equivalent validated
-native routing; authenticate upload and original reads against current owner/session.
-Use existing native storage and atomic admission/replacement authority. Pi retains
-browser-prepared JPEG variants; CFL uses original bytes. No server transcoding or
-new execution service is needed. See [image-send-recovery](image-send-recovery.md)
-for exact DTOs, native controls, limits and frozen runner commands. Backend workers
-must use the frozen archives instead of rebuilding their own browser/package.
-
-## Quiet compaction handoff
-
-Specs #3120 (Pi) and #3121 (CFL) consume the reviewed App #3119 browser, compiled
-contracts and unchanged acceptance runners after Owner freezes the common bytes.
-Before that handoff both backend specs remain blocked. Implement native nullable
-active-context observations, native lifecycle/admission and the test-only controls
-in [quiet compaction](quiet-compaction.md). Adapter ownership and atomic admission
-checks remain mandatory even when the shared host has checked its current view.
-Never retry native compaction automatically after reconnect/lost acknowledgement.
-Do not remove native records required for continuation or search. Remove completion
-presentation in both manual/automatic history paths. Use only isolated test-owned
-storage and fake engines for joint acceptance; report actual-host results separately
-from App fixture acceptance. No native release, deployment or merge is included.
-
-## Conversation search candidate
-
-Implement required `ChatBackend.search` and `searchRead` using each native archive:
-Pi direct record FTS rows with summary hits; CFL unchanged FlickLog search/get/context.
-The authenticated companion scope applies to cross-session record IDs. Preserve
-native matching and complete selected content; omit private source paths.
-See [search acceptance](conversation-search.md#deterministic-acceptance-fixture)
-for the exact external-host runner and test-only controls, and
-[candidate verification](conversation-search.md#candidate-preparation-and-hash-verification)
-for frozen browser/contracts/runner hashes. Owner approval of App candidate #3142
-precedes native work; actual Pi/CFL acceptance and joint approval gate all merges.
+FlickNote completion records #3062/#3096/#3119/#3142 confirm those features passed
+joint isolated Pi/workerd and CFL/Node acceptance and merged. Old pending handoff
+statements are superseded; historical archive bytes remain evidence. That prior
+acceptance does not prove the new canonical-root build. The
+[complete default handoff](default-shared-frontend.md) defines full App check order,
+one source-HEAD archive, all six external runners and native controls, before/after
+manifests, Owner approval before native starts, screenshots and remaining limits.
+All automated state, credentials, ports and fake providers belong to fixtures.
+Live provider use, hosted integration and physical-device behavior remain later
+Owner/user verification. No deployment, merge, release or live restart occurs here.

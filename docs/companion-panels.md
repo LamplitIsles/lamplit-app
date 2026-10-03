@@ -68,94 +68,25 @@ message incoming with an **App reminder** badge, even when native storage uses a
 user-role input. It must never look like human input. Reading panels creates no
 chat turn.
 
-Only the four connected panels are exposed. Search, attachment sending and TTS
-remain hidden. Opening, manual refresh, completed chat turns and reconnect refresh
+The four panels, archive search and image sending are connected; TTS remains
+outside the app. Opening, manual refresh, completed chat turns and reconnect refresh
 the visible panel and relationship summary; there is no polling or whole-library
 replication. Connection/session/request generations prevent late responses from
 replacing a newer panel. Relationship loading/failure never gates chat or voice.
 
-## Local checks and frozen handoff
+## Current acceptance and native fixtures
 
-```sh
-bun install --frozen-lockfile
-bun run check
-bun run lint
-bun run format:check
-bun run test
-bun run build
-bun run test:browser
-bun run test:panels-browser
-# Commit reviewed source first; freezing requires a clean checkout.
-bun run freeze:panels
-```
+Spec #3062 completed joint isolated Pi/workerd and CFL/Node acceptance and merged
+(App PR #3, Pi #23, CFL #63). Historical frozen bytes remain unchanged evidence.
+Use [complete default-frontend handoff](default-shared-frontend.md) for the current
+checks, single archive, extraction/hash verification and Owner approval gate.
+The canonical-root candidate requires fresh exact-artifact native acceptance;
+local fixture checks do not claim native scheduler, filesystem/auth or live proof.
 
-The last command writes ignored `.scratch/companion-panels/artifacts/`:
-`lamplit-web-panels.tgz`, `browser.sha256`, `lamplit-contracts-panels.tgz`,
-`contracts.sha256`, and `identity.json`. The identity records source HEAD, fixed
-baseline, archive and per-file manifest SHA256 values and the local acceptance
-boundary. Commit hashes describe source; archive/manifest hashes identify the
-exact bytes accepted by both backends. Preserve this handoff; rebuilding creates
-a new artifact identity and requires a new same-artifact acceptance run.
-
-The browser suite uses the production build, test-owned fixture host, ephemeral
-port and isolated Chrome contexts at 390 and 1280. Screenshots are in
-`.scratch/companion-panels/browser/`. It checks history predecessors/paging,
-diary paging/Markdown/missing/too-large, album day/week/unavailable/paging/original
-save bytes, reminder schedules/source, empty/error/retry and late detail results.
-The text and voice suites additionally check completed IM messages and streaming
-voice draft insertion, cancellation/failure and disabled availability.
-
-## Actual-backend commands and fixture requirements
-
-Actual Pi/workerd and CFL/Node acceptance is **pending**. Owner dispatches their
-separate specs #3063/#3064 after app inspection; both must use the same frozen
-browser archive/manifest and compiled contracts. No repository merges before the
-Owner/user joint gate. Local fixture acceptance does not claim native scheduler,
-filesystem, authentication or engine acceptance.
-
-Create a test-owned directory and extract the handoff (commands run in app):
-
-```sh
-HANDOFF="$PWD/.scratch/companion-panels/artifacts"
-ACCEPTANCE_ROOT=$(mktemp -d /tmp/lamplit-panels-acceptance.XXXXXX)
-mkdir "$ACCEPTANCE_ROOT/web" "$ACCEPTANCE_ROOT/contracts"
-tar -xzf "$HANDOFF/lamplit-web-panels.tgz" -C "$ACCEPTANCE_ROOT/web"
-tar -xzf "$HANDOFF/lamplit-contracts-panels.tgz" -C "$ACCEPTANCE_ROOT/contracts"
-(cd "$ACCEPTANCE_ROOT/web" && shasum -a 256 -c "$HANDOFF/browser.sha256")
-(cd "$ACCEPTANCE_ROOT/contracts/package" && shasum -a 256 -c "$HANDOFF/contracts.sha256")
-```
-
-In Pi, install the compiled package with its npm toolchain:
-`npm install "$ACCEPTANCE_ROOT/contracts/package"`. In CFL, use
-`pnpm --filter @lamplitisles/partner add "@lamplit/contracts@file:$ACCEPTANCE_ROOT/contracts/package"`.
-Backend workers own their lockfile updates and deterministic adapter fixes.
-Run Pi `npm run typecheck`, `npm run lint`, `npm test`; run CFL
-`pnpm --filter @lamplitisles/partner check` and
-`pnpm --filter @lamplitisles/partner test` in their respective repositories.
-
-For a real local Pi host, the backend worker prepares a **test-owned** Wrangler
-config derived from `wrangler.slice.jsonc`, with `assets.directory` set to the
-extracted `$ACCEPTANCE_ROOT/web`, fake model/ASR loopback endpoints, synthetic
-fixture authentication, and local bindings. Run:
-
-```sh
-npx wrangler dev --config "$ACCEPTANCE_ROOT/pi-fixture.jsonc" \
-  --local --persist-to "$ACCEPTANCE_ROOT/pi-state" --port 8951
-```
-
-For CFL the backend worker prepares a **test-owned** TOML config, native workspace
-and fake official app-server/ASR, with all data and Codex home paths under
-`$ACCEPTANCE_ROOT`. Run:
-
-```sh
-LAMPLIT_APP_ASSETS="$ACCEPTANCE_ROOT/web" \
-  pnpm --filter @lamplitisles/partner start -- "$ACCEPTANCE_ROOT/cfl-fixture.toml"
-```
-
-These are integration command templates with explicit fixture-config prerequisites,
-not ready-made configurations for backends that have yet to implement the panels.
-Never use live TOML, `.dev.vars`, storage, Codex home or model credentials. Workers
-record their actual fake-service launch/seeding commands and reviewed HEADs.
+Native hosts use test-owned native stores/configs, fake model/official app-server
+and ASR, with all SQLite/R2/workspace/Codex-home paths owned by the test. Backend
+fixtures must record actual launch/seeding commands and reviewed HEADs; never use
+live TOML, `.dev.vars`, storage, installed real engines or model credentials.
 
 `tests/panels-fixture.ts` exports `panelsFixture()` with 25 relationship records,
 35 date names/images, all four schedules, and `fixtureImage` original PNG bytes.
@@ -172,11 +103,11 @@ reply/transcript values can be supplied through the environment below.
 With those real hosts running, execute from app:
 
 ```sh
-APP_ACCEPTANCE_URL=http://127.0.0.1:8951/slice/ \
+APP_ACCEPTANCE_URL=http://127.0.0.1:8951/ \
 APP_ACCEPTANCE_USERNAME=owner APP_ACCEPTANCE_PASSWORD=fixture-password-long-enough \
 APP_ACCEPTANCE_EVIDENCE=.scratch/companion-panels/pi-browser \
   bun run test:panels-browser
-APP_ACCEPTANCE_URL=http://127.0.0.1:8952/slice/ \
+APP_ACCEPTANCE_URL=http://127.0.0.1:8952/ \
 APP_ACCEPTANCE_INTERVAL_SECONDS=300 \
 APP_ACCEPTANCE_EVIDENCE=.scratch/companion-panels/cfl-browser \
   bun run test:panels-browser
@@ -186,8 +117,8 @@ APP_ACCEPTANCE_EVIDENCE=.scratch/companion-panels/cfl-browser \
 to 90 for the local fixture and Pi. CFL seeds its native minimum five-minute
 interval (`everyMinutes=5`), exposes `everySeconds=300` and retains its native
 `createdAt` anchor; use 300 as shown above without changing the scheduler.
-The runner HEAD may advance independently; the accepted browser/contracts
-artifact HEAD and hashes remain those recorded in the handoff report.
+The current complete handoff pins browser/contracts and every runner to one
+committed source HEAD; verify its archive and per-file manifests before/after.
 
 Set `APP_ACCEPTANCE_REPLY` (regular expression) and `APP_ACCEPTANCE_TRANSCRIPT`
 (exact string) if the fake providers use different fixed text. External mode tests

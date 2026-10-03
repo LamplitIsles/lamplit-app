@@ -1,21 +1,21 @@
 {
-  "id": "/slice/",
+  "id": "/",
   "name": "Lamplit",
   "short_name": "Lamplit",
-  "start_url": "/slice/",
-  "scope": "/slice/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#f7ece3",
   "theme_color": "#f7ece3",
   "icons": [
     {
-      "src": "/slice/icons/cfl-192.png",
+      "src": "/icons/cfl-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/slice/icons/cfl-512.png",
+      "src": "/icons/cfl-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

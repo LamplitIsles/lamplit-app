@@ -148,3 +148,11 @@ individual message/summary cards, nullable totals, native metadata, opaque recor
 identity and bounded nearby context. No cwd/source paths cross the public boundary.
 An oversized serialized method reply becomes an RPC error before delivery, retaining
 the normal chat connection; slow-consumer output backpressure still reconnects.
+
+## Default frontend boundary
+
+The app uses root-relative assets at standalone `/` and hosted `/chat`; `/slice`
+is removed without alias. Public endpoint paths and schemas remain unchanged.
+Platform owns hosted manifest/service worker/auth and management independently.
+See [complete regression and native handoff](default-shared-frontend.md) for the
+current single artifact and test-only controls; those controls are not public APIs.

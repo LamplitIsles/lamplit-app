@@ -1,56 +1,127 @@
+import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
 import { fixtureBackend } from "./fixture.ts";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 
+const external = process.env.APP_ACCEPTANCE_URL;
+if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
+  throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
 const fixture = fixtureBackend();
 const host = await createChatHost(fixture.backend);
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
-const server = Bun.serve({
+const server = external
+  ? undefined
+  : Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req, server) {
+        const path = new URL(req.url).pathname;
+        if (path === "/__test/text") {
+          const input = await req.json();
+          if (input.action === "reset") fixture.reset();
+          if (input.action === "complete") await fixture.complete(input.text);
+          return Response.json({
+            executions: fixture.executions,
+            sessionId: (await fixture.backend.read()).sessionId,
+          });
+        }
+        if (path === "/api/chat/socket" && server.upgrade(req)) return;
+        return staticAssets(assets, path);
+      },
+      websocket: {
+        open(ws) {
+          channels.set(
+            ws,
+            host.connect(ws, async () => true),
+          );
+        },
+        message(ws, raw) {
+          void channels.get(ws).receive(String(raw));
+        },
+        close(ws) {
+          channels.get(ws)?.close();
+          channels.delete(ws);
+        },
+      },
+    });
+const linkedPage = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
-  async fetch(req, server) {
-    const path = new URL(req.url).pathname;
-    if (path === "/api/chat/socket" && server.upgrade(req)) return;
-    const relative = path.replace(/^\/slice\/?/, "");
-    const target = resolve(assets, relative || "index.html");
-    if (!target.startsWith(`${assets}/`))
-      return new Response("Not found", { status: 404 });
-    const file = Bun.file(target);
-    return (await file.exists())
-      ? new Response(file)
-      : new Response("Not found", { status: 404 });
-  },
-  websocket: {
-    open(ws) {
-      channels.set(
-        ws,
-        host.connect(ws, async () => true),
-      );
-    },
-    message(ws, raw) {
-      void channels.get(ws).receive(String(raw));
-    },
-    close(ws) {
-      channels.get(ws)?.close();
-      channels.delete(ws);
-    },
-  },
+  fetch: () => new Response("External page"),
 });
+const linkUrl = `http://127.0.0.1:${linkedPage.port}/lamplit`;
 const browser = await chromium.launch({ headless: true, channel: "chrome" });
-await mkdir(".scratch/browser", { recursive: true });
+const url = external ?? `http://127.0.0.1:${server.port}/`;
+const controlUrl =
+  process.env.APP_ACCEPTANCE_CONTROL_URL ?? new URL("/__test/text", url).href;
+const evidence =
+  process.env.APP_ACCEPTANCE_EVIDENCE ??
+  ".scratch/default-shared-frontend/text";
+await mkdir(evidence, { recursive: true });
 try {
   for (const width of [390, 1280]) {
     const context = await browser.newContext({
       viewport: { width, height: 844 },
       locale: "zh-CN",
+      httpCredentials: process.env.APP_ACCEPTANCE_USERNAME
+        ? {
+            username: process.env.APP_ACCEPTANCE_USERNAME,
+            password: process.env.APP_ACCEPTANCE_PASSWORD ?? "",
+          }
+        : undefined,
     });
+    const control = async (input) => {
+      const response = await context.request.post(controlUrl, { data: input });
+      expect(response.ok()).toBe(true);
+      return response.json();
+    };
+    const initial = await control({ action: "reset" });
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));
-    await page.goto(`http://127.0.0.1:${server.port}/slice/`);
+    await page.goto(url);
+    // Validate deployed URLs from the rendered document, not source text.
+    const assetPaths = await page
+      .locator("script[src], link[href]")
+      .evaluateAll((nodes) =>
+        nodes.map(
+          (node) => node.getAttribute("src") ?? node.getAttribute("href"),
+        ),
+      );
+    for (const path of assetPaths) {
+      expect(path.startsWith("/")).toBe(true);
+      expect(path.startsWith("/slice/")).toBe(false);
+      expect((await context.request.get(new URL(path, url).href)).ok()).toBe(
+        true,
+      );
+    }
+    if (!external) {
+      const manifest = await context.request.get(
+        new URL("/manifest.webmanifest", url).href,
+      );
+      const pwa = await manifest.json();
+      expect([pwa.id, pwa.start_url, pwa.scope]).toEqual(["/", "/", "/"]);
+      for (const icon of pwa.icons)
+        expect(
+          (await context.request.get(new URL(icon.src, url).href)).ok(),
+        ).toBe(true);
+      const root = await context.request.get(new URL("/", url).href);
+      const hosted = await context.request.get(new URL("/chat", url).href);
+      expect(await hosted.body()).toEqual(await root.body());
+      for (const obsolete of [
+        "/slice",
+        "/slice/",
+        "/slice/manifest.webmanifest",
+        "/management",
+        "/missing.js",
+      ])
+        expect(
+          (await context.request.get(new URL(obsolete, url).href)).status(),
+        ).toBe(404);
+    }
     const input = page.locator("#companion-textarea");
     await expect(input).toBeVisible();
     await input.fill(`hello-${width}`);
@@ -69,7 +140,7 @@ try {
     const reply = `complete reply ${width}`;
     await expect(page.getByText(reply, { exact: true })).toHaveCount(0);
     await context.setOffline(true);
-    await fixture.complete(reply);
+    await control({ action: "complete", text: reply });
     await context.setOffline(false);
     await expect(page.getByText(reply, { exact: true })).toBeVisible();
     await expect(
@@ -92,36 +163,45 @@ try {
     // An unconfirmed local send survives reload without automatic execution.
     const operationId = crypto.randomUUID();
     const recoveryText = `recovered-${width}`;
-    const beforeRecovery = fixture.executions;
+    const beforeRecovery = (await control({ action: "state" })).executions;
     await page.evaluate(
-      ({ operationId, text }) => {
+      ({ operationId, text, sessionId }) => {
         localStorage.setItem(
-          "lamplit.pending:fixture-session",
+          `lamplit.pending:${sessionId}`,
           JSON.stringify([
             { operationId, text, createdAt: Date.now(), state: "uncertain" },
           ]),
         );
       },
-      { operationId, text: recoveryText },
+      { operationId, text: recoveryText, sessionId: initial.sessionId },
     );
     await page.reload();
     await expect(page.getByText(recoveryText, { exact: true })).toBeVisible();
     const retry = page.getByRole("button", { name: "重试未发送消息" });
     await expect(retry).toBeVisible();
-    expect(fixture.executions).toBe(beforeRecovery);
+    expect((await control({ action: "state" })).executions).toBe(
+      beforeRecovery,
+    );
     await retry.click();
-    await expect.poll(() => fixture.executions).toBe(beforeRecovery + 1);
+    await expect
+      .poll(async () => (await control({ action: "state" })).executions)
+      .toBe(beforeRecovery + 1);
     await expect(retry).toHaveCount(0);
     await page.reload();
-    expect(fixture.executions).toBe(beforeRecovery + 1);
-    await fixture.complete(`recovered reply ${width}`);
+    expect((await control({ action: "state" })).executions).toBe(
+      beforeRecovery + 1,
+    );
+    await control({ action: "complete", text: `recovered reply ${width}` });
     await expect(
       page.getByText(`recovered reply ${width}`, { exact: true }),
     ).toBeVisible();
     // Imported CFL interactions must work through the shared completed-message controller.
     await input.fill(`link-${width}`);
     await input.press("Enter");
-    await fixture.complete(`[external-${width}](https://example.com/lamplit)`);
+    await control({
+      action: "complete",
+      text: `[external-${width}](${linkUrl})`,
+    });
     const link = page.getByRole("link", {
       name: `external-${width}`,
       exact: true,
@@ -129,13 +209,10 @@ try {
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    await context.route("https://example.com/**", (route) =>
-      route.fulfill({ body: "External page" }),
-    );
     const popupPromise = page.waitForEvent("popup");
     await link.click();
     const popup = await popupPromise;
-    await expect(popup).toHaveURL("https://example.com/lamplit");
+    await expect(popup).toHaveURL(linkUrl);
     await popup.close();
     await expect(input).toBeVisible();
     const bubble = link.locator(
@@ -217,8 +294,14 @@ try {
       .click();
     await page.keyboard.press("Escape");
     await expect(settings).not.toBeVisible();
+    if (!external) {
+      await page.goto(new URL("/chat", url).href);
+      await expect(input).toBeVisible();
+      await expect(page.getByText(reply, { exact: true })).toBeVisible();
+      await expect(page.locator("html")).toHaveClass(/dark/);
+    }
     await page.screenshot({
-      path: `.scratch/browser/chat-${width}.png`,
+      path: `${evidence}/chat-${width}.png`,
       fullPage: true,
     });
     expect(
@@ -235,7 +318,8 @@ try {
 } finally {
   await browser.close();
   host.close();
+  linkedPage.stop(true);
   for (const ws of channels.keys()) ws.terminate();
-  server.unref();
-  void server.stop(true);
+  server?.unref();
+  void server?.stop(true);
 }

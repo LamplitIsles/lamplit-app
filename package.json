@@ -16,13 +16,11 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test:panels-browser": "bun tests/panels-browser.mjs",
-    "freeze:panels": "bun tests/freeze-panels.mjs",
     "test:images-browser": "bun tests/images-browser.mjs",
-    "freeze:images": "bun tests/freeze-images.mjs",
     "test:compact-browser": "bun tests/compact-browser.mjs",
-    "prepare:compact": "bun tests/prepare-compact.mjs",
     "test:search-browser": "bun tests/search-browser.mjs",
-    "prepare:search": "bun tests/prepare-search.mjs"
+    "test:route-lifecycle-browser": "bun tests/route-lifecycle-browser.mjs",
+    "prepare:default": "bun tests/prepare-default.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261002.1",

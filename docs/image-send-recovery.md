@@ -104,67 +104,23 @@ text/images returns its offer. Explicitly discarding restored input dismisses th
 page-local offer and exposes the next source without changing native consumption. Unsent composer
 persistence and generic attachments are outside this feature.
 
-## Local verification and immutable handoff
+## Current verification and native handoff
+
+Spec #3096 completed same-artifact native Pi/CFL acceptance, including exact image
+bytes and corrected route lifecycle, and merged (App PR #4, Pi #24, CFL #64).
+Historical ebde803 product/091c0def runner archives remain unchanged evidence.
+Use the [complete default handoff](default-shared-frontend.md) for current full
+checks, one committed-source archive, extraction/hash checks and Owner approval.
+The current unchanged image runner uses canonical `/` (hosted `/chat`) with native
+public HTTP/WS, test-owned stores and fake engines. It still denies anonymous media.
+
+From the extracted `acceptance/`, after approved native fixtures start:
 
 ```sh
-# Retained product HEAD ebde803: already completed; not runner-only steps.
-bun run check
-bun run lint
-bun run format:check
-bun run test
-bun run build
-bun run test:browser
-bun run test:panels-browser
-bun run test:images-browser
-# Current runner-only checks (no product builds):
-bun run lint && bun run format:check && node tests/route-lifecycle-browser.mjs
-# Runner-only revision: commit verified runner source; do not rebuild browser/contracts:
-bun run freeze:images
-```
-
-The runner-only revision writes `.scratch/image-send-recovery/artifacts-review2`.
-It copies the Owner-reviewed browser/contracts archives and manifests byte-identically
-from `artifacts-review1`, retaining product source HEAD `ebde803fb955349c8bd05de259f13ca14b63f668`.
-Only the reusable acceptance archive is revised; `identity.json` records its separate
-committed `acceptanceSourceHead`, per-component source identities and hashes.
-The runner is Owner-approved; native acceptance remains pending.
-Previous archives/evidence are retained. Existing output identity is never overwritten;
-both backend workers consume the same Owner-approved runner and reviewed product bytes,
-without rebuilding or refreezing browser/contracts. Verify identity archive hashes, then extracted files:
-
-```sh
-mkdir -p browser contracts acceptance
-# Substitute the received archive directory; use test-owned destination folders.
-tar -xzf ARTIFACTS/lamplit-web-images.tgz -C browser
-tar -xzf ARTIFACTS/lamplit-contracts-images.tgz -C contracts
-tar -xzf ARTIFACTS/lamplit-acceptance-images.tgz -C acceptance
-(cd browser && shasum -a 256 -c ../ARTIFACTS/browser.sha256)
-(cd contracts/package && shasum -a 256 -c ../../ARTIFACTS/contracts.sha256)
-(cd acceptance && shasum -a 256 -c ../ARTIFACTS/acceptance.sha256)
-(cd contracts/package && bun install)
-(cd acceptance && bun install)
-```
-
-Installing runtime dependencies in `contracts/package` is required for Bun local
-file dependencies: compiled modules resolve dependencies from that real directory.
-This installs dependencies only; it does not build or refreeze any artifact.
-
-Native hosts serve extracted `browser` at `/slice/`, mount authenticated image
-HTTP and shared WS, and install `contracts/package`. Start their real workerd/DO
-or Node host on an isolated port with test-owned data/auth and fake model/app-server.
-Keep four panels and voice configured using the existing acceptance recipes.
-Run the extracted runner with Chrome installed:
-
-```sh
-cd acceptance
-APP_ACCEPTANCE_URL=http://127.0.0.1:PORT/slice/ \
+APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/ \
 APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:CONTROL_PORT/__test/image-send-recovery \
-APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence \
-  bun images-browser.mjs
-# Focused local real-Playwright route lifecycle regression:
-node route-lifecycle-browser.mjs
-# Optional fixture-only basic authentication:
-# APP_ACCEPTANCE_USERNAME=... APP_ACCEPTANCE_PASSWORD=...
+APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence/images bun images-browser.mjs
+bun route-lifecycle-browser.mjs
 ```
 
 The control endpoint is **test infrastructure only**, never production routing.
@@ -192,9 +148,9 @@ without owner credentials and requires denial. Native authenticated session IDs
 need not equal the local fixture's ID: the runner captures real upload identity.
 Numeric intake limits are read from native capabilities; assertions for safe
 identity, ownership, recovery, history, replacement and no replay are fixed.
-The existing text/voice/panel runners remain additional regression checks. Actual
-Pi and CFL reports are the Owner's joint acceptance/merge gate; app local completion
-does not claim actual-host acceptance. Keep the app PR open; no deployment.
+The existing text/voice/panel runners remain additional regression checks.
+New exact-artifact Pi and CFL reports remain the Owner's joint acceptance gate
+for #3162; prior acceptance does not prove the new canonical routes. No deployment.
 
 The delayed-media and delayed-upload probes release their held requests and await
 `page.unrouteAll({ behavior: "wait" })` before advancing. Ordinary `unroute` does
@@ -203,4 +159,4 @@ suppressed; a genuine handler failure still fails the acceptance process.
 
 # Design authority update — 2026-10-03
 
-The former Composer/attachment mockup requirements are superseded. CFL's existing Framework7 UI is the shared frontend baseline; see [current direction](ui-baseline-and-compaction.md). The earlier 96px acceptance described the historical image slice, not a continuing requirement. Spec #3119 restores native CFL presentation and replaces the superseded sizing/wrapping assertions; image sending, safe recovery and route teardown remain required. See [quiet compaction handoff](quiet-compaction.md) for the new common candidate artifact.
+The former Composer/attachment mockup requirements are superseded. CFL's existing Framework7 UI is the shared frontend baseline; see [current direction](ui-baseline-and-compaction.md). The earlier 96px acceptance described the historical image slice, not a continuing requirement. Spec #3119 restored native CFL presentation and replaced the superseded sizing/wrapping assertions; image sending, safe recovery and route teardown remain required. See [quiet compaction handoff](quiet-compaction.md) for the native behavior; use the complete default handoff for current artifacts.

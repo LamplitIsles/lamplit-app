@@ -2,7 +2,7 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { paraglideVitePlugin } from "@inlang/paraglide-js";
 import { defineConfig } from "vite";
 export default defineConfig({
-  base: "/slice/",
+  base: "/",
   publicDir: "static",
   build: { outDir: "build" },
   plugins: [

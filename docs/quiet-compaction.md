@@ -1,9 +1,9 @@
 # Quiet native compaction
 
-App spec #3119 owns the shared browser and contracts. Pi #3120 and CFL #3121
-remain blocked until Owner review and the final frozen handoff. Local fixture
-acceptance is evidence for the App; actual isolated Pi/workerd and CFL/Node
-acceptance with fake native engines is a separate pending joint merge gate.
+App spec #3119 owns the shared browser and contracts. App #3119, Pi #3120 and
+CFL #3121 completed Owner review and joint isolated Pi/workerd and CFL/Node
+acceptance with fake native engines, then merged (App #5, Pi #26, CFL #65).
+The new canonical-root artifact requires fresh Owner-approved acceptance under #3162.
 
 ## Public native contract
 
@@ -100,7 +100,7 @@ allow the usual authenticated browser reconnection. Test reset/release cleanup
 must affect only this test instance. Tests own any SQLite/R2 directories and fakes.
 
 ```sh
-APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/slice/ \
+APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/ \
 APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:TEST_PORT/__test/quiet-compaction \
 APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence/compact \
 bun compact-browser.mjs
@@ -111,39 +111,12 @@ The existing images/panels runners retain their documented control protocols and
 no production accounts or paid providers are used. Missing actual-host controls
 must be reported, not substituted with a weaker fixture claim.
 
-## Candidate and Owner freeze
+## Current artifact
 
-After committing the whole spec, `bun run prepare:compact` requires a clean
-checkout, builds once, and creates ignored `.scratch/quiet-compaction/candidate`.
-It records exact committed HEAD and SHA-256 archives/manifests for browser,
-compiled contracts and acceptance runner package. It refuses to overwrite an
-existing identity. These are candidate bytes, pending Owner review. Owner freezes
-approved identical bytes for both backends; do not rebuild/refreeze independently.
-If review changes code, prepare a new explicitly named candidate after preserving
-the earlier review identity. Never relax runner assertions in backend forks.
-
-After Owner handoff, verify archive hashes against `identity.json`, extract into
-one test-owned directory with subdirectories `web`, `contracts`, `acceptance`:
-
-```sh
-mkdir -p web contracts acceptance
-tar -xzf lamplit-web-compact.tgz -C web
-tar -xzf lamplit-contracts-compact.tgz -C contracts
-tar -xzf lamplit-acceptance-compact.tgz -C acceptance
-(cd web && shasum -a 256 -c ../browser.sha256)
-(cd contracts/package && shasum -a 256 -c ../../contracts.sha256)
-(cd acceptance && shasum -a 256 -c ../acceptance.sha256)
-(cd contracts/package && bun install)
-(cd acceptance && bun install)
-```
-
-Point each actual host at the same extracted `web`, install the same extracted
-`contracts/package` with its existing package manager, then run the unchanged
-compact/images/panels runners from `acceptance` with test host URLs and separate
-control/evidence destinations. Preserve the archive/manifests, exact host HEAD,
-commands, fake-engine identity and runtime/browser results for Owner joint review.
-For extracted fixture regression, set `APP_ACCEPTANCE_ASSETS=../web` while running
-`bun browser.mjs` and `bun voice-browser.mjs` from `acceptance`; these two remain
-fixture checks, not actual-host proofs.
-
-No merge, deployment, native release or production frontend replacement is implied.
+Use [complete default handoff](default-shared-frontend.md) for current full checks,
+one committed-source browser/contracts/all-runner archive, hash verification and
+native approval gate. The historical Owner-approved frozen-95f0f06 bytes remain
+unchanged evidence. Text and voice now support actual test-owned hosts via explicit
+controls; they no longer need to be limited to fixture-only runs. Native state,
+admission, silent completion, fresh usage and no-replay assertions remain intact.
+No merge, deployment, native release or live frontend replacement is implied.
