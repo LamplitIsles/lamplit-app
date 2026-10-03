@@ -377,8 +377,18 @@ export class ChatController {
     this.changed();
   }
   private updateRecovery() {
+    const observed = new Set(
+      [...this.older, ...(this.view?.messages ?? [])]
+        .filter(
+          (message) =>
+            message.role === "user" &&
+            (message.delivery === undefined || message.delivery === "consumed"),
+        )
+        .map((message) => message.operationId),
+    );
     this.recovery = (this.view?.recovery ?? []).filter(
       (r) =>
+        !(r.state === "uncertain" && observed.has(r.operationId)) &&
         !this.dismissed.has(r.sourceId) &&
         !(
           r.state === "uncertain" &&
@@ -589,6 +599,7 @@ export class ChatController {
       const page = await client.history(this.before);
       if (this.client !== client || this.view?.sessionId !== sessionId) return;
       this.older = [...page.messages, ...this.older];
+      this.updateRecovery();
       this.before = page.before;
     } catch {
       this.error = "加载历史失败，请重试。";

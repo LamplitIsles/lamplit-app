@@ -21,6 +21,7 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
     operationId: null,
     turnId: null,
   });
+  const historicalOperation = crypto.randomUUID();
   let live = Array.from({ length: 30 }, (_, i) => message(i + 11));
   let sessionId = "history-fixture";
   let active: string | null = null;
@@ -41,7 +42,16 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
         messages: live,
         before: "11",
         capabilities,
-        recovery: [],
+        recovery: [
+          {
+            sourceId: historicalOperation,
+            operationId: historicalOperation,
+            text: "message 1",
+            images: [],
+            state: "uncertain",
+            replacementEligible: false,
+          },
+        ],
       };
     },
     async compact(input) {
@@ -49,7 +59,10 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
     },
     async history() {
       return {
-        messages: Array.from({ length: 10 }, (_, i) => message(i + 1)),
+        messages: Array.from({ length: 10 }, (_, i) => ({
+          ...message(i + 1),
+          operationId: i === 0 ? historicalOperation : null,
+        })),
         before: null,
       };
     },
@@ -126,7 +139,9 @@ test("moving live window retains history/unconsumed sends and rejects previous-s
   try {
     controller.start();
     await eventually(() => controller.connected);
+    expect(controller.recovery).toHaveLength(1);
     await controller.loadOlder();
+    expect(controller.recovery).toEqual([]);
     expect(controller.before).toBeNull();
     live = Array.from({ length: 30 }, (_, i) => message(i + 12));
     await host.refresh();
@@ -215,26 +230,31 @@ test("an in-flight send stays visible until observed and is not offered as recov
     release = resolve;
   });
   let observed = false;
+  let delivery: ChatMessage["delivery"];
+  let recoveryState: "uncertain" | "unconsumed" | "rejected" = "uncertain";
   const backend: ChatBackend = {
     ...fixture.backend,
     async read() {
       const view = await fixture.backend.read();
       return {
         ...view,
-        messages: observed ? view.messages : [],
-        recovery:
-          submitted && !observed
-            ? [
-                {
-                  sourceId: submitted.operationId,
-                  operationId: submitted.operationId,
-                  text: submitted.text,
-                  images: [],
-                  state: "uncertain" as const,
-                  replacementEligible: false,
-                },
-              ]
-            : [],
+        messages: observed
+          ? view.messages.map((message) =>
+              delivery === undefined ? message : { ...message, delivery },
+            )
+          : [],
+        recovery: submitted
+          ? [
+              {
+                sourceId: submitted.operationId,
+                operationId: submitted.operationId,
+                text: submitted.text,
+                images: [],
+                state: recoveryState,
+                replacementEligible: false,
+              },
+            ]
+          : [],
       };
     },
     async submit(input) {
@@ -306,6 +326,7 @@ test("an in-flight send stays visible until observed and is not offered as recov
       "delayed native admission",
     ]);
     expect(retired).toBe(0);
+    // A native view can retain a stale recovery candidate while its user message is visible.
     observed = true;
     await host.refresh();
     await eventually(() =>
@@ -316,6 +337,27 @@ test("an in-flight send stays visible until observed and is not offered as recov
     expect(controller.pending).toEqual([]);
     expect(controller.recovery).toEqual([]);
     expect(retired).toBe(1);
+    // A visible native echo can still carry unknown delivery and require inspection.
+    delivery = "uncertain";
+    await host.refresh();
+    await eventually(
+      () => controller.view!.messages[0]?.delivery === "uncertain",
+    );
+    expect(controller.recovery[0]?.state).toBe("uncertain");
+    delivery = "consumed";
+    await host.refresh();
+    await eventually(
+      () => controller.view!.messages[0]?.delivery === "consumed",
+    );
+    expect(controller.recovery).toEqual([]);
+    // Explicit native failure/ non-consumption remains recoverable even with a visible echo.
+    for (const state of ["unconsumed", "rejected"] as const) {
+      recoveryState = state;
+      await host.refresh();
+      await eventually(() => controller.view!.recovery[0]?.state === state);
+      expect(controller.recovery[0]?.state).toBe(state);
+    }
+    recoveryState = "uncertain";
     // A real failed admission still exposes the backend's uncertain recovery.
     backend.submit = async (input) => {
       submitted = input;

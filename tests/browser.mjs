@@ -11,21 +11,22 @@ if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
 const fixture = fixtureBackend();
 let delayedInput;
+let staleRecoveryInput;
 const backend = {
   ...fixture.backend,
   async read() {
     const view = await fixture.backend.read();
-    return delayedInput
+    return staleRecoveryInput
       ? {
           ...view,
           messages: view.messages.filter(
-            (m) => m.operationId !== delayedInput.operationId,
+            (m) => m.operationId !== delayedInput?.operationId,
           ),
           recovery: [
             {
-              sourceId: delayedInput.operationId,
-              operationId: delayedInput.operationId,
-              text: delayedInput.text,
+              sourceId: staleRecoveryInput.operationId,
+              operationId: staleRecoveryInput.operationId,
+              text: staleRecoveryInput.text,
               images: [],
               state: "uncertain",
               replacementEligible: false,
@@ -36,7 +37,7 @@ const backend = {
   },
   async submit(input) {
     if (!input.text.startsWith("hello-")) return fixture.backend.submit(input);
-    delayedInput = input;
+    delayedInput = staleRecoveryInput = input;
     await host.refresh();
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const receipt = await fixture.backend.submit(input);
@@ -44,6 +45,11 @@ const backend = {
       if (delayedInput?.operationId === input.operationId)
         delayedInput = undefined;
       void host.refresh();
+      setTimeout(() => {
+        if (staleRecoveryInput?.operationId === input.operationId)
+          staleRecoveryInput = undefined;
+        void host.refresh();
+      }, 1000);
     }, 1000);
     return receipt;
   },
@@ -256,6 +262,8 @@ try {
     expect(
       await typingDot.evaluate((dot) => getComputedStyle(dot).animationName),
     ).not.toBe("none");
+    // Keep observing through native transcript visibility and the later recovery refresh.
+    if (!external) await page.waitForTimeout(3500);
     const reply = `complete reply ${width}`;
     await expect(page.getByText(reply, { exact: true })).toHaveCount(0);
     await context.setOffline(true);
