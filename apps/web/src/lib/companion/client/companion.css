@@ -252,7 +252,6 @@
 .companion-keet-source {
   font-size: 11px;
 }
-.companion-notice,
 .companion-empty,
 .companion-history-state,
 .companion-loading-shell,
@@ -261,8 +260,22 @@
   text-align: center;
 }
 .companion-notice {
+  display: flex;
+  justify-content: center;
+  padding: 8px 16px;
+}
+.companion-notice p {
+  max-width: 100%;
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--companion-color-surface-muted);
+  color: var(--companion-color-text-muted);
   font-size: 12px;
+  line-height: 18px;
+  text-align: center;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .companion-loading-shell {
   flex: 1;

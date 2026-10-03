@@ -2437,7 +2437,7 @@
                     {@const first = unit.items[0]}
                     {#if first?.kind === "notice"}
                       <div
-                        class="companion-recovery"
+                        class="companion-notice"
                         role={first.tone === "error" ? "alert" : "status"}
                       >
                         <p>{noticeText(first, t)}</p>
