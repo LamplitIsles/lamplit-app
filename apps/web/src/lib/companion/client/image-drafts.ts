@@ -99,7 +99,7 @@ export function imageFilesFromClipboard(
 /** Fetch a Capacitor camera result into the same File shape used by every image intake path. */
 export async function imageFileFromCapturedMedia(
   media: CapturedImageMedia,
-  fetchMedia: typeof fetch = fetch,
+  fetchMedia: (url: string) => Promise<Response> = fetch,
 ): Promise<File> {
   const url = media.webPath;
   if (!url) throw new Error("camera-media-missing-url");
@@ -107,13 +107,17 @@ export async function imageFileFromCapturedMedia(
     const response = await fetchMedia(url);
     if (!response.ok) throw new Error("camera-media-fetch-failed");
     const blob = await response.blob();
+    if (blob.type.startsWith("image/") && !imageMediaType(blob.type))
+      throw new Error("camera-media-unsupported-type");
     const type =
       imageMediaType(blob.type) ??
       imageMediaType(media.metadata?.format) ??
       imageMediaType(url);
     if (!type) throw new Error("camera-media-unsupported-type");
     const extension = type.slice("image/".length);
-    return new File([blob], `camera-photo.${extension}`, { type });
+    return new File([await blob.arrayBuffer()], `camera-photo.${extension}`, {
+      type,
+    });
   } finally {
     if (url.startsWith("blob:")) URL.revokeObjectURL(url);
   }

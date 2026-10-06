@@ -14,7 +14,11 @@
   export let backgrounds: { landscape: string; portrait: string } | undefined =
     undefined;
   import { createEventDispatcher, onDestroy, tick } from "svelte";
-  import { captureNativePhoto, hasNativeCamera } from "./native-mobile.js";
+  import {
+    captureNativePhoto,
+    chooseNativePhotos,
+    hasNativeCamera,
+  } from "./native-mobile.js";
   import AlarmDrawer from "./AlarmDrawer.svelte";
   import type { AlarmView } from "./alarm-view.ts";
   import Plus from "lucide-svelte/icons/plus";
@@ -212,6 +216,9 @@
   let composerInput: HTMLTextAreaElement;
   let photoLibraryInput: HTMLInputElement;
   let photoCaptureInput: HTMLInputElement;
+  let nativePhotoBusy = false;
+  let nativePhotoGeneration = 0;
+  let photoDisposed = false;
   let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
   let timeline: HTMLDivElement;
@@ -390,6 +397,7 @@
   $: displayedProjection = projection;
   $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
+    nativePhotoGeneration += 1;
     releaseSubmissionImages(imageDrafts);
     imageDrafts = [];
     imageDraftSessionId = sessionId;
@@ -482,6 +490,7 @@
   async function restoreRecoveredDraft(
     draft: CompanionRecoveredDraft,
   ): Promise<void> {
+    if (nativePhotoBusy) return;
     const token = ++recoveredDraftToken;
     recoveredDraftKey = draft.key;
     recoveredPendingKey = draft.localPendingKey ?? "";
@@ -1131,6 +1140,7 @@
     if (
       projection.canSubmit === false ||
       voiceBusy ||
+      nativePhotoBusy ||
       restoringRecovery ||
       missingRecoveryImages
     )
@@ -1263,6 +1273,7 @@
   }
 
   async function toggleVoiceInput(): Promise<void> {
+    if (nativePhotoBusy) return;
     if (
       projection.canSubmit === false &&
       voiceStatus !== "recording" &&
@@ -1377,12 +1388,45 @@
     addImages(images);
   }
 
-  async function capturePhoto(): Promise<void> {
+  function canIntakePhoto(): boolean {
+    return (
+      !voiceBusy &&
+      !restoringRecovery &&
+      !!imageLimits &&
+      projection.canSubmit !== false &&
+      !photoDisposed
+    );
+  }
+  async function selectNativePhotos(capture = false): Promise<void> {
+    if (nativePhotoBusy || !canIntakePhoto() || !imageLimits) return;
+    const remaining = imageLimits.maxImagesPerMessage - imageDrafts.length;
+    if (remaining <= 0) {
+      imageIntakeFailure = {
+        key: "image.countLimit",
+        params: { count: imageLimits.maxImagesPerMessage },
+      };
+      liveAnnouncement = imageIntakeFailure;
+      return;
+    }
+    nativePhotoBusy = true;
+    const generation = ++nativePhotoGeneration;
+    const originSessionId = sessionId;
+    const ownsSelection = () =>
+      !photoDisposed &&
+      generation === nativePhotoGeneration &&
+      sessionId === originSessionId;
     try {
-      const file = await captureNativePhoto();
-      if (file) addImages([file]);
+      const files = capture
+        ? await captureNativePhoto().then((file) => (file ? [file] : undefined))
+        : await chooseNativePhotos(remaining);
+      if (ownsSelection() && files && canIntakePhoto()) addImages(files);
     } catch {
-      liveAnnouncement = { key: "camera.failed" };
+      if (ownsSelection()) {
+        imageIntakeFailure = { key: "camera.failed" };
+        liveAnnouncement = imageIntakeFailure;
+      }
+    } finally {
+      nativePhotoBusy = false;
     }
   }
 
@@ -1391,7 +1435,7 @@
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
   function onImagePickerPointerDown(event: PointerEvent): void {
-    if (voiceBusy || event.pointerType !== "touch") return;
+    if (voiceBusy || nativePhotoBusy || event.pointerType !== "touch") return;
     imagePickerPointer = { id: event.pointerId, startedAt: Date.now() };
   }
   function onImagePickerPointerUp(event: PointerEvent): void {
@@ -1403,7 +1447,8 @@
     if (!held) return;
     suppressImagePickerClick = true;
     event.preventDefault();
-    if (hasNativeCamera()) void capturePhoto();
+    if (nativePhotoBusy || voiceBusy || restoringRecovery) return;
+    if (hasNativeCamera()) void selectNativePhotos(true);
     else photoCaptureInput?.click();
   }
   function clearImagePickerPointer(): void {
@@ -1414,7 +1459,9 @@
       suppressImagePickerClick = false;
       return;
     }
-    photoLibraryInput?.click();
+    if (nativePhotoBusy || voiceBusy || restoringRecovery) return;
+    if (hasNativeCamera()) void selectNativePhotos();
+    else photoLibraryInput?.click();
   }
   function formatHistoryDate(value: string, locale: string): string {
     const date = new Date(value);
@@ -1780,6 +1827,8 @@
   }
 
   onDestroy(() => {
+    photoDisposed = true;
+    nativePhotoGeneration += 1;
     dismissMessageMenu();
     imagePress?.destroy();
     panelGeneration++;
@@ -2072,7 +2121,7 @@
               type="button"
               aria-label={t(voiceBusy ? "voice.cancel" : "image.choose")}
               title={t(voiceBusy ? "voice.cancel" : "image.choose")}
-              disabled={!voiceBusy && !imageLimits}
+              disabled={!voiceBusy && (!imageLimits || nativePhotoBusy)}
               on:pointerdown={onImagePickerPointerDown}
               on:pointerup={onImagePickerPointerUp}
               on:pointercancel={clearImagePickerPointer}
@@ -2102,7 +2151,8 @@
               <button
                 class="button button-tonal"
                 type="button"
-                disabled={!recoveredDraft.replacementEligible ||
+                disabled={nativePhotoBusy ||
+                  !recoveredDraft.replacementEligible ||
                   recoveredDraft.state === "uncertain" ||
                   !!composer.draft.trim() ||
                   imageDrafts.length > 0 ||
@@ -2247,7 +2297,8 @@
               : voiceCapability === "available" && voiceCaptureAvailable
                 ? t("voice.start")
                 : voiceUnavailableText(t)}
-            disabled={voiceStatus === "starting" ||
+            disabled={nativePhotoBusy ||
+              voiceStatus === "starting" ||
               voiceStatus === "stopping" ||
               voiceStatus === "transcribing" ||
               projection.canSubmit === false ||
@@ -2269,6 +2320,7 @@
             aria-label={t("message.send")}
             on:click={submit}
             disabled={voiceBusy ||
+              nativePhotoBusy ||
               projection.canSubmit === false ||
               composer.draft.trim().length > MAX_MESSAGE_LENGTH ||
               restoringRecovery ||

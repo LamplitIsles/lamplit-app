@@ -67,6 +67,12 @@ export async function preparePhotoUploads(
       preview: await jpegVariant(draft.file, 480, 160_000),
       model: await jpegVariant(draft.file, 1200, 320_000),
     })),
-  );
+  ).catch((error: unknown) => {
+    if (error instanceof DOMException && error.name === "NotReadableError")
+      throw new Error("图片暂时无法读取，请重试；仍失败时请移除后重新选择。", {
+        cause: error,
+      });
+    throw error;
+  });
   return validateUpload({ sessionId, operationId, images }, limits);
 }

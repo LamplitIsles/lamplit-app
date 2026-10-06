@@ -84,7 +84,7 @@ workspace files and staged uploads alone are not chat or album membership.
 
 ## User behavior
 
-Choose files, paste images or use the existing native photo hook. Attachments use
+Choose gallery photos, paste images or hold the attachment button to take a photo. Attachments use
 the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
 44px removal targets and native preview/gallery behavior. Images can be sent alone.
 Online send immediately shows normal-color text and local image previews while
@@ -173,3 +173,69 @@ suppressed; a genuine handler failure still fails the acceptance process.
 # Design authority update — 2026-10-03
 
 The former Composer/attachment mockup requirements are superseded. CFL's existing Framework7 UI is the shared frontend baseline; see [current direction](ui-baseline-and-compaction.md). The earlier 96px acceptance described the historical image slice, not a continuing requirement. Spec #3119 restored native CFL presentation and replaced the superseded sizing/wrapping assertions; image sending, safe recovery and route teardown remain required. See [quiet compaction handoff](quiet-compaction.md) for the native behavior; use the complete default handoff for current artifacts.
+
+## Native gallery read boundary
+
+Native hosts with the Camera plugin use installed Capacitor Camera 8.2.3
+`chooseFromGallery` with `MediaTypeSelection.Photo`, multiple selection,
+metadata, and the remaining image count. Web hosts keep the HTML file input.
+A native picker/API/read failure uses the existing composer error panel and
+camera failure announcement; it never falls back to the HTML input. Only
+`CameraErrorCode.ChooseMediaCancelled` is silent. A full composer does not open
+the picker, because a zero limit means unlimited in the plugin API.
+
+The app fetches each result's `webPath` through the native content route and
+constructs a memory-backed File from the returned bytes before allocating draft
+previews. It uses the response MIME or supported plugin `metadata.format` and
+accepts the existing PNG/JPEG/WebP/GIF formats; unsupported originals such as
+HEIC are rejected, not relabeled or converted. No thumbnail is used as the
+original, and the app requests no quality, resizing or editing transformation.
+Existing upload preparation retains those bytes as `original` and separately
+makes the established JPEG preview/model variants.
+
+Picker limits are a hint; the complete returned batch is validated against the
+current drafts and current advertised format/count/per-file/aggregate limits.
+Order is the plugin's returned order, even when reads complete out of order.
+A read or validation failure adds no partial batch. Picker/capture, mic start,
+restore-to-edit and send cannot overlap an active native selection. Session
+changes (including A → B → A) and component disposal invalidate pending results
+and errors; no stale result can enter a later composer. Existing submission and
+recovery ownership continue to apply. `NotReadableError` during preparation
+shows an actionable retry/reselect message and uses existing pre-admission
+restoration; no automatic retry is introduced.
+
+The 2026-10-06 Pixel evidence reproduced a 248,633-byte PNG File read failure
+three times, with preview-Blob `ERR_UPLOAD_FILE_CHANGED`, while the same selected
+URI read successfully through Capacitor's native content route and decoded from
+a memory File three times. The URI read grant remained present. This establishes
+the WebView File/Blob read boundary, not the exact internal provider metadata
+cause, permission revocation, or screenshot modification.
+
+Native source review checked `IonCameraFlow.getGallerySettings`,
+`processResultFromGallery`, and `handleGalleryMediaResults` in the installed
+plugin, plus the official
+[ioncamera-android 1.0.2 sources](https://repo.maven.apache.org/maven2/io/ionic/libs/ioncamera-android/1.0.2/ioncamera-android-1.0.2-sources.jar).
+The Android normal, non-edited gallery path calls
+`onChooseFromGalleryResult`: it retains a real path or copies the provider input
+stream into a cache file, and `createImageMediaResult` generates a separate
+thumbnail while returning that file path. The wrapper derives `webPath` from
+that URI. Its `DEFAULT_QUALITY=90` differs from the types' documented default,
+but quality/resize/orientation settings are not passed to this normal result
+path. This source review supports avoiding original-file reencoding on that
+Android path; it is not physical end-to-end validation of an installed plugin
+or a guarantee for all providers/iOS. Plugin-side omission or ordering occurs
+before the app receives a result and cannot be inferred from the result alone.
+
+`bun test tests/native-gallery.test.ts` checks plugin options, cancellations,
+returned bytes/MIME, unsupported formats, failed reads, and atomic current limits.
+After `bun run build`, `bun tests/native-gallery-browser.mjs` drives the real
+composer and mocked native plugin with owned 1080×2400 PNG responses. It checks
+ordered exact returned bytes through upload, remaining/full limits, cancellation,
+no fallback on failure, busy controls during held reads, pre-admission read-error
+restoration, native recovery, and stale session results. These fixtures prove the
+JavaScript boundary preserves plugin-returned bytes; they do not prove source
+file identity inside the native plugin. Existing `bun run test:images-browser`
+checks the web input, Framework7 sizes, submission and recovery at 390/1280/320.
+No device, gallery, live chat, install/config/permission, merge or deployment
+operations are part of these checks. This change supersedes closed, unmerged
+App PR #13 and has no dependency on that branch.
