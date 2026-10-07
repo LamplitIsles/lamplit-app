@@ -1,4 +1,4 @@
-# Chat protocol v1
+# Chat protocol v2
 
 The browser opens a same-origin WebSocket at `/api/chat/socket`. A connection is
 an observation/control channel; closing it never means stopping engine execution.
@@ -9,7 +9,7 @@ The endpoint and its assets use the same owner authentication as chat; responses
 are not cached. Empty names use the chat name and the localized user label.
 Reloading the page reads updated configuration.
 
-`lamplit.chat.v1` is a Chord singleton with:
+`lamplit.chat.v2` is a Chord singleton with:
 
 | Member                                                          | Meaning                                                                                 |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -35,41 +35,45 @@ Failed and stopped results remain stable notice messages, independently of
 assistant text. A stop before generation must still produce its stopped outcome.
 Online sends appear immediately as normal-color outgoing bubbles, before image
 preparation/upload or receipt. No delivery labels or success toast are shown.
-Offline submission is blocked and leaves the draft editable. A consumed receipt
-retains local echo until native observation. Page-owned Files/previews survive
-until observation or definitive failure. Nonadmission restores failed content
-alongside newer edits in the same session; uploads alone never admit input.
-Unknown disconnect/RPC errors keep the echo and trigger exact-operation lookup.
-Missing results are rechecked after the local submission settles. Accepted or
-observed input wins over stale missing/errors, including later native failure;
-admitted unconsumed input remains available for explicit recovery. Recovery does
-not duplicate submitting or confirmed-admission echoes. Reload reconciles saved
-references and retains known admission facts, never trusting saved in-flight state.
-The browser retains observed messages that leave the bounded live window and
-merges them with paged history by stable identity.
+Offline submission is blocked and leaves the draft editable. The App tracks only
+`sending`, `sent`, and `failed`; these are local UI states, not engine persistence.
+A `submitted` receipt retains the local echo until a persisted user message with
+its operation ID appears. Observation wins over late errors. Replies failing or
+stopping do not change submission success and never produce input recovery.
 
-Receipts distinguish `accepted`, `consumed`, `unconsumed`, `uncertain`, `missing`, and `rejected`.
-Unconsumed means the native owner proves an admitted input was removed before
-consumption; it is kept visible and never automatically resubmitted.
-A non-null receipt `messageId` also proves durable admission, even when the first
-receipt or a lost-acknowledgement lookup is `rejected`. That rejection is a native
-execution failure: keep the normal sent echo and offer explicit recovery, never
-automatically restore the composer. Its replacement source is its own operation;
-prior replacement sources have already been retired. An intentionally restored
-local pending record is dismissed on submission independently of native sources.
-Accepted means durable admission, not model-context consumption or completed
-execution. Native user messages can carry delivery state until consumption
-is observed, but the App keeps normal outgoing presentation. The native adapters decide these facts; the frontend does not infer
-them from HTTP/RPC success.
+```ts
+Receipt = { operationId: string; state: "submitted" | "failed";
+  messageId: string | null; turnId: string | null; error: string | null }
+submit(input: Submission): Promise<Receipt>
+lookup(operationId: string): Promise<Receipt | null>
+```
 
-The operation ID survives reconnect and is distinct from a transport request ID,
-a native turn ID and a native message ID. Same operation ID plus same content is
-idempotent; different content under the same ID is rejected. The browser persists
-unconfirmed submissions per origin/session and queries their outcomes after
-reconnect. After confirmed nonadmission, a reloaded reference-only input offers
-restore-to-edit using authorized original media; missing originals require explicit
-removal. A subsequent edited send creates a new operation. Unknown operations
-retain their identity for lookup and are never automatically resent.
+`submitted` proves durable reception; `failed` proves the input was not received.
+The receipt is about submission, not model consumption or execution. Lookup
+returns `null` when there is currently no definitive result. Repeated nulls,
+timeouts, RPC errors and disconnection do not prove failure and cannot authorize
+restoration or replacement. They retain the pending bubble and original identity
+for reconciliation on reload/reconnect. The App never automatically replays input.
+
+Same operation ID and identical text, ordered image references and replacement
+source IDs deduplicate. Changing content under that ID must be rejected. This
+identity is distinct from socket request, native turn and message identities.
+Only definitively failed submissions or inputs explicitly withdrawn before
+processing belong in `view.recovery`; its entries have no delivery state.
+A withdrawn input retains a `submitted` receipt and can remain visible in history.
+Replacement eligibility is authoritative and checked atomically by the native
+adapter. Reply execution failures belong in timeline notices, not recovery.
+
+The browser persists bounded reference-only pending inputs per origin/session.
+It retains observed messages evicted from the live window and merges paged history
+by message identity. Local old pending records are normalized once to the three
+UI states without dropping text, images or operation IDs; unknown outcomes remain
+sending and recorded admission remains sent. No old wire DTOs are accepted.
+
+The view is version 2 and the Chord service is `lamplit.chat.v2`. This is the PWA
+cutover boundary: an old page cannot subscribe to the new service or silently
+accept the new view. Reload/update to the matching built frontend is required;
+there is no negotiation or old-wire fallback. The transport envelope remains v1.
 
 ## Frames and validation
 
@@ -150,7 +154,7 @@ The public [image contract](image-send-recovery.md) defines bounded authenticate
 HTTP upload/media, original plus JPEG variants, `messages.images`, host-advertised
 image limits and authoritative `view.recovery`. Submission identity includes ordered
 references and explicit replacement source IDs. Upload is not admission; recovery
-eligibility is native authority and uncertain delivery cannot authorize replacement.
+eligibility is native authority; a null lookup cannot authorize replacement.
 Image data is never replicated over WS or stored in pending metadata.
 
 ## Native context and compaction
@@ -166,7 +170,7 @@ are not stored in pending input and are never replayed after a lost response.
 ## Conversation archive reads
 
 `search({ query })` and `searchRead({ id })` are on-demand, runtime-validated reads
-on `lamplit.chat.v1`; they never alter replicated view or execute the engine.
+on `lamplit.chat.v2`; they never alter replicated view or execute the engine.
 See [search schemas and bounds](conversation-search.md#public-app-contract) for
 individual message/summary cards, nullable totals, native metadata, opaque record
 identity and bounded nearby context. No cwd/source paths cross the public boundary.

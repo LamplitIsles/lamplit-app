@@ -66,7 +66,6 @@ export interface CompanionRecoveredDraft {
   localPendingKey?: string;
   sourceIds: readonly string[];
   input: string;
-  state: "rejected" | "unconsumed" | "uncertain";
   replacementEligible: boolean;
   images: readonly { id: string; name: string; url: string }[];
 }

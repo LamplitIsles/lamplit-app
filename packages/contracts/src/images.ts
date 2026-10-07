@@ -81,11 +81,6 @@ export const RecoverySchema = Type.Object(
     operationId: OperationIdSchema,
     text: Type.String({ maxLength: 16000 }),
     images: Type.Array(ImageRefSchema, { maxItems: 6 }),
-    state: Type.Union([
-      Type.Literal("rejected"),
-      Type.Literal("unconsumed"),
-      Type.Literal("uncertain"),
-    ]),
     replacementEligible: Type.Boolean(),
   },
   object,
@@ -162,10 +157,7 @@ export function validateUpload(
 }
 export function validateRecovery(value: unknown): InputRecovery {
   const input = validate(RecoverySchema, value);
-  if (
-    (!input.text.trim() && !input.images.length) ||
-    (input.state === "uncertain" && input.replacementEligible)
-  )
+  if (!input.text.trim() && !input.images.length)
     throw new Error("Invalid recovery eligibility");
   return input;
 }

@@ -38,7 +38,7 @@ const request = (input: unknown, headers = {}) =>
     },
     body: JSON.stringify(input),
   });
-test("bounded strict image upload and non-executable uncertain recovery", () => {
+test("bounded strict image upload and strict confirmed recovery", () => {
   const value = upload();
   expect(() =>
     validateSubmission({ operationId: value.operationId, text: " " }),
@@ -188,7 +188,7 @@ test("image admission, immutable ordered references, steering, native recovery, 
     text: "",
     images: result.images,
   };
-  expect((await fixture.backend.submit(input)).state).toBe("consumed");
+  expect((await fixture.backend.submit(input)).state).toBe("submitted");
   await fixture.backend.submit(input);
   expect((await fixture.control({ action: "state" })).executions).toBe(1);
   await expect(
@@ -197,12 +197,12 @@ test("image admission, immutable ordered references, steering, native recovery, 
   await expect(
     fixture.backend.submit({ ...input, operationId: crypto.randomUUID() }),
   ).rejects.toThrow();
-  await fixture.control({ action: "mode", state: "unconsumed" });
+  await fixture.control({ action: "mode", state: "withdrawn" });
   const failed = { operationId: crypto.randomUUID(), text: "failed" };
   await fixture.backend.submit(failed);
   const source = (await fixture.backend.read()).recovery[0]!;
   expect(source.replacementEligible).toBe(true);
-  await fixture.control({ action: "mode", state: "consumed" });
+  await fixture.control({ action: "mode", state: "submitted" });
   const replacement = {
     operationId: crypto.randomUUID(),
     text: "edited",
@@ -221,19 +221,6 @@ test("image admission, immutable ordered references, steering, native recovery, 
       operationId: crypto.randomUUID(),
       text: "again",
       replacementSourceIds: [source.sourceId],
-    }),
-  ).rejects.toThrow();
-  await fixture.control({ action: "mode", state: "uncertain" });
-  await fixture.backend.submit({
-    operationId: crypto.randomUUID(),
-    text: "uncertain",
-  });
-  const uncertain = (await fixture.backend.read()).recovery[0]!;
-  await expect(
-    fixture.backend.submit({
-      operationId: crypto.randomUUID(),
-      text: "unsafe",
-      replacementSourceIds: [uncertain.sourceId],
     }),
   ).rejects.toThrow();
   await fixture.control({ action: "consume" });

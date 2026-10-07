@@ -11,33 +11,20 @@ if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
 const fixture = fixtureBackend();
 let delayedInput;
-let staleRecoveryInput;
 const backend = {
   ...fixture.backend,
   async read() {
     const view = await fixture.backend.read();
-    return staleRecoveryInput
-      ? {
-          ...view,
-          messages: view.messages.filter(
-            (m) => m.operationId !== delayedInput?.operationId,
-          ),
-          recovery: [
-            {
-              sourceId: staleRecoveryInput.operationId,
-              operationId: staleRecoveryInput.operationId,
-              text: staleRecoveryInput.text,
-              images: [],
-              state: "uncertain",
-              replacementEligible: false,
-            },
-          ],
-        }
-      : view;
+    return {
+      ...view,
+      messages: view.messages.filter(
+        (m) => m.operationId !== delayedInput?.operationId,
+      ),
+    };
   },
   async submit(input) {
     if (!input.text.startsWith("hello-")) return fixture.backend.submit(input);
-    delayedInput = staleRecoveryInput = input;
+    delayedInput = input;
     await host.refresh();
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const receipt = await fixture.backend.submit(input);
@@ -45,11 +32,6 @@ const backend = {
       if (delayedInput?.operationId === input.operationId)
         delayedInput = undefined;
       void host.refresh();
-      setTimeout(() => {
-        if (staleRecoveryInput?.operationId === input.operationId)
-          staleRecoveryInput = undefined;
-        void host.refresh();
-      }, 1000);
     }, 1000);
     return receipt;
   },
@@ -300,7 +282,7 @@ try {
     await expect(
       page.getByText("已停止回复", { exact: true }).last(),
     ).toBeVisible();
-    // An unconfirmed local send survives reload without automatic execution.
+    // A definitively failed local send survives reload without automatic execution.
     const operationId = crypto.randomUUID();
     const recoveryText = `recovered-${width}`;
     const beforeRecovery = (await control({ action: "state" })).executions;
@@ -309,7 +291,7 @@ try {
         localStorage.setItem(
           `lamplit.pending:${sessionId}`,
           JSON.stringify([
-            { operationId, text, createdAt: Date.now(), state: "uncertain" },
+            { operationId, text, createdAt: Date.now(), state: "failed" },
           ]),
         );
       },

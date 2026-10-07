@@ -21,18 +21,9 @@ import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
 import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
 export type PendingSend = Submission & {
-  /** Sticky native admission fact; execution rejection cannot revoke it. */
-  admitted?: boolean;
   previews?: readonly { id: string; name: string; previewUrl: string }[];
   createdAt: number;
-  state:
-    | "submitting"
-    | "consumed"
-    | "uncertain"
-    | "missing"
-    | "accepted"
-    | "unconsumed"
-    | "rejected";
+  state: "sending" | "sent" | "failed";
 };
 export class ChatController {
   view?: ChatView;
@@ -237,15 +228,18 @@ export class ChatController {
             this.pending.push({
               ...input,
               createdAt: item.createdAt,
-              admitted: item.admitted === true,
+              // One-time local draft normalization; unknown transport outcomes remain pending.
               state:
-                item.admitted === true && item.state === "rejected"
-                  ? "rejected"
-                  : ["accepted", "consumed"].includes(item.state)
-                    ? "accepted"
-                    : item.state === "unconsumed"
-                      ? "unconsumed"
-                      : "uncertain",
+                item.state === "failed" ||
+                (item.state === "rejected" && item.admitted !== true)
+                  ? "failed"
+                  : item.state === "sent" ||
+                      ["accepted", "consumed", "unconsumed"].includes(
+                        item.state,
+                      ) ||
+                      item.admitted === true
+                    ? "sent"
+                    : "sending",
             });
         }
     } catch {
@@ -270,13 +264,7 @@ export class ChatController {
     if (!previous || previous.sessionId !== view.sessionId)
       this.before = view.before;
     else if (!this.older.length) this.before = view.before;
-    const observed = new Set(view.messages.map((m) => m.operationId));
-    this.pending = this.pending.filter((p) => {
-      if (!observed.has(p.operationId)) return true;
-      this.retirements.get(p.operationId)?.({ reason: "observed" });
-      this.retirements.delete(p.operationId);
-      return false;
-    });
+    this.retireObserved();
     this.updateRecovery();
     if (
       (previous?.activeTurnId && !view.activeTurnId) ||
@@ -293,24 +281,30 @@ export class ChatController {
         this.changed();
       });
   }
+  private retireObserved() {
+    const observed = new Set(
+      [...this.older, ...(this.view?.messages ?? [])]
+        .filter((m) => m.role === "user")
+        .map((m) => m.operationId),
+    );
+    this.pending = this.pending.filter((p) => {
+      if (!observed.has(p.operationId)) return true;
+      this.retirements.get(p.operationId)?.({ reason: "observed" });
+      this.retirements.delete(p.operationId);
+      return false;
+    });
+  }
   private reconcile() {
     const client = this.client,
       key = this.storageKey;
     const task = this.receiptChecks.then(async () => {
       if (!client || this.client !== client || this.storageKey !== key) return;
       for (const input of this.pending) {
-        if (this.inFlight.has(input.operationId) || input.state === "consumed")
+        if (this.inFlight.has(input.operationId) || input.state !== "sending")
           continue;
-        let receipt = await client.lookup(input.operationId);
+        const receipt = await client.lookup(input.operationId);
         if (this.client !== client || this.storageKey !== key) return;
-        // A missing lookup must be settled and rechecked before withdrawing input.
-        if (
-          receipt.state === "missing" &&
-          !this.inFlight.has(input.operationId)
-        )
-          receipt = await client.lookup(input.operationId);
-        if (this.client !== client || this.storageKey !== key) return;
-        this.applyReceipt(receipt);
+        if (receipt) this.applyReceipt(receipt);
       }
     });
     this.receiptChecks = task.catch(() => {});
@@ -319,9 +313,6 @@ export class ChatController {
   private disconnected = () => {
     if (this.closed) return;
     this.connected = false;
-    this.pending = this.pending.map((p) =>
-      p.state === "submitting" ? { ...p, state: "uncertain" } : p,
-    );
     this.updateRecovery();
     if (this.storageKey) this.save();
     if (this.compactPending) {
@@ -382,88 +373,42 @@ export class ChatController {
       (p) => p.operationId === receipt.operationId,
     );
     if (!pending) return; // Native observation or a session change already retired it.
-    const admitted =
-      receipt.messageId !== null ||
-      ["accepted", "consumed", "unconsumed"].includes(receipt.state) ||
-      pending.admitted === true ||
-      pending.state === "accepted" ||
-      pending.state === "consumed" ||
-      pending.state === "unconsumed";
-    if (admitted && ["missing", "uncertain"].includes(receipt.state)) {
-      if (!pending.admitted) {
-        this.pending = this.pending.map((p) =>
-          p === pending ? { ...p, admitted: true } : p,
-        );
-        this.save();
-        this.changed();
-      }
-      return;
-    }
-    if (receipt.state === "missing" && this.inFlight.has(receipt.operationId))
-      return;
+    // Durable submission/observation cannot be revoked by a later result.
+    if (pending.state === "sent") return;
     const retire = this.retirements.get(receipt.operationId);
-    if (
-      !admitted &&
-      (receipt.state === "rejected" || receipt.state === "missing") &&
-      retire
-    ) {
+    if (receipt.state === "failed" && retire) {
       this.pending = this.pending.filter((p) => p !== pending);
       this.retirements.delete(receipt.operationId);
       retire({ reason: "failed" });
-      this.error = "消息未发送，请编辑后重试。";
+      this.error = receipt.error || "消息未发送，请编辑后重试。";
     } else {
       this.pending = this.pending.map((p) =>
-        p === pending ? { ...p, state: receipt.state, admitted } : p,
+        p === pending
+          ? { ...p, state: receipt.state === "submitted" ? "sent" : "failed" }
+          : p,
       );
-      if (receipt.state === "rejected" || receipt.state === "unconsumed")
-        this.error = "这条消息未能继续处理，请检查并恢复编辑。";
+      if (receipt.state === "failed")
+        this.error = receipt.error || "消息未发送，请恢复编辑。";
     }
     this.updateRecovery();
     this.save();
     this.changed();
   }
   private updateRecovery() {
-    const observed = new Set(
-      [...this.older, ...(this.view?.messages ?? [])]
-        .filter(
-          (message) =>
-            message.role === "user" &&
-            (message.delivery === undefined || message.delivery === "consumed"),
-        )
-        .map((message) => message.operationId),
-    );
     this.recovery = (this.view?.recovery ?? []).filter(
-      (r) =>
-        !(r.state === "uncertain" && observed.has(r.operationId)) &&
-        !this.dismissed.has(r.sourceId) &&
-        !(
-          r.state === "uncertain" &&
-          this.pending.some(
-            (p) =>
-              p.operationId === r.operationId &&
-              (p.state === "submitting" ||
-                p.state === "accepted" ||
-                p.state === "consumed"),
-          )
-        ),
+      (r) => !this.dismissed.has(r.sourceId),
     );
   }
   dismissRecovery(sourceId: string) {
     const local = this.pending.find(
-      (p) =>
-        p.operationId === sourceId &&
-        (p.state === "missing" || p.state === "rejected"),
+      (p) => p.operationId === sourceId && p.state === "failed",
     );
     if (local) {
       this.retirements.get(sourceId)?.({ reason: "observed" });
       this.retirements.delete(sourceId);
     }
     this.pending = this.pending.filter(
-      (p) =>
-        !(
-          p.operationId === sourceId &&
-          (p.state === "missing" || p.state === "rejected")
-        ),
+      (p) => !(p.operationId === sourceId && p.state === "failed"),
     );
     this.save();
     this.dismissed.add(sourceId);
@@ -538,10 +483,7 @@ export class ChatController {
         replacements.some(
           (id) =>
             !this.view?.recovery.some(
-              (r) =>
-                r.sourceId === id &&
-                r.replacementEligible &&
-                r.state !== "uncertain",
+              (r) => r.sourceId === id && r.replacementEligible,
             ),
         )
       )
@@ -552,7 +494,7 @@ export class ChatController {
       operationId,
       text,
       createdAt: Date.now(),
-      state: "submitting",
+      state: "sending",
       ...(replacements.length ? { replacementSourceIds: replacements } : {}),
       ...(images.length
         ? {
@@ -618,17 +560,7 @@ export class ChatController {
       this.changed();
       submitted = true;
       const receipt = await client.submit(input);
-      if (sameSession()) {
-        if (receipt.state === "missing") {
-          this.pending = this.pending.map((p) =>
-            p.operationId === operationId && p.state === "submitting"
-              ? { ...p, state: "uncertain" }
-              : p,
-          );
-          this.save();
-          this.changed();
-        } else this.applyReceipt(receipt);
-      }
+      if (sameSession()) this.applyReceipt(receipt);
     } catch (error) {
       if (!submitted) {
         if (sameSession()) {
@@ -647,11 +579,6 @@ export class ChatController {
         }
       } else if (sameSession()) {
         // A transport error cannot undo durable admission or native observation.
-        this.pending = this.pending.map((p) =>
-          p.operationId === operationId && p.state === "submitting"
-            ? { ...p, state: "uncertain" }
-            : p,
-        );
         this.updateRecovery();
         this.save();
         this.changed();
@@ -662,7 +589,7 @@ export class ChatController {
         sameSession() &&
         this.client &&
         this.pending.some(
-          (p) => p.operationId === operationId && p.state === "uncertain",
+          (p) => p.operationId === operationId && p.state === "sending",
         )
       )
         void this.reconcile().catch(() => {});
@@ -691,7 +618,13 @@ export class ChatController {
     try {
       const page = await client.history(this.before);
       if (this.client !== client || this.view?.sessionId !== sessionId) return;
-      this.older = [...page.messages, ...this.older];
+      this.older = [
+        ...new Map(
+          [...page.messages, ...this.older].map((m) => [m.id, m]),
+        ).values(),
+      ];
+      this.retireObserved();
+      this.save();
       this.updateRecovery();
       this.before = page.before;
     } catch {

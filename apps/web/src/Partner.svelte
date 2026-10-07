@@ -121,13 +121,16 @@
         }) as TimelineMessageUnit,
     );
     for (const p of (chatState?.pending ?? []).filter(
-      (p) => p.admitted || (p.state !== "missing" && p.state !== "rejected"),
+      (p) => p.state !== "failed",
     ))
       if (!unique.some((m) => m.operationId === p.operationId))
         units.push({
           id: p.operationId,
           side: "outgoing",
           time: p.createdAt,
+          pending: p.state === "sending",
+          pendingLabel:
+            p.state === "sending" ? t("delivery.sending") : undefined,
           items: [
             ...(p.previews
               ? p.previews.map((image) => ({
@@ -187,24 +190,17 @@
         ...native,
         sourceIds: [native.sourceId],
         localPendingKey: chatState?.pending.find(
-          (p) =>
-            p.operationId === native.operationId &&
-            (p.state === "missing" || p.state === "rejected"),
+          (p) => p.operationId === native.operationId && p.state === "failed",
         )?.operationId,
       };
-    const local = chatState?.pending.find(
-      (p) => p.state === "missing" || p.state === "rejected",
-    );
+    const local = chatState?.pending.find((p) => p.state === "failed");
     return local
       ? {
           sourceId: local.operationId,
-          sourceIds: local.admitted
-            ? [local.operationId]
-            : (local.replacementSourceIds ?? []),
+          sourceIds: local.replacementSourceIds ?? [],
           localPendingKey: local.operationId,
           text: local.text,
           images: local.images ?? [],
-          state: "rejected" as const,
           replacementEligible: true,
         }
       : undefined;
@@ -332,7 +328,6 @@
         localPendingKey: recovered.localPendingKey,
         sourceIds: recovered.sourceIds,
         input: recovered.text,
-        state: recovered.state,
         replacementEligible: recovered.replacementEligible,
         images: recovered.images.map((image) => ({
           id: image.attachmentId,

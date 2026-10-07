@@ -9,7 +9,7 @@ import {
 import { resolve, join, relative, dirname } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const output = join(root, ".scratch/default-shared-frontend/candidate");
+const output = join(root, ".scratch/native-durable-submissions/candidate");
 if (await Bun.file(join(output, "identity.json")).exists())
   throw new Error("Candidate exists; preserve its identity for Owner review");
 async function command(args, cwd = root) {
@@ -76,6 +76,10 @@ for (const name of [
   "fixture.ts",
   "panels-fixture.ts",
   "images-fixture.ts",
+  "submissions-fixture.ts",
+  "native-gallery-browser.mjs",
+  "keet-browser.mjs",
+  "keet-fixture.ts",
   "compact-fixture.ts",
   "search-fixture.ts",
 ]) {
@@ -88,6 +92,10 @@ for (const name of [
         "@lamplit/contracts/server",
       )
       .replaceAll("../packages/contracts/src/index.ts", "@lamplit/contracts")
+      .replaceAll(
+        "../packages/contracts/src/client.ts",
+        "@lamplit/contracts/client",
+      )
       .replaceAll(
         "../packages/contracts/dist/voice.js",
         "@lamplit/contracts/voice",
@@ -111,6 +119,8 @@ for (const name of [
   "default-shared-frontend.md",
   "ui-baseline-and-compaction.md",
   "IMPORTS.md",
+  "native-durable-submissions.md",
+  "keet-source-restoration.md",
 ])
   await copyFile(join(root, "docs", name), join(acceptance, "docs", name));
 await copyFile(join(root, "LICENSE"), join(acceptance, "LICENSE"));
@@ -149,13 +159,13 @@ for (const [name, directory] of [
   };
 }
 await writeFile(join(stage, "SOURCE_HEAD"), appHead + "\n");
-const archive = "lamplit-default-shared-frontend.tgz";
+const archive = "lamplit-native-durable-submissions.tgz";
 await command(["tar", "-czf", join(output, archive), "."], stage);
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: 3162,
+  spec: 3435,
   appHead,
-  baseline: "d63f02fe5d8ff9d0a712b6ff703d0d70911aa285",
+  baseline: "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),
@@ -169,7 +179,9 @@ const identity = {
     "search",
     "notifications",
     "route-lifecycle",
-    "optimistic-send (synthetic only)",
+    "optimistic-send (same runner for App fixture and native hosts)",
+    "keet",
+    "native-gallery (plugin fake only)",
   ],
   localAcceptance: "test-owned App fixture; not native acceptance",
   actualPiCflAcceptance: "pending Owner-approved exact-artifact native runs",

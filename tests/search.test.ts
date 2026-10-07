@@ -227,7 +227,7 @@ test("shared search/read validate both boundaries; oversized UTF-8 result and fa
           text: "chat after failed archive read",
         })
       ).state,
-    ).toBe("consumed");
+    ).toBe("submitted");
     expect(offline).toBe(false);
   } finally {
     client.close();

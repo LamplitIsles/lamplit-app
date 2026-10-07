@@ -498,8 +498,7 @@
     if (
       composer.draft.trim() ||
       imageDrafts.length ||
-      !draft.replacementEligible ||
-      draft.state === "uncertain"
+      !draft.replacementEligible
     )
       return;
     restoringRecovery = true;
@@ -525,8 +524,7 @@
       composer.draft !== originalComposer ||
       imageDrafts.length ||
       recoveredDraft?.key !== draft.key ||
-      !recoveredDraft.replacementEligible ||
-      recoveredDraft.state === "uncertain"
+      !recoveredDraft.replacementEligible
     ) {
       recoveredDraftKey = "";
       recoveredPendingKey = "";
@@ -2143,17 +2141,12 @@
               role="status"
               data-testid="input-recovery"
             >
-              <span
-                >{recoveredDraft.state === "uncertain"
-                  ? t("recovery.uncertain")
-                  : t("recovery.available")}</span
-              >
+              <span>{t("recovery.available")}</span>
               <button
                 class="button button-tonal"
                 type="button"
                 disabled={nativePhotoBusy ||
                   !recoveredDraft.replacementEligible ||
-                  recoveredDraft.state === "uncertain" ||
                   !!composer.draft.trim() ||
                   imageDrafts.length > 0 ||
                   restoringRecovery}

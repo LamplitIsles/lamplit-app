@@ -334,7 +334,7 @@ try {
       fullPage: true,
     });
     await control({ action: "uploadFailure", enabled: false });
-    await control({ action: "mode", state: "unconsumed" });
+    await control({ action: "mode", state: "withdrawn" });
     await send.click();
     await expect(input).toHaveValue("");
     await expect(recovery).toBeVisible();
@@ -351,7 +351,7 @@ try {
     await expect(input).toHaveValue("上传失败保留");
     await expect(drafts).toHaveCount(1);
     await input.fill("恢复后编辑");
-    await control({ action: "mode", state: "consumed" });
+    await control({ action: "mode", state: "submitted" });
     await send.click();
     await expect
       .poll(async () => (await control({ action: "state" })).recovery.length)
@@ -488,31 +488,12 @@ try {
     await expect
       .poll(async () => (await control({ action: "state" })).recovery.length)
       .toBe(0);
-    await control({ action: "mode", state: "rejected" });
+    await control({ action: "mode", state: "failed" });
     await input.fill("拒绝输入");
     await send.click();
-    await expect(recovery).toBeVisible();
-    await restore.click();
     await expect(input).toHaveValue("拒绝输入");
-    await input.fill("");
-    await control({ action: "consume" });
-    await page.reload();
-    await expect(recovery).toHaveCount(0);
-    await control({ action: "mode", state: "uncertain" });
-    await input.fill("未知送达");
-    await send.click();
-    await expect(recovery).toBeVisible();
     await expect(restore).toBeDisabled();
-    await page.getByText("查看提交内容", { exact: true }).click();
-    await expect(recovery.getByText("未知送达", { exact: true })).toBeVisible();
-    const uncertainCount = (await control({ action: "state" })).executions;
-    await context.setOffline(true);
-    await context.setOffline(false);
-    await page.reload();
-    await expect(recovery).toBeVisible();
-    expect((await control({ action: "state" })).executions).toBe(
-      uncertainCount,
-    );
+    await input.fill("");
     await control({ action: "consume" });
     await page.reload();
     await expect(recovery).toHaveCount(0);
@@ -520,7 +501,7 @@ try {
     await page.reload();
     await expect(page.locator(".companion-attach")).toHaveCount(0);
     await input.fill("图片关闭仍可发文字");
-    await control({ action: "mode", state: "consumed" });
+    await control({ action: "mode", state: "submitted" });
     await send.click();
     await expect(input).toHaveValue("");
     expect(
@@ -559,7 +540,7 @@ try {
     ) + "\n",
   );
   console.log(
-    "Image/recovery browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, protected recovery/refresh/edit/replacement, missing originals, rejection/uncertainty/consumption, disabled storage, 390/1280/320 overflow.",
+    "Image/recovery browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, protected recovery/refresh/edit/replacement, missing originals, rejection/withdrawal/submission, disabled storage, 390/1280/320 overflow.",
   );
 } finally {
   await browser.close();

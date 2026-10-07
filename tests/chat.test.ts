@@ -69,7 +69,7 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
   );
   try {
     const input = { operationId: crypto.randomUUID(), text: "first" };
-    expect((await client.submit(input)).state).toBe("consumed");
+    expect((await client.submit(input)).state).toBe("submitted");
     await client.submit(input);
     expect(fixture.executions).toBe(1);
     await expect(
@@ -98,7 +98,7 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
     await eventually(
       () => view?.messages.filter((m) => m.role === "agent").length === 1,
     );
-    expect((await client.lookup(input.operationId)).state).toBe("consumed");
+    expect((await client.lookup(input.operationId))?.state).toBe("submitted");
     const next = { operationId: crypto.randomUUID(), text: "next" };
     await client.submit(next);
     expect((await client.stop(input.operationId)).stopped).toBe(false);
@@ -118,4 +118,57 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
     server.unref();
     void server.stop(true);
   }
+});
+
+test("v2 submission contract rejects old receipts/delivery/recovery and validates nullable lookup", async () => {
+  const {
+    ReceiptSchema,
+    LookupSchema,
+    MessageSchema,
+    RecoverySchema,
+    ViewSchema,
+  } = await import("../packages/contracts/src/index.ts");
+  const id = crypto.randomUUID();
+  const receipt = {
+    operationId: id,
+    state: "submitted" as const,
+    messageId: id,
+    turnId: null,
+    error: null,
+  };
+  expect(validate(ReceiptSchema, receipt)).toEqual(receipt);
+  expect(validate(LookupSchema, null)).toBeNull();
+  for (const state of [
+    "accepted",
+    "consumed",
+    "unconsumed",
+    "uncertain",
+    "missing",
+    "rejected",
+  ])
+    expect(() => validate(ReceiptSchema, { ...receipt, state })).toThrow();
+  const message = {
+    id,
+    role: "user",
+    text: "x",
+    createdAt: 1,
+    operationId: id,
+    turnId: null,
+  };
+  expect(() =>
+    validate(MessageSchema, { ...message, delivery: "consumed" }),
+  ).toThrow();
+  const recovery = {
+    sourceId: id,
+    operationId: id,
+    text: "x",
+    images: [],
+    replacementEligible: true,
+  };
+  expect(validate(RecoverySchema, recovery)).toEqual(recovery);
+  expect(() =>
+    validate(RecoverySchema, { ...recovery, state: "unconsumed" }),
+  ).toThrow();
+  const view = await fixtureBackend().backend.read();
+  expect(() => validate(ViewSchema, { ...view, version: 1 })).toThrow();
 });

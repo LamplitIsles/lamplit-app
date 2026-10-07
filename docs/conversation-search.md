@@ -163,7 +163,7 @@ management, deployment or archive repair.
 
 ## Public App contract
 
-`lamplit.chat.v1.search({ query })` trims a nonblank query (max 500 characters).
+`lamplit.chat.v2.search({ query })` trims a nonblank query (max 500 characters).
 It returns `{ hits, estimatedTotalHits: number | null, limited: boolean }`, with
 at most 20 individual cards. Each card has `id`, `kind: message | compaction`,
 `sessionId`, `snippet`, and optional `sessionName`, `role: user | assistant`,

@@ -269,7 +269,6 @@
   "alarm.intervalSeconds": "每 {seconds} 秒",
   "diary.missing": "这篇日记已不存在。",
   "gallery.unavailable": "图片不可用",
-  "recovery.uncertain": "发送结果待确认，请检查聊天记录。",
   "recovery.available": "有未完成的输入可恢复。",
   "recovery.restore": "恢复编辑",
   "recovery.discard": "忽略",

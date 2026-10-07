@@ -26,7 +26,7 @@ import {
   type Context,
 } from "@earendil-works/chord";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const CHAT_PATH = "/api/chat/socket";
 export const PAGE_SIZE = 30;
 const Id = Type.String({ minLength: 1, maxLength: 300 });
@@ -45,14 +45,7 @@ export const SubmissionSchema = Type.Object(
 export const ReceiptSchema = Type.Object(
   {
     operationId: Id,
-    state: Type.Union([
-      Type.Literal("accepted"),
-      Type.Literal("unconsumed"),
-      Type.Literal("consumed"),
-      Type.Literal("uncertain"),
-      Type.Literal("missing"),
-      Type.Literal("rejected"),
-    ]),
+    state: Type.Union([Type.Literal("submitted"), Type.Literal("failed")]),
     messageId: NullableId,
     turnId: NullableId,
     error: Type.Union([Type.String(), Type.Null()]),
@@ -85,15 +78,6 @@ export const MessageSchema = Type.Object(
   {
     images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
     source: Type.Optional(MessageSourceSchema),
-    delivery: Type.Optional(
-      Type.Union([
-        Type.Literal("pending"),
-        Type.Literal("unconsumed"),
-        Type.Literal("consumed"),
-        Type.Literal("uncertain"),
-        Type.Literal("rejected"),
-      ]),
-    ),
     id: Id,
     role: Type.Union([
       Type.Literal("user"),
@@ -138,6 +122,7 @@ export const ViewSchema = Type.Object(
   { additionalProperties: false },
 );
 export type Submission = Static<typeof SubmissionSchema>;
+export const LookupSchema = Type.Union([ReceiptSchema, Type.Null()]);
 export type Receipt = Static<typeof ReceiptSchema>;
 export type ChatMessage = Static<typeof MessageSchema>;
 export type HistoryPage = Static<typeof PageSchema>;
@@ -159,10 +144,10 @@ export interface ChatService extends PanelService, SearchService {
   compact(input: CompactInput, context: Context): Promise<CompactResult>;
   history(before: string, context: Context): Promise<HistoryPage>;
   submit(input: Submission, context: Context): Promise<Receipt>;
-  lookup(operationId: string, context: Context): Promise<Receipt>;
+  lookup(operationId: string, context: Context): Promise<Receipt | null>;
   stop(turnId: string, context: Context): Promise<{ stopped: boolean }>;
 }
-export const Chat = defineService<ChatService>("lamplit.chat.v1");
+export const Chat = defineService<ChatService>("lamplit.chat.v2");
 export function validateId(value: unknown): string {
   return validate(Id, value);
 }

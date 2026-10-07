@@ -35,3 +35,14 @@ _Avoid_: New conversation, archive deletion, memory erasure
 **CFL UI baseline（CFL 界面基准）**:
 The existing CFL Framework7 chat design and interaction that the shared frontend preserves when replacing native frontends. Superseded Composer mockups are historical material rather than an alternative baseline.
 _Avoid_: New Composer design, Pi-specific frontend
+
+**Message submission（消息提交）**:
+Durable reception of one immutable operation, separate from reply execution. The
+receipt is submitted or failed; no definitive lookup result is null. Local sending
+means awaiting confirmation and never implies an engine-persisted state.
+_Avoid_: Consumed, uncertain delivery, reply failure as submission rejection
+
+**Input recovery（输入恢复）**:
+Explicit editing of confirmed rejected input or input withdrawn before processing.
+A temporary disconnect or stopped/failed reply does not make input recoverable.
+_Avoid_: Automatic replay, recovery inferred from null lookup

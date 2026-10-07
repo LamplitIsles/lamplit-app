@@ -269,7 +269,6 @@
   "alarm.intervalSeconds": "Every {seconds} seconds",
   "diary.missing": "This diary entry is missing.",
   "gallery.unavailable": "Image unavailable",
-  "recovery.uncertain": "Delivery is uncertain. Inspect the conversation before sending again.",
   "recovery.available": "An unfinished input is available to restore.",
   "recovery.restore": "Restore to edit",
   "recovery.discard": "Dismiss",

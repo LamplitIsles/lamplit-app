@@ -17,20 +17,23 @@ export function fixtureBackend() {
   const changed = () => {
     for (const listener of listeners) listener();
   };
-  const receipt = (id: string): Receipt => ({
-    operationId: id,
-    state: submissions.has(id) ? "consumed" : "missing",
-    messageId: submissions.has(id) ? id : null,
-    turnId: active,
-    error: null,
-  });
+  const receipt = (id: string): Receipt | null =>
+    submissions.has(id)
+      ? {
+          operationId: id,
+          state: "submitted",
+          messageId: id,
+          turnId: active,
+          error: null,
+        }
+      : null;
   const panels = panelsFixture();
   const backend: ChatBackend = {
     ...panels.backend,
     ...searchFixture().backend,
     async read(): Promise<ChatView> {
       return {
-        version: 1,
+        version: 2,
         sessionId: "fixture-session",
         name: "Mica",
         activeTurnId: active,
@@ -51,8 +54,9 @@ export function fixtureBackend() {
     async submit(input) {
       const old = submissions.get(input.operationId);
       if (old) {
-        if (old.text !== input.text) throw new Error("Identity conflict");
-        return receipt(input.operationId);
+        if (JSON.stringify(old) !== JSON.stringify(input))
+          throw new Error("Identity conflict");
+        return receipt(input.operationId)!;
       }
       submissions.set(input.operationId, { ...input });
       messages.push({
@@ -68,7 +72,7 @@ export function fixtureBackend() {
         executions++;
       }
       changed();
-      return receipt(input.operationId);
+      return receipt(input.operationId)!;
     },
     async lookup(id) {
       return receipt(id);

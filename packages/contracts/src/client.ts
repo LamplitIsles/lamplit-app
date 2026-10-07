@@ -33,6 +33,7 @@ import {
   ViewSchema,
   PageSchema,
   ReceiptSchema,
+  LookupSchema,
   validate,
   validateRecovery,
   validateSubmission,
@@ -293,10 +294,10 @@ export async function openChat(
       },
       async lookup(id: string) {
         const receipt = validate(
-          ReceiptSchema,
+          LookupSchema,
           await service.lookup(id, BACKGROUND_CONTEXT),
         );
-        if (receipt.operationId !== id)
+        if (receipt && receipt.operationId !== id)
           throw new Error("Wrong operation receipt");
         return receipt;
       },

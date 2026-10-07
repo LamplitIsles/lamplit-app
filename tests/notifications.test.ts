@@ -45,7 +45,7 @@ test("page teardown detaches permission and notice callbacks and rejects stale l
   } as unknown as Document;
   const label = () => ({ title: "Companion", body: "New message" });
   const view = (id: string): ChatView => ({
-    version: 1,
+    version: 2,
     sessionId: "test-owned",
     name: "Companion",
     activeTurnId: null,

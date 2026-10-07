@@ -69,18 +69,17 @@ check current durable state, the portable WS host validates payloads and correla
 
 ```ts
 { sourceId: string; operationId: UUID; text: string; images: ImageRef[];
-  state: "rejected" | "unconsumed" | "uncertain";
   replacementEligible: boolean }
 ```
 
-This is authoritative native submitted input, including native frontend inputs.
-Only verified rejected/unconsumed sources may be replacement eligible; uncertain
-sources never are. Use `validateRecovery`. Consumed/replaced sources disappear
-from native recovery and cannot reappear on reconnect. Receipts retain existing
-accepted/consumed/unconsumed/uncertain/missing/rejected semantics; socket loss or
-turn completion never proves non-consumption. Recent/paginated `messages.images`
-projects only actual native message membership, including completed agent images;
-workspace files and staged uploads alone are not chat or album membership.
+These are only confirmed recoverable inputs: definite rejection or explicit
+withdrawal before processing, including native frontend inputs. There is no state
+field. Only the native adapter authorizes replacement; `validateRecovery` enforces
+bounded, nonempty content. Replaced/processed sources disappear durably. Receipts
+are `submitted` or `failed`; lookup is nullable, and null/disconnection never
+creates a recovery entry. Reply failure or stop is separate from submission.
+Recent/paginated `messages.images` projects actual persisted message membership,
+including completed agent images; staged uploads alone are not chat/album membership.
 
 ## User behavior
 
@@ -90,21 +89,22 @@ the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
 Online send immediately shows normal-color text and local image previews while
 the composer clears, before preparation/upload; no sending/receipt/consumption
 labels or success toast appear. Offline clicks keep editable text/images.
-Preparation/upload failure or rejection without durable admission withdraws the echo and merges
-text/Files with newer drafts in the originating session. Settled missing lookup
-is rechecked before rollback; generic RPC error/disconnect never proves failure.
-A receipt with a messageId proves durable admission, including a first rejected receipt
-or rejected lookup after a lost acknowledgement. Native execution failure keeps the
-normal echo and offers explicit human recovery; accepted/native-observed input survives
-stale missing/error. Durable recovery replaces its own admitted operation, not the sources
-that operation previously replaced. Submitting an intentionally restored local pending
-draft retires that local record even when the draft also carries native replacement sources.
-Page-owned previews live until observation/rollback and never enter storage. Only
-bounded reference-only pending metadata is saved once upload finishes; storage
-failure is visible. Reloaded nonadmitted input uses the existing restore-to-edit
-panel and authorized originals, without overwriting current drafts. It has no
-native replacement source unless one was already verified. A later explicit send
-creates a new operation; unknown input only looks up its exact existing identity.
+Preparation/upload failure or definite submission rejection withdraws the echo and
+merges text/Files with newer drafts in the originating session. Generic RPC errors,
+disconnection and null lookup retain the bubble without showing recovery. A
+submitted receipt marks local input sent until observation merges it by operation ID.
+Reply failure and stopping remain notices and never restore the Composer.
+Explicit native withdrawal before processing offers human recovery separately,
+using its own source ID, while the submitted receipt remains successful.
+
+Page-owned previews live until observation/definite failure and never enter storage.
+Reference-only pending metadata is saved after upload; storage failure is visible.
+Before upload finishes, Files remain page-owned and cannot survive reload. Unsent
+Composer drafts likewise remain page-owned. Reloaded definite failures restore
+through authorized originals without overwriting current drafts. Pending unknown
+inputs only look up the original operation ID; edited recovery uses a new ID and
+verified replacement source IDs. Restored local pending records retire separately
+from native replacement sources.
 
 Recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
 current text/images are present; it cannot overwrite new edits. Original bytes are
@@ -124,7 +124,7 @@ bytes and corrected route lifecycle, and merged (App PR #4, Pi #24, CFL #64).
 Historical ebde803 product/091c0def runner archives remain unchanged evidence.
 Use the [complete default handoff](default-shared-frontend.md) for current full
 checks, one committed-source archive, extraction/hash checks and Owner approval.
-The current unchanged image runner uses canonical `/` (hosted `/chat`) with native
+The current image runner uses canonical `/` (hosted `/chat`) with native
 public HTTP/WS, test-owned stores and fake engines. It still denies anonymous media.
 
 From the extracted `acceptance/`, after approved native fixtures start:
@@ -140,18 +140,18 @@ The control endpoint is **test infrastructure only**, never production routing.
 Implement it against native storage/execution, not an alternative mock chat adapter.
 It accepts JSON POST actions matching `tests/images-fixture.ts`:
 
-| Action                                                  | Required native fixture effect                                                                                  |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `reset`                                                 | Clear only this fixture's session/media/receipts; reset fake execution count; expose native limits.             |
-| `mode`, `state: consumed/unconsumed/rejected/uncertain` | Configure fake native admission/consumption outcome for the next inputs. Do not infer state from WS disconnect. |
-| `uploadFailure`, `enabled`                              | Fail/restore native storage before admission.                                                                   |
-| `disabled`, `enabled`                                   | Advertise unavailable/available image intake, retaining text.                                                   |
-| `complete`                                              | Complete current fake turn with text `完整图片回复` and native-generated image membership.                      |
-| `history`                                               | Seed 32 complete text replies after current image messages, forcing pagination.                                 |
-| `nativeRecovery`                                        | Seed verified native-origin unconsumed input `原生恢复输入` and `native.png` original.                          |
-| `missing`                                               | Remove originals referenced by current fixture recovery only.                                                   |
-| `consume`                                               | Mark fixture recovery consumed, update delivery/receipts, clear recovery durably.                               |
-| `state`                                                 | Read state without mutation.                                                                                    |
+| Action                                      | Required native fixture effect                                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `reset`                                     | Clear only this fixture's session/media/receipts; reset fake execution count; expose native limits.        |
+| `mode`, `state: submitted/withdrawn/failed` | Configure native submission/withdrawal outcome for the next inputs. Do not infer state from WS disconnect. |
+| `uploadFailure`, `enabled`                  | Fail/restore native storage before admission.                                                              |
+| `disabled`, `enabled`                       | Advertise unavailable/available image intake, retaining text.                                              |
+| `complete`                                  | Complete current fake turn with text `完整图片回复` and native-generated image membership.                 |
+| `history`                                   | Seed 32 complete text replies after current image messages, forcing pagination.                            |
+| `nativeRecovery`                            | Seed verified native-origin withdrawn input `原生恢复输入` and `native.png` original.                      |
+| `missing`                                   | Remove originals referenced by current fixture recovery only.                                              |
+| `consume`                                   | Process fixture recovery and clear it durably; submission receipts stay submitted.                         |
+| `state`                                     | Read state without mutation.                                                                               |
 
 Every control result returns `{ executions, submissions, recovery, messages, limits,
 album }`; submissions are actual admitted immutable public DTOs, album includes

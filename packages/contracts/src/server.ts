@@ -25,6 +25,7 @@ import {
   PageSchema,
   validateSubmission,
   ReceiptSchema,
+  LookupSchema,
   validate,
   validateId,
   validateRecovery,
@@ -47,7 +48,7 @@ export interface ChatBackend extends PanelBackend, SearchBackend {
   compact(input: CompactInput): Promise<CompactResult>;
   history(before: string): Promise<HistoryPage>;
   submit(input: Submission): Promise<Receipt>;
-  lookup(operationId: string): Promise<Receipt>;
+  lookup(operationId: string): Promise<Receipt | null>;
   stop(turnId: string): Promise<{ stopped: boolean }>;
   subscribe(changed: () => void): () => void;
 }
@@ -154,7 +155,13 @@ export async function createChatHost(
       return receipt;
     },
     async lookup(id: string) {
-      return validate(ReceiptSchema, await backend.lookup(validateId(id)));
+      const receipt = validate(
+        LookupSchema,
+        await backend.lookup(validateId(id)),
+      );
+      if (receipt && receipt.operationId !== id)
+        throw new Error("Wrong operation receipt");
+      return receipt;
     },
     async stop(id: string) {
       const result = await backend.stop(validateId(id));

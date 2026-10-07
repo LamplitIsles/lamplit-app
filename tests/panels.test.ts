@@ -235,7 +235,7 @@ test("public panel reads use authorized shared WebSocket, scoped cursors and rec
           text: "面板失败后仍能聊天",
         })
       ).state,
-    ).toBe("consumed");
+    ).toBe("submitted");
     fixture.panels.failures.clear();
     expect((await client.diaryList(input)).entries.length).toBe(30);
     fixture.panels.empty.add("album");

@@ -33,19 +33,12 @@ export function imagesFixture() {
   let recovery: InputRecovery[] = [],
     active: string | null = null,
     executions = 0,
-    mode = "consumed",
+    mode = "submitted",
     disabled = false,
     failUpload = false;
   const changed = () => {
     for (const fn of listeners) fn();
   };
-  const missingReceipt = (id: string): Receipt => ({
-    operationId: id,
-    state: "missing",
-    messageId: null,
-    turnId: null,
-    error: null,
-  });
   const imageBackend: ImageBackend = {
     async upload(input) {
       if (failUpload) throw new Error("Upload unavailable");
@@ -118,7 +111,7 @@ export function imagesFixture() {
     },
     async read(): Promise<ChatView> {
       return {
-        version: 1,
+        version: 2,
         sessionId: "fixture-session",
         name: "Mica",
         activeTurnId: active,
@@ -162,12 +155,7 @@ export function imagesFixture() {
       if (
         input.replacementSourceIds?.some(
           (id) =>
-            !recovery.some(
-              (r) =>
-                r.sourceId === id &&
-                r.replacementEligible &&
-                r.state !== "uncertain",
-            ),
+            !recovery.some((r) => r.sourceId === id && r.replacementEligible),
         )
       )
         throw new Error("Ineligible replacement");
@@ -175,51 +163,56 @@ export function imagesFixture() {
       recovery = recovery.filter(
         (r) => !input.replacementSourceIds?.includes(r.sourceId),
       );
-      const state = mode as Receipt["state"];
+      const state: Receipt["state"] =
+        mode === "failed" ? "failed" : "submitted";
       const receipt: Receipt = {
         operationId: input.operationId,
         state,
-        messageId: input.operationId,
+        messageId: state === "submitted" ? input.operationId : null,
         turnId: active,
-        error: state === "rejected" ? "输入未被接收" : null,
+        error: state === "failed" ? "输入未被接收" : null,
       };
       receipts.set(input.operationId, receipt);
-      messages.push({
-        id: input.operationId,
-        role: "user",
-        text: input.text,
-        ...(input.images ? { images: input.images } : {}),
-        delivery:
-          state === "accepted"
-            ? "pending"
-            : state === "missing"
-              ? "uncertain"
-              : state,
-        createdAt: Date.now(),
-        operationId: input.operationId,
-        turnId: active,
-      });
-      if (["unconsumed", "rejected", "uncertain"].includes(state))
+      if (state === "submitted")
+        messages.push({
+          id: input.operationId,
+          role: "user",
+          text: input.text,
+          ...(input.images ? { images: input.images } : {}),
+          createdAt: Date.now(),
+          operationId: input.operationId,
+          turnId: active,
+        });
+      if (mode === "withdrawn" || state === "failed")
         recovery.push({
           sourceId: input.operationId,
           operationId: input.operationId,
           text: input.text,
           images: input.images ?? [],
-          state: state as InputRecovery["state"],
-          replacementEligible: state !== "uncertain",
+          replacementEligible: true,
         });
-      if (state === "consumed") {
-        if (!active) active = input.operationId;
-        executions++;
+      if (mode === "submitted") {
+        if (!active) {
+          active = input.operationId;
+          executions++;
+        }
       }
       changed();
       return receipt;
     },
     async lookup(id) {
-      return receipts.get(id) ?? missingReceipt(id);
+      return receipts.get(id) ?? null;
     },
     async stop(id) {
       if (id !== active) return { stopped: false };
+      messages.push({
+        id: `turn:${id}:status`,
+        role: "notice",
+        text: "已停止回复",
+        createdAt: Date.now(),
+        operationId: null,
+        turnId: id,
+      });
       active = null;
       changed();
       return { stopped: true };
@@ -240,7 +233,7 @@ export function imagesFixture() {
         recovery = [];
         executions = 0;
         active = null;
-        mode = "consumed";
+        mode = "submitted";
         disabled = failUpload = false;
         break;
       case "mode":
@@ -287,13 +280,18 @@ export function imagesFixture() {
         active = null;
         break;
       }
+      case "replyFailure":
+        messages.push({
+          id: crypto.randomUUID(),
+          role: "notice",
+          text: "回复失败",
+          createdAt: Date.now(),
+          operationId: null,
+          turnId: active,
+        });
+        active = null;
+        break;
       case "consume":
-        for (const r of recovery) {
-          const receipt = receipts.get(r.operationId);
-          if (receipt) receipt.state = "consumed";
-          const message = messages.find((m) => m.operationId === r.operationId);
-          if (message) message.delivery = "consumed";
-        }
         recovery = [];
         break;
       case "history":
@@ -332,7 +330,6 @@ export function imagesFixture() {
               availability: "available",
             },
           ],
-          state: "unconsumed",
           replacementEligible: true,
         });
         break;

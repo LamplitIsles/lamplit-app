@@ -127,10 +127,12 @@ Choose or paste supported images, preview/remove them, and send alone or with te
 The connected host advertises its limits: Pi up to six / 8 MB each / 24 MB originals
 per operation; CFL five / 5 MiB / 20 MiB. Failed upload restores editable selections alongside newer drafts.
 Submitted input recovery offers explicit inspection/restoration without replacing
-current edits. Missing originals require explicit removal; uncertain delivery is
-inspected and never automatically retried. Unsent drafts are not saved across reload.
+current edits. Missing originals require explicit removal. Null lookup or disconnection
+keeps the original pending bubble without recovery or automatic replay. Receipts are
+submitted/failed; reply failure and stopping remain independent. Unsent drafts are not
+saved across reload. The v2 service requires a matching frontend after update.
 
-See [image protocol and frozen native acceptance](docs/image-send-recovery.md).
+See [image protocol](docs/image-send-recovery.md) and [v2 submission handoff](docs/native-durable-submissions.md).
 
 ## Context and compaction
 

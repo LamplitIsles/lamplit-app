@@ -1,3 +1,8 @@
+> Current submission cutover: spec #3435 uses service/view v2. Follow
+> [native durable submission handoff](native-durable-submissions.md) for the current
+> candidate path, controls and immutable identity. Earlier archive identities below
+> are historical evidence, not acceptance of this contract.
+
 # Default shared frontend and complete acceptance
 
 Spec #3162 makes the existing CFL Framework7/Svelte app the default frontend.
@@ -33,7 +38,7 @@ bun tests/notifications-browser.mjs
 
 `test:browser` runs text and voice separately: seven feature runners in total
 (text, voice, panels, images, compact, search, notifications), plus the route
-lifecycle regression and a synthetic optimistic-send admission-gate runner. Notifications use a recording native API fake; the other
+lifecycle regression and the shared submission timing/recovery runner. Notifications use a recording native API fake; the other
 App runners inject denied permission so they never request real OS permission.
 The route lifecycle regression uses real intercepted requests and waits for held
 handlers to settle; genuine route errors fail the process. All fixture hosts use
@@ -48,12 +53,12 @@ Screenshots cover 390/1280; image/compact also retain 320px overflow probes.
 ## One committed-source candidate
 
 Commit verified source, then run `bun run prepare:default` from a clean checkout.
-It builds once into ignored `.scratch/default-shared-frontend/candidate`, refusing
+It builds once into ignored `.scratch/native-durable-submissions/candidate`, refusing
 an existing identity. Historical artifacts are never overwritten. The single
-`lamplit-default-shared-frontend.tgz` contains `browser/`, `contracts/package/`,
+`lamplit-native-durable-submissions.tgz` contains `browser/`, `contracts/package/`,
 `acceptance/`, three per-file SHA256 manifests and `SOURCE_HEAD`. The acceptance
 package includes all seven feature runners, route regression, their fixtures/helpers
-(including `notification-permission.mjs` and the synthetic-only
+(including `notification-permission.mjs` and the shared local/native
 `optimistic-send-browser.mjs`), the notification acceptance guide,
 licenses, source attribution and native-control docs. Its package pins Playwright;
 compiled contracts retain their declared Chord/TypeBox dependencies.
@@ -65,9 +70,9 @@ Extract only into a new test-owned directory. Substitute the received archive
 path; compare all four `shasum` results with `identity.json` before extraction:
 
 ```sh
-shasum -a 256 lamplit-default-shared-frontend.tgz browser.sha256 contracts.sha256 acceptance.sha256
+shasum -a 256 lamplit-native-durable-submissions.tgz browser.sha256 contracts.sha256 acceptance.sha256
 ACCEPTANCE_ROOT=$(mktemp -d /tmp/lamplit-default-acceptance.XXXXXX)
-tar -xzf lamplit-default-shared-frontend.tgz -C "$ACCEPTANCE_ROOT"
+tar -xzf lamplit-native-durable-submissions.tgz -C "$ACCEPTANCE_ROOT"
 (cd "$ACCEPTANCE_ROOT/browser" && shasum -a 256 -c ../browser.sha256)
 (cd "$ACCEPTANCE_ROOT/contracts/package" && shasum -a 256 -c ../../contracts.sha256)
 (cd "$ACCEPTANCE_ROOT/acceptance" && shasum -a 256 -c ../acceptance.sha256)
@@ -80,9 +85,12 @@ frozen source. For extracted App fixture acceptance, from `acceptance/` set
 `APP_ACCEPTANCE_ASSETS=../browser` and run each of `bun browser.mjs`,
 `bun voice-browser.mjs`, `bun panels-browser.mjs`, `bun images-browser.mjs`,
 `bun compact-browser.mjs`, `bun search-browser.mjs`,
-`bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs` and `bun optimistic-send-browser.mjs`.
-The latter uses isolated image/WS fixtures, held upload/receipt gates, computed
-opacity/color and 390/1280 light/dark screenshots; it has no actual-host mode. Set
+`bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs` and `bun optimistic-send-browser.mjs` using
+its submission controls described in the v2 handoff.
+The latter supports isolated image/WS fixtures and actual native hosts through
+test-owned submission controls. It verifies receipt/view ordering, persisted App
+pending state, stop outcome and 390/1280 light/dark screenshots. Configure actual-host
+URLs as described in `native-durable-submissions.md`. Set
 `APP_ACCEPTANCE_EVIDENCE` to a separate
 absolute test-owned directory for each feature. Repeat all three per-file checks
 and archive/manifest hash checks after every native run; never rebuild or edit

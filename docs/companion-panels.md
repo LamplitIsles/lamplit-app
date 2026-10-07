@@ -7,7 +7,7 @@ and TypeScript authority for both engine adapters. Import its compiled root and
 ## Reads on the existing connection
 
 `ChatBackend` implements the six panel methods below, and `createChatHost` exposes
-them on `lamplit.chat.v1`, through the existing authenticated `/api/chat/socket`.
+them on `lamplit.chat.v2`, through the existing authenticated `/api/chat/socket`.
 All methods take exactly one object argument. `sessionId` must equal the host's
 selected session; it is a stale-request check, never authorization to select a
 session. The host authorizes every call and delivery. Panel failures return a
