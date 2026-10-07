@@ -20,6 +20,8 @@
     "test:compact-browser": "bun tests/compact-browser.mjs",
     "test:search-browser": "bun tests/search-browser.mjs",
     "test:route-lifecycle-browser": "bun tests/route-lifecycle-browser.mjs",
+    "test:keet-browser": "bun tests/keet-browser.mjs",
+    "prepare:keet": "bun tests/prepare-keet.mjs",
     "prepare:default": "bun tests/prepare-default.mjs"
   },
   "devDependencies": {

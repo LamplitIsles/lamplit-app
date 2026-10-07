@@ -54,3 +54,16 @@ An isolated test-owned copy of the native component was used for rendered compar
 with synthetic images; no other CFL features or runtime state were imported.
 The complete prior Composer redesign and 96px attachment mockup are superseded.
 Existing Apache-2.0 source attribution and imported dependency licenses remain.
+
+Keet source header and K-avatar markup reuse the existing CFL-derived
+`Companion.svelte` above. The muted bubble/left accent and wrapping source-header
+design intent were consulted read-only in `LamplitIsles/lamplit-cloudflare` at
+`e556636f8298bf575fb73408bd6bb9b304413f8b`, path
+`frontend/src/lib/companion/client/companion.css` (Apache-2.0). The implementation
+adapts those rules to current Framework7 components and palette tokens rather
+than importing its legacy rendering framework or backend DTO. Native label limits
+were observed in `src/server/keet-feed.ts` at the same commit. The Keet frozen
+artifact contains app-owned compiled browser/contracts, owned fixture runners,
+locked dependency metadata and existing LICENSE files; dependency licenses remain
+with their packages. No conversations, credentials, runtime state or native
+backend implementation were imported.

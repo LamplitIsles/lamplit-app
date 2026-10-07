@@ -39,6 +39,7 @@ bun run format:check
 bun run test
 bun run build
 bun run test:browser
+bun run test:keet-browser
 bun run test:panels-browser
 bun run test:images-browser
 bun tests/optimistic-send-browser.mjs
@@ -168,3 +169,14 @@ before native workers start; both hosts use the identical archive without rebuil
 Historical feature artifacts stay unchanged. Production adjacent-checkout build
 and host procedures are in [integration](docs/integration.md); platform management,
 hosted manifest/service worker and auth remain independently owned.
+
+## Keet messages
+
+Native Keet DM/group input appears as an incoming message with a K avatar, sender,
+destination and distinct muted bubble in light/dark. Original visible text and
+images use the existing safe rendering/media rules. The backend owns provenance;
+web submissions cannot supply it. Ingress, native prompts and durable history
+remain backend responsibilities. See [Keet contract and frozen acceptance](docs/keet-source-restoration.md)
+for the exact artifact handoff (`bun run prepare:keet`) and native fixture controls.
+App fixture verification does not establish final cross-repository acceptance,
+which remains pending the Orc. No merge or deployment is part of this restoration.

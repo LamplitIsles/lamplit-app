@@ -2715,7 +2715,7 @@
                                 data-testid={`keet-source-${unit.id}`}
                               >
                                 <span class="badge"
-                                  >Keet {unit.keet.kind === "dm"
+                                  >Keet {unit.keet.channel === "dm"
                                     ? "DM"
                                     : "Group"}</span
                                 ><span

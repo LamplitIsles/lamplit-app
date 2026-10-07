@@ -86,6 +86,7 @@
         ({
           id: m.id,
           alarm: m.source?.kind === "reminder",
+          keet: m.source?.kind === "keet" ? m.source : undefined,
           side: m.role === "user" && !m.source ? "outgoing" : "incoming",
           time: m.createdAt,
           items: [

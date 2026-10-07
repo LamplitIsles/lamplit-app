@@ -249,8 +249,21 @@
 .companion-meta {
   margin-top: 4px;
 }
+/* Legacy Keet emphasis adapted to the current Framework7 palette. */
+#dsh-companion .companion-row-keet .message-bubble {
+  background: var(--companion-color-surface-strong);
+  color: var(--f7-message-received-text-color);
+  border-inline-start: 3px solid var(--companion-color-accent);
+}
 .companion-keet-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  overflow-wrap: anywhere;
+  color: var(--f7-message-text-header-text-color);
   font-size: 11px;
+  line-height: 1.3;
 }
 .companion-empty,
 .companion-history-state,

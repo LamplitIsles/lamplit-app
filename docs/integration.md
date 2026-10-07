@@ -148,3 +148,14 @@ manifests, Owner approval before native starts, screenshots and remaining limits
 All automated state, credentials, ports and fake providers belong to fixtures.
 Live provider use, hosted integration and physical-device behavior remain later
 Owner/user verification. No deployment, merge, release or live restart occurs here.
+
+## Keet display restoration (#3408)
+
+Native adapters project persisted DM/group provenance into the shared minimal
+source union on initial read, reconnect and history. Use original visible message
+text, not the engine's attribution prompt. Consume the exact Orc-accepted built
+contract/browser archive; do not rebuild or refreeze it. The compatible runner,
+locked installation and fixture controls are documented in
+[Keet source restoration](keet-source-restoration.md). Hosted public webhook
+provisioning/routing/credentials remain Platform responsibilities; preserve tenant
+and authentication guards. This change adds no public ingress or deployment.

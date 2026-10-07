@@ -180,3 +180,13 @@ is removed without alias. Public endpoint paths and schemas remain unchanged.
 Platform owns hosted manifest/service worker/auth and management independently.
 See [complete regression and native handoff](default-shared-frontend.md) for the
 current single artifact and test-only controls; those controls are not public APIs.
+
+## Native incoming sources
+
+`MessageSourceSchema` accepts existing reminders and the minimal Keet display
+variant: `{ kind: 'keet', channel: 'dm' | 'group', senderLabel, destination }`.
+Labels are nonblank single-line strings bounded to 512 Unicode code points.
+Source is accepted only from backend views/history, never browser submissions.
+Native adapters provide original visible `ChatMessage.text` and image references;
+attribution prompts, model context and native message identifiers stay private.
+See [Keet presentation and same-artifact acceptance](keet-source-restoration.md).

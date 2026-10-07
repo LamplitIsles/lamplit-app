@@ -59,10 +59,32 @@ export const ReceiptSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+// Native Keet labels are single-line names bounded to 512 Unicode code points.
+const KeetLabelSchema = Type.String({
+  minLength: 1,
+  maxLength: 512,
+  pattern: "^(?!.*[\\r\\n\\u2028\\u2029])(?=.*\\S).+$",
+});
+export const KeetSourceSchema = Type.Object(
+  {
+    kind: Type.Literal("keet"),
+    channel: Type.Union([Type.Literal("dm"), Type.Literal("group")]),
+    senderLabel: KeetLabelSchema,
+    destination: KeetLabelSchema,
+  },
+  { additionalProperties: false },
+);
+export const MessageSourceSchema = Type.Union([
+  ReminderSourceSchema,
+  KeetSourceSchema,
+]);
+export type KeetSource = Static<typeof KeetSourceSchema>;
+export type MessageSource = Static<typeof MessageSourceSchema>;
+
 export const MessageSchema = Type.Object(
   {
     images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
-    source: Type.Optional(ReminderSourceSchema),
+    source: Type.Optional(MessageSourceSchema),
     delivery: Type.Optional(
       Type.Union([
         Type.Literal("pending"),
