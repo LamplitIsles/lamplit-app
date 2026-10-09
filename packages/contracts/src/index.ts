@@ -85,6 +85,7 @@ export const MessageSchema = Type.Object(
       Type.Literal("notice"),
     ]),
     text: Type.String(),
+    thinking: Type.Optional(Type.String()),
     createdAt: Type.Number(),
     operationId: NullableId,
     turnId: NullableId,

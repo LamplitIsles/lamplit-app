@@ -40,6 +40,16 @@ native acceptance instead installs the exact extracted package in test-owned
 locations using the [complete handoff](default-shared-frontend.md). Do not refresh
 or rebuild approved acceptance artifacts.
 
+## Collapsed-thinking handoff
+
+For #3522/#3523 use `bun tests/prepare-default.mjs --collapsed-thinking` after
+committing clean verified App source. This extends the existing preparation with
+the thinking runner/fixture and docs, exporting to ignored
+`.scratch/collapsed-thinking/candidate`. Orc independently approves the exact
+commit/archive and per-file hashes before Chat consumes them. Backend projection
+joins actual assistant thinking blocks in source order, independently from text;
+old records and CFL may omit the field. See [runner contract](collapsed-thinking.md).
+
 ## Native hosting and Owner deployment
 
 Canonical serving/build integration is coordinated with Pi #3163, CFL #3164 and

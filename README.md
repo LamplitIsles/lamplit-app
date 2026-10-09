@@ -172,6 +172,13 @@ Historical feature artifacts stay unchanged. Production adjacent-checkout build
 and host procedures are in [integration](docs/integration.md); platform management,
 hosted manifest/service worker and auth remain independently owned.
 
+## Collapsed thinking
+
+Completed assistant messages can include a separate optional thinking disclosure
+above the answer, initially collapsed and labeled **不许你看的小想法**. Expanding
+it uses the existing Markdown renderer. Message copy remains answer-only.
+See [contract and isolated acceptance](docs/collapsed-thinking.md).
+
 ## Keet messages
 
 Native Keet DM/group input appears as an incoming message with a K avatar, sender,

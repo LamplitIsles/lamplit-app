@@ -9,7 +9,13 @@ import {
 import { resolve, join, relative, dirname } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const output = join(root, ".scratch/native-durable-submissions/candidate");
+const thinking = process.argv.includes("--collapsed-thinking");
+const output = join(
+  root,
+  thinking
+    ? ".scratch/collapsed-thinking/candidate"
+    : ".scratch/native-durable-submissions/candidate",
+);
 if (await Bun.file(join(output, "identity.json")).exists())
   throw new Error("Candidate exists; preserve its identity for Owner review");
 async function command(args, cwd = root) {
@@ -62,6 +68,7 @@ for (const name of ["package.json", "LICENSE"])
 const acceptance = join(stage, "acceptance");
 await mkdir(join(acceptance, "docs"), { recursive: true });
 for (const name of [
+  ...(thinking ? ["thinking-browser.mjs", "thinking-fixture.ts"] : []),
   "browser.mjs",
   "voice-browser.mjs",
   "panels-browser.mjs",
@@ -109,6 +116,7 @@ await writeFile(
   ).replace(/\(([a-z-]+\.md)\)/g, "(docs/$1)"),
 );
 for (const name of [
+  ...(thinking ? ["collapsed-thinking.md"] : []),
   "companion-panels.md",
   "image-send-recovery.md",
   "quiet-compaction.md",
@@ -139,6 +147,14 @@ await writeFile(
     2,
   ) + "\n",
 );
+if (thinking) {
+  // Freeze dependency resolution as in the existing Keet preparation.
+  await command(
+    ["bun", "install", "--lockfile-only"],
+    join(stage, "contracts/package"),
+  );
+  await command(["bun", "install", "--lockfile-only"], acceptance);
+}
 const manifests = {};
 for (const [name, directory] of [
   ["browser", "browser"],
@@ -159,18 +175,27 @@ for (const [name, directory] of [
   };
 }
 await writeFile(join(stage, "SOURCE_HEAD"), appHead + "\n");
-const archive = "lamplit-native-durable-submissions.tgz";
+const archive = thinking
+  ? "lamplit-collapsed-thinking.tgz"
+  : "lamplit-native-durable-submissions.tgz";
 await command(["tar", "-czf", join(output, archive), "."], stage);
+const thinkingRunnerSHA256 = thinking
+  ? await hash(join(acceptance, "thinking-browser.mjs"))
+  : undefined;
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: 3435,
+  spec: thinking ? 3522 : 3435,
   appHead,
-  baseline: "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
+  baseline: thinking
+    ? "407aaf72979e0c05442697c6aaa758da845d88e0"
+    : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),
   manifests,
+  ...(thinking ? { thinkingRunnerSHA256 } : {}),
   runners: [
+    ...(thinking ? ["thinking"] : []),
     "browser",
     "voice",
     "panels",

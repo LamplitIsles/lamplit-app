@@ -85,6 +85,7 @@
       (m) =>
         ({
           id: m.id,
+          thinking: m.role === "agent" ? m.thinking : undefined,
           alarm: m.source?.kind === "reminder",
           keet: m.source?.kind === "keet" ? m.source : undefined,
           side: m.role === "user" && !m.source ? "outgoing" : "incoming",

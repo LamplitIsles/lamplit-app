@@ -978,3 +978,24 @@
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+
+.companion-thinking {
+  color: var(--companion-color-text-muted);
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.companion-thinking summary {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding-block: 12px;
+  cursor: pointer;
+}
+.companion-thinking summary:focus-visible {
+  outline: 2px solid var(--f7-theme-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.companion-thinking .markdown {
+  margin-bottom: 12px;
+}

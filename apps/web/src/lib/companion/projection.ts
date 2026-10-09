@@ -82,6 +82,7 @@ export interface TimelineMessageUnit {
   pendingLabel?: string;
   origin?: "user" | "steering";
   time?: number;
+  thinking?: string;
   keet?: KeetSource;
   alarm?: boolean;
 }

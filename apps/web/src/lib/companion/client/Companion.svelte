@@ -127,6 +127,7 @@
   import { companionHistoryChanges } from "../relationship-history.js";
   import type { CompanionHistoryChange } from "../domain.js";
   import Markdown from "./Markdown.svelte";
+  import Thinking from "./Thinking.svelte";
   import ConversationSearch from "./ConversationSearch.svelte";
   import { formatMessageTime, messageTimeDateTime } from "../message-time.js";
   import { resolveImageDisplaySize } from "../media.js";
@@ -2491,6 +2492,9 @@
                       {@const parts = messageContentParts(unit)}
                       {#each parts as part, partIndex (part.kind === "images" ? part.items[0].id : part.item.id)}
                         {#snippet imageContent()}{#if part.kind === "images"}
+                            {#if partIndex === 0 && unit.thinking}<Thinking
+                                text={unit.thinking}
+                              />{/if}
                             <div
                               class="companion-image-bubble companion-image-group"
                               data-testid={`image-group-${unit.id}`}
@@ -2589,6 +2593,9 @@
                             </div>
                           {/if}{/snippet}
                         {#snippet textContent()}{#if part.kind !== "images"}
+                            {#if partIndex === 0 && unit.thinking}<Thinking
+                                text={unit.thinking}
+                              />{/if}
                             {#if part.item.kind === "text"}
                               <!-- svelte-ignore a11y_no_noninteractive_tabindex (focusable message content provides keyboard context-menu access without a button role around nested links) -->
                               <div

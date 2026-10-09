@@ -24,6 +24,16 @@ Chord method contracts include an invocation context as their last parameter.
 The browser helper supplies it. Socket cancellation is not passed into execution;
 the native execution owner handles explicit stop.
 
+## Optional assistant thinking
+
+`ChatMessage.thinking?: string` carries actual assistant thinking block strings,
+joined in original block order with `\n`. `text` remains the independent answer.
+Omit thinking when absent; do not infer it from ordinary text or export signatures,
+private prompts or tool arguments. The optional field leaves protocol v2 unchanged;
+CFL can omit it. Search previews retain their existing text-only schema.
+Thinking does not alter completion/failure/stop semantics or make thinking-only
+and tool-call-only entries successful answers. See [UI and acceptance](collapsed-thinking.md).
+
 ## Delivery semantics
 
 A reply is one complete agent message with a stable native identity. A turn can
