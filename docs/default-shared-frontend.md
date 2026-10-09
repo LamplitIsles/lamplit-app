@@ -201,3 +201,8 @@ live services/configuration, restart services or develop on the NUC.
 See the repository's [integration guide](integration.md) for adjacent
 checkout production build/host commands. Owner runs each backend/platform's final
 documented deploy procedure after reviewed joint acceptance; merging does not deploy.
+
+For Matrix #3560 use the [complete Matrix handoff](matrix-source-ui.md) and
+`bun tests/prepare-default.mjs --matrix-source-ui`. It preserves all default
+runners and adds Matrix plus current collapsed-thinking acceptance, frozen locks
+and a new candidate directory. Existing identities are never overwritten.

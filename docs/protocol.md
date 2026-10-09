@@ -204,3 +204,10 @@ Source is accepted only from backend views/history, never browser submissions.
 Native adapters provide original visible `ChatMessage.text` and image references;
 attribution prompts, model context and native message identifiers stay private.
 See [Keet presentation and same-artifact acceptance](keet-source-restoration.md).
+
+Matrix extends the same closed union with `{ kind: 'matrix', senderId,
+senderDisplayName, roomId }`. IDs are nonempty; display name may be empty. All
+three are bounded to 255 UTF-16 units by shared schema/format validation. No extra
+single-line rules or payload/context fields are admitted. Adapters provide original
+body and authored time separately; web submissions cannot supply provenance.
+See [Matrix presentation and native acceptance](matrix-source-ui.md).

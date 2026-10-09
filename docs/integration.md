@@ -170,3 +170,13 @@ locked installation and fixture controls are documented in
 [Keet source restoration](keet-source-restoration.md). Hosted public webhook
 provisioning/routing/credentials remain Platform responsibilities; preserve tenant
 and authentication guards. This change adds no public ingress or deployment.
+
+## Matrix display (#3560)
+
+Project stored Matrix inputs through the existing adapter into the closed shared
+source variant, preserving original body/time and private prompt separation.
+Consume one exact complete App candidate with `--matrix-source-ui` preparation,
+including frozen contracts/browser and runnable acceptance. Both hosts remain
+blocked until Orc review and Owner byte approval; App merge waits for same-artifact
+native acceptance. Bind pins to the actual squash commit after equal-tree checking.
+See [Matrix fixture controls and verification](matrix-source-ui.md).

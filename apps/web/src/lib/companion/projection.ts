@@ -1,4 +1,4 @@
-import type { KeetSource } from "@lamplit/contracts";
+import type { KeetSource, MatrixSource } from "@lamplit/contracts";
 import type { ImageAttachmentRef } from "./client/contracts.js";
 import type { ContinuityRecord } from "./continuity.js";
 export type MessageSide = "incoming" | "outgoing";
@@ -84,6 +84,7 @@ export interface TimelineMessageUnit {
   time?: number;
   thinking?: string;
   keet?: KeetSource;
+  matrix?: MatrixSource;
   alarm?: boolean;
 }
 

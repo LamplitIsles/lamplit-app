@@ -88,6 +88,7 @@
           thinking: m.role === "agent" ? m.thinking : undefined,
           alarm: m.source?.kind === "reminder",
           keet: m.source?.kind === "keet" ? m.source : undefined,
+          matrix: m.source?.kind === "matrix" ? m.source : undefined,
           side: m.role === "user" && !m.source ? "outgoing" : "incoming",
           time: m.createdAt,
           items: [

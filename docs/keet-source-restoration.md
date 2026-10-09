@@ -127,3 +127,8 @@ APP_ACCEPTANCE_KEET_IMAGE_PROFILE=text-only APP_ACCEPTANCE_ASSETS=../browser APP
 For native runs use the same corrected runner plus the actual-host/control URL
 settings above and the supported image profile. Orc focused review gates native
 replacement; fixture smoke does not establish native or joint acceptance.
+
+The [Matrix handoff](matrix-source-ui.md) extends the closed source union and uses
+the same Keet bubble palette without changing Keet labels, images or reminder
+behavior. Its complete candidate includes this Keet runner and both supported
+image profiles; historical Keet artifacts remain unchanged.

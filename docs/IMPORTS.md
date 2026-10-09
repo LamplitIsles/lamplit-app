@@ -67,3 +67,9 @@ artifact contains app-owned compiled browser/contracts, owned fixture runners,
 locked dependency metadata and existing LICENSE files; dependency licenses remain
 with their packages. No conversations, credentials, runtime state or native
 backend implementation were imported.
+
+Matrix source presentation (#3560) is an app-owned extension of the existing
+CFL-derived Keet/Framework7 header, avatar and palette treatment. It adds no
+upstream source, native backend implementation, state or credentials; the source
+commits and Apache-2.0 attribution above remain authoritative. The complete frozen
+Matrix handoff includes the owned runners/fixtures and existing license files.

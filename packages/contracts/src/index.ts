@@ -18,6 +18,7 @@ import {
   RecoverySchema,
 } from "./images.ts";
 import { Type, type Static } from "typebox";
+import { Format } from "typebox/format";
 import { validate } from "./validation.ts";
 export { validate } from "./validation.ts";
 import {
@@ -67,9 +68,26 @@ export const KeetSourceSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+// JSON Schema length counts code points; the gateway capacity counts UTF-16 units.
+Format.Set("matrix-label", (value) => value.length <= 255);
+const MatrixLabelSchema = Type.String({
+  maxLength: 255,
+  format: "matrix-label",
+});
+export const MatrixSourceSchema = Type.Object(
+  {
+    kind: Type.Literal("matrix"),
+    senderId: Type.String({ ...MatrixLabelSchema, minLength: 1 }),
+    senderDisplayName: MatrixLabelSchema,
+    roomId: Type.String({ ...MatrixLabelSchema, minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type MatrixSource = Static<typeof MatrixSourceSchema>;
 export const MessageSourceSchema = Type.Union([
   ReminderSourceSchema,
   KeetSourceSchema,
+  MatrixSourceSchema,
 ]);
 export type KeetSource = Static<typeof KeetSourceSchema>;
 export type MessageSource = Static<typeof MessageSourceSchema>;

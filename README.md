@@ -189,3 +189,12 @@ remain backend responsibilities. See [Keet contract and frozen acceptance](docs/
 for the exact artifact handoff (`bun run prepare:keet`) and native fixture controls.
 App fixture verification does not establish final cross-repository acceptance,
 which remains pending the Orc. No merge or deployment is part of this restoration.
+
+## Matrix messages
+
+Matrix inputs appear as incoming messages with an M avatar, Matrix badge, sender
+and exact room ID. An empty display name uses the sender ID. The original body
+stays separate from attribution, with safe wrapping and text escaping. Native
+adapters own persisted provenance and authored time; web input cannot forge it.
+See [Matrix display and complete acceptance handoff](docs/matrix-source-ui.md)
+for local checks, frozen artifact preparation and both-host acceptance gates.

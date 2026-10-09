@@ -2723,6 +2723,25 @@
                                     .destination}</span
                                 >
                               </div>
+                            {:else if unit.matrix}<div
+                                class="companion-matrix-source"
+                                role="group"
+                                aria-label="Matrix"
+                                data-testid={`matrix-source-${unit.id}`}
+                              >
+                                <span class="badge">Matrix</span>
+                                <span class="companion-matrix-sender"
+                                  >{unit.matrix.senderDisplayName ||
+                                    unit.matrix.senderId}</span
+                                >
+                                {#if unit.matrix.senderDisplayName}<span
+                                    class="companion-matrix-sender-id"
+                                    >{unit.matrix.senderId}</span
+                                  >{/if}
+                                <span class="companion-matrix-room"
+                                  >{unit.matrix.roomId}</span
+                                >
+                              </div>
                             {:else if unit.alarm}<span
                                 class="badge companion-alarm-source"
                                 >{t("alarm.source")}</span
@@ -2730,7 +2749,8 @@
                           {/if}
                         {/snippet}
                         <Message
-                          header={partIndex === 0 && (unit.keet || unit.alarm)
+                          header={partIndex === 0 &&
+                          (unit.keet || unit.matrix || unit.alarm)
                             ? messageSource
                             : undefined}
                           footer={partIndex === parts.length - 1 &&
@@ -2747,7 +2767,7 @@
                           text={part.kind !== "images"
                             ? textContent
                             : undefined}
-                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""}`}
+                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""}`}
                           data-pending={unit.pending || undefined}
                           data-testid={partIndex === 0
                             ? unitTestId(unit)
@@ -2756,6 +2776,8 @@
                           {#snippet avatar()}
                             <div class="companion-avatar-crop">
                               {#if unit.keet}<span aria-hidden="true">K</span
+                                >{:else if unit.matrix}<span aria-hidden="true"
+                                  >M</span
                                 >{:else if unit.alarm}<AlarmClock
                                   size={16}
                                   aria-hidden="true"
