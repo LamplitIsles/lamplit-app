@@ -1,8 +1,10 @@
 # Shared chat reading layout
 
-Incoming answers keep their side avatar and use more of the available row, with
-matching outer timeline gutters. Short answers fit their text; desktop answers
-retain a reading cap. Long code lines remain intact and wide tables scroll inside
+Incoming answers keep their left avatar and reserve the outgoing avatar-and-gap
+space on the right. Long mobile bubbles end approximately at the outgoing user
+bubble's right edge (within 2px), before its avatar column. Short answers fit their
+text; desktop answers retain the 76ch row reading cap and may end earlier. Long
+code lines remain intact and wide tables scroll inside
 their own containers. Horizontal gestures and normal vertical timeline reading
 remain available; prose, inline code, links, images and expanded thinking stay
 within the message.
@@ -28,7 +30,8 @@ bun tests/mobile-reading-browser.mjs
 The focused runner uses actual compiled App assets and contracts at 320/390/1280,
 light/dark, Framework7 Material and iOS themes (iPhone user-agent emulation).
 It checks bounding boxes, short
-and long reply widths, avatar placement, local code/table scroll extents and text,
+and long reply widths, actual incoming/outgoing bubble right edges, avatar/gap
+geometry, desktop cap, local code/table scroll extents and text,
 Chromium touch-event panning on mobile and scripted local scrolling on desktop,
 vertical reading, reminder keyboard controls/full copy/independent identity,
 viewport remeasurement, paging/reconnect, unchanged ordinary/source messages,
@@ -46,7 +49,8 @@ bun tests/prepare-default.mjs --mobile-reading-layout
 This extends the existing complete export with the focused runner and this guide.
 It refuses an existing identity at `.scratch/mobile-reading-layout/candidate-<source HEAD>`,
 preserving all historical candidates. `identity.json` records exact source HEAD,
-baseline, archive SHA256, three manifest hashes and focused runner SHA256.
+spec #3687, fixed baseline e535143b428b70129e2804cb6d191e53a26e26d4, archive
+SHA256, three manifest hashes and focused runner SHA256.
 Archive `lamplit-mobile-reading-layout.tgz` contains browser/contracts/acceptance,
 frozen dependency locks and SOURCE_HEAD. Compare archive and manifest hashes with
 identity before extracting into a fresh test-owned directory; check every file:

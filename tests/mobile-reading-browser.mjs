@@ -26,6 +26,15 @@ const server = Bun.serve({
       for (const channel of channels.values()) channel.disconnect();
       return Response.json({ disconnected: true });
     }
+    if (path === "/api/chat/appearance")
+      return Response.json({
+        companionName: "Mica",
+        userName: "You",
+        companionAvatar: "/api/test/avatar.png",
+        userAvatar: "/api/test/avatar.png",
+      });
+    if (path === "/api/test/avatar.png")
+      return staticAssets(assets, "/icons/cfl-192.png");
     if (path === "/api/chat/socket" && server.upgrade(req)) return;
     return staticAssets(assets, path);
   },
@@ -120,6 +129,7 @@ try {
         );
         await message("long", long);
         await message("short", "好");
+        await message("outgoing", long, { role: "user" });
         await message("reminder", long, reminder);
         await message("reminder2", long, reminder);
         await message("short-reminder", "短提醒", reminder);
@@ -230,28 +240,51 @@ try {
             .poll(() => timeline.evaluate((el) => el.scrollTop))
             .toBeGreaterThan(top + 20);
         }
-        const bounds = await row("long").evaluate((el) => {
-          const r = el.getBoundingClientRect(),
-            avatar = el
-              .querySelector(".message-avatar")
-              .getBoundingClientRect(),
-            bubble = el
-              .querySelector(".message-bubble")
-              .getBoundingClientRect();
-          return {
-            left: r.left,
-            right: r.right,
-            avatarRight: avatar.right,
-            bubbleLeft: bubble.left,
-            bubbleWidth: bubble.width,
-          };
-        });
+        const measure = async (id) =>
+          row(id).evaluate((el) => {
+            const avatar = el
+                .querySelector(".message-avatar")
+                .getBoundingClientRect(),
+              bubble = el
+                .querySelector(".message-bubble")
+                .getBoundingClientRect();
+            return {
+              avatarLeft: avatar.left,
+              avatarRight: avatar.right,
+              avatarWidth: avatar.width,
+              bubbleLeft: bubble.left,
+              bubbleRight: bubble.right,
+              bubbleWidth: bubble.width,
+            };
+          });
+        for (const id of ["long", "outgoing"])
+          await expect(row(id).locator(".message-avatar img")).toBeVisible();
+        const bounds = await measure("long"),
+          outgoing = await measure("outgoing");
+        const gap = outgoing.avatarLeft - outgoing.bubbleRight;
+        console.log({ theme, width, scheme, bounds, outgoing, gap });
+        expect(bounds.avatarWidth).toBeGreaterThan(0);
         expect(bounds.avatarRight).toBeLessThanOrEqual(bounds.bubbleLeft);
-        if (width < 500)
+        expect(gap).toBeGreaterThanOrEqual(0);
+        expect(bounds.bubbleRight).toBeLessThanOrEqual(
+          outgoing.bubbleRight + 2,
+        );
+        if (width < 500) {
           expect(
-            Math.abs(bounds.left - (width - bounds.right)),
-          ).toBeLessThanOrEqual(1);
-        else expect(bounds.bubbleWidth).toBeLessThan(800);
+            Math.abs(bounds.bubbleRight - outgoing.bubbleRight),
+          ).toBeLessThanOrEqual(2);
+          expect(
+            Math.abs(
+              outgoing.avatarRight -
+                bounds.bubbleRight -
+                (outgoing.avatarWidth + gap),
+            ),
+          ).toBeLessThanOrEqual(2);
+        } else expect(bounds.bubbleWidth).toBeLessThan(800);
+        await row("long").scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: `${evidence}/alignment-${theme}-${scheme}-${width}.png`,
+        });
         expect(
           (await row("short").locator(".message-bubble").boundingBox()).width,
         ).toBeLessThan(bounds.bubbleWidth / 2);

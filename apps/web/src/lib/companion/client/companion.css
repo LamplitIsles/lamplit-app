@@ -1018,16 +1018,32 @@
   min-width: 0;
 }
 .companion-row.incoming {
-  margin-right: calc(8px + var(--f7-safe-area-right));
+  /* Match the outgoing avatar plus its Framework7 Material bubble gap. */
+  --companion-outgoing-space: calc(
+    var(--f7-message-avatar-size) + var(--f7-message-bubble-padding-horizontal)
+  );
+  margin-right: calc(
+    8px + var(--f7-safe-area-right) + var(--companion-outgoing-space)
+  );
   max-width: min(
-    calc(100% - 16px - var(--f7-safe-area-left) - var(--f7-safe-area-right)),
+    calc(
+      100% - 16px - var(--f7-safe-area-left) - var(--f7-safe-area-right) -
+        var(--companion-outgoing-space)
+    ),
     76ch
   );
 }
 .ios .companion-row.incoming {
-  margin-right: calc(16px + var(--f7-safe-area-right));
+  /* Framework7 iOS has no gap between the outgoing bubble and avatar. */
+  --companion-outgoing-space: var(--f7-message-avatar-size);
+  margin-right: calc(
+    16px + var(--f7-safe-area-right) + var(--companion-outgoing-space)
+  );
   max-width: min(
-    calc(100% - 32px - var(--f7-safe-area-left) - var(--f7-safe-area-right)),
+    calc(
+      100% - 32px - var(--f7-safe-area-left) - var(--f7-safe-area-right) -
+        var(--companion-outgoing-space)
+    ),
     76ch
   );
 }

@@ -212,10 +212,10 @@ const readingRunnerSHA256 = reading
   : undefined;
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: reading ? 3680 : matrix ? 3560 : thinking ? 3522 : 3435,
+  spec: reading ? 3687 : matrix ? 3560 : thinking ? 3522 : 3435,
   appHead,
   baseline: reading
-    ? "132d7dedd8c52eecefa8ea6bb9bb6038d5cdc9e8"
+    ? "e535143b428b70129e2804cb6d191e53a26e26d4"
     : matrix
       ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
       : thinking
