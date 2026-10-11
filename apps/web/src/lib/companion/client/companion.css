@@ -202,7 +202,7 @@
 }
 .companion-text-bubble {
   white-space: normal;
-  touch-action: pan-y;
+  touch-action: auto;
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
@@ -227,6 +227,8 @@
   white-space: pre;
 }
 .markdown table {
+  word-break: normal;
+  overflow-wrap: normal;
   display: block;
   overflow: auto;
   max-width: 100%;
@@ -1009,4 +1011,45 @@
 }
 .companion-matrix-room {
   flex-basis: 100%;
+}
+
+/* Leave avatar columns intact; bound every intrinsic-width link in the flex chain. */
+.companion-row {
+  min-width: 0;
+}
+.companion-row.incoming {
+  margin-right: calc(8px + var(--f7-safe-area-right));
+  max-width: min(
+    calc(100% - 16px - var(--f7-safe-area-left) - var(--f7-safe-area-right)),
+    76ch
+  );
+}
+.ios .companion-row.incoming {
+  margin-right: calc(16px + var(--f7-safe-area-right));
+  max-width: min(
+    calc(100% - 32px - var(--f7-safe-area-left) - var(--f7-safe-area-right)),
+    76ch
+  );
+}
+.companion-row .message-bubble,
+.companion-row .message-text {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.companion-row .message-content {
+  flex-shrink: 1;
+}
+.companion-reminder-body.collapsed {
+  max-height: 2lh;
+  overflow: hidden;
+}
+.companion-reminder-toggle {
+  min-height: 44px;
+  min-width: 44px;
+  width: fit-content;
+}
+.companion-reminder-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
 }

@@ -43,7 +43,9 @@ export function thinkingFixture() {
       } else if (input.action === "message") {
         const message = validate(MessageSchema, input.message);
         const target = input.history ? older : live;
-        target.push(message);
+        const existing = target.findIndex((item) => item.id === message.id);
+        if (existing < 0) target.push(message);
+        else target[existing] = message;
         // Preserve the native failed-reply outcome of a successful thinking-only stop.
         if (
           message.role === "agent" &&

@@ -20,6 +20,7 @@
     hasNativeCamera,
   } from "./native-mobile.js";
   import AlarmDrawer from "./AlarmDrawer.svelte";
+  import ReminderBody from "./ReminderBody.svelte";
   import type { AlarmView } from "./alarm-view.ts";
   import Plus from "lucide-svelte/icons/plus";
   import ChevronDown from "lucide-svelte/icons/chevron-down";
@@ -2609,7 +2610,15 @@
                                     ),
                                 }}
                               >
-                                <Markdown text={part.item.text} />
+                                {#if unit.alarm}
+                                  <ReminderBody
+                                    text={part.item.text}
+                                    id={part.item.id}
+                                    {t}
+                                  />
+                                {:else}
+                                  <Markdown text={part.item.text} />
+                                {/if}
                               </div>
                             {:else if part.item.kind === "voice"}
                               {@const item = part.item}

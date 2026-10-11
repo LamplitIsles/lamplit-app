@@ -9,15 +9,19 @@ import {
 import { resolve, join, relative, dirname } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const matrix = process.argv.includes("--matrix-source-ui");
+const reading = process.argv.includes("--mobile-reading-layout");
+const matrix = reading || process.argv.includes("--matrix-source-ui");
 const thinking = matrix || process.argv.includes("--collapsed-thinking");
+const appHead = await command(["git", "rev-parse", "HEAD"]);
 const output = join(
   root,
-  matrix
-    ? ".scratch/matrix-source-ui/candidate"
-    : thinking
-      ? ".scratch/collapsed-thinking/candidate"
-      : ".scratch/native-durable-submissions/candidate",
+  reading
+    ? `.scratch/mobile-reading-layout/candidate-${appHead}`
+    : matrix
+      ? ".scratch/matrix-source-ui/candidate"
+      : thinking
+        ? ".scratch/collapsed-thinking/candidate"
+        : ".scratch/native-durable-submissions/candidate",
 );
 if (await Bun.file(join(output, "identity.json")).exists())
   throw new Error("Candidate exists; preserve its identity for Owner review");
@@ -31,7 +35,6 @@ async function command(args, cwd = root) {
   if (code) throw new Error(error || out);
   return out.trim();
 }
-const appHead = await command(["git", "rev-parse", "HEAD"]);
 if (await command(["git", "status", "--porcelain"]))
   throw new Error("Commit all source before preparing the candidate");
 await command(["bun", "run", "build"]);
@@ -71,6 +74,7 @@ for (const name of ["package.json", "LICENSE"])
 const acceptance = join(stage, "acceptance");
 await mkdir(join(acceptance, "docs"), { recursive: true });
 for (const name of [
+  ...(reading ? ["mobile-reading-browser.mjs"] : []),
   ...(matrix ? ["matrix-browser.mjs", "matrix-fixture.ts"] : []),
   ...(thinking ? ["thinking-browser.mjs", "thinking-fixture.ts"] : []),
   "browser.mjs",
@@ -116,10 +120,19 @@ for (const name of [
 await writeFile(
   join(acceptance, "README.md"),
   (
-    await readFile(join(root, "docs/default-shared-frontend.md"), "utf8")
+    await readFile(
+      join(
+        root,
+        reading
+          ? "docs/mobile-reading-layout.md"
+          : "docs/default-shared-frontend.md",
+      ),
+      "utf8",
+    )
   ).replace(/\(([a-z-]+\.md)\)/g, "(docs/$1)"),
 );
 for (const name of [
+  ...(reading ? ["mobile-reading-layout.md"] : []),
   ...(matrix ? ["matrix-source-ui.md"] : []),
   ...(thinking ? ["collapsed-thinking.md"] : []),
   "companion-panels.md",
@@ -180,11 +193,13 @@ for (const [name, directory] of [
   };
 }
 await writeFile(join(stage, "SOURCE_HEAD"), appHead + "\n");
-const archive = matrix
-  ? "lamplit-matrix-source-ui.tgz"
-  : thinking
-    ? "lamplit-collapsed-thinking.tgz"
-    : "lamplit-native-durable-submissions.tgz";
+const archive = reading
+  ? "lamplit-mobile-reading-layout.tgz"
+  : matrix
+    ? "lamplit-matrix-source-ui.tgz"
+    : thinking
+      ? "lamplit-collapsed-thinking.tgz"
+      : "lamplit-native-durable-submissions.tgz";
 await command(["tar", "-czf", join(output, archive), "."], stage);
 const thinkingRunnerSHA256 = thinking
   ? await hash(join(acceptance, "thinking-browser.mjs"))
@@ -192,22 +207,29 @@ const thinkingRunnerSHA256 = thinking
 const matrixRunnerSHA256 = matrix
   ? await hash(join(acceptance, "matrix-browser.mjs"))
   : undefined;
+const readingRunnerSHA256 = reading
+  ? await hash(join(acceptance, "mobile-reading-browser.mjs"))
+  : undefined;
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: matrix ? 3560 : thinking ? 3522 : 3435,
+  spec: reading ? 3680 : matrix ? 3560 : thinking ? 3522 : 3435,
   appHead,
-  baseline: matrix
-    ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
-    : thinking
-      ? "407aaf72979e0c05442697c6aaa758da845d88e0"
-      : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
+  baseline: reading
+    ? "132d7dedd8c52eecefa8ea6bb9bb6038d5cdc9e8"
+    : matrix
+      ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
+      : thinking
+        ? "407aaf72979e0c05442697c6aaa758da845d88e0"
+        : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),
   manifests,
+  ...(reading ? { readingRunnerSHA256 } : {}),
   ...(thinking ? { thinkingRunnerSHA256 } : {}),
   ...(matrix ? { matrixRunnerSHA256 } : {}),
   runners: [
+    ...(reading ? ["mobile-reading (App fixture only)"] : []),
     ...(matrix ? ["matrix"] : []),
     ...(thinking ? ["thinking"] : []),
     "browser",

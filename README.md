@@ -198,3 +198,11 @@ stays separate from attribution, with safe wrapping and text escaping. Native
 adapters own persisted provenance and authored time; web input cannot forge it.
 See [Matrix display and complete acceptance handoff](docs/matrix-source-ui.md)
 for local checks, frozen artifact preparation and both-host acceptance gates.
+
+## Chat reading layout
+
+Incoming replies retain side avatars with wider mobile bubbles and a desktop
+reading cap. Code and wide tables scroll locally. Only long timeline reminders
+use a two-line expand/collapse preview; copy keeps full original text and the
+scheduled-reminder drawer stays unchanged. See [reading layout and immutable
+focused acceptance](docs/mobile-reading-layout.md).
