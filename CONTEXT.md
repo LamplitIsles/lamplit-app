@@ -46,3 +46,13 @@ _Avoid_: Consumed, uncertain delivery, reply failure as submission rejection
 Explicit editing of confirmed rejected input or input withdrawn before processing.
 A temporary disconnect or stopped/failed reply does not make input recoverable.
 _Avoid_: Automatic replay, recovery inferred from null lookup
+
+**Local capture readiness（本地录音就绪）**:
+The microphone is producing audio for the current dictation take, so the owner can
+speak and stop recording. This is distinct from recognition readiness.
+_Avoid_: Recognition connected, transcript ready
+
+**Recognition readiness（识别就绪）**:
+The speech service is ready to receive the current take's audio. Local recording
+may already be underway; recognized text becomes an editable draft only on completion.
+_Avoid_: Microphone permission, recording started, message sent

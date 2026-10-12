@@ -127,23 +127,27 @@ route fulfillment or product API mock is used.
 
 Voice uses `/__test/voice` by default:
 
-| Action                                      | Native fixture operation                                                                                                                                                                                                                     |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reset`                                     | Reset fixture chat, counters and speech takes; enabled speech, transcript `recognized final`, no held final result.                                                                                                                          |
-| `state`                                     | Observe `{ executions, takes }` from actual authenticated native voice transport.                                                                                                                                                            |
-| `speech`, `text?`, `hold?`, `availability?` | Configure fake speech final transcript/held completion. Availability `enabled`/`disabled` follows native speech configuration; `unreachable` fails capability delivery (e.g. 503) after native authentication. Do not forge capability JSON. |
-| `complete`, `text?`                         | Complete the held fake native chat turn, as for text.                                                                                                                                                                                        |
-| `disconnect`                                | Close this fixture's chat observation sockets, preserving native turn ownership. Normal native reconnection remains enabled.                                                                                                                 |
-| `result`, `takeId`, `text`                  | Release an old held fake speech result; the native cancelled/closed take may discard it. Never inject a result directly into the browser.                                                                                                    |
-| `error`, `takeId`, `code`                   | Make that fake speech upstream fail with the specified native mapped error (`upstream_error` in this suite).                                                                                                                                 |
+| Action                                                    | Native fixture operation                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset`                                                   | Reset fixture chat, counters and speech takes; enabled speech, transcript `recognized final`, no held final result.                                                                                                                                                                           |
+| `state`                                                   | Observe `{ executions, takes }` from actual authenticated native voice transport.                                                                                                                                                                                                             |
+| `speech`, `text?`, `hold?`, `holdReady?`, `availability?` | Configure fake speech final transcript/held completion. Availability `enabled`/`disabled` follows native speech configuration; `unreachable` fails capability delivery (e.g. 503) after native authentication. Do not forge capability JSON. `holdReady` holds actual speech setup readiness. |
+| `ready`, `takeId`                                         | Release the held fake speech setup for this take through the native ready event. A closed take stays closed.                                                                                                                                                                                  |
+| `complete`, `text?`                                       | Complete the held fake native chat turn, as for text.                                                                                                                                                                                                                                         |
+| `disconnect`                                              | Close this fixture's chat observation sockets, preserving native turn ownership. Normal native reconnection remains enabled.                                                                                                                                                                  |
+| `result`, `takeId`, `text`                                | Release an old held fake speech result; the native cancelled/closed take may discard it. Never inject a result directly into the browser.                                                                                                                                                     |
+| `error`, `takeId`, `code`                                 | Make that fake speech upstream fail with the specified native mapped error (`upstream_error` in this suite).                                                                                                                                                                                  |
 
 Each observed take has `{ id, bytes, controls, closed, finishedBytes, firstFrame,
-nonzero }`. `id` is a stable test observation ID; `bytes` counts PCM bytes admitted
+nonzero, ready, events, frames }`. `id` is a stable test observation ID; `bytes` counts PCM bytes admitted
 on the actual voice transport; `controls` is ordered client `finish`/`cancel`;
 `closed` reflects transport cleanup; `finishedBytes` is the byte count at finish;
 `firstFrame` is the bounded first PCM frame as a byte array; `nonzero` observes
 whether any admitted frame has nonzero audio. Observe at the native transport seam,
-not provider chunk sizes. Fake speech must hold an otherwise valid recognized
+not provider chunk sizes. `ready` reports actual transport readiness; `events`
+records `ready`, each `pcm`, and controls in order; `frames` is the bounded test
+observation of each original PCM frame as a byte array. These observations stay in
+test-owned fixture memory, never product state. Fake speech must hold an otherwise valid recognized
 result without changing native transcript aggregation/validation.
 
 The runner preserves streaming-before-finish, exact 3200-byte first frame,
@@ -206,3 +210,32 @@ For Matrix #3560 use the [complete Matrix handoff](matrix-source-ui.md) and
 `bun tests/prepare-default.mjs --matrix-source-ui`. It preserves all default
 runners and adds Matrix plus current collapsed-thinking acceptance, frozen locks
 and a new candidate directory. Existing identities are never overwritten.
+
+## Fast voice start candidate (#3734)
+
+`bun tests/prepare-default.mjs --fast-voice-start` exports current committed source
+to `.scratch/fast-voice-start/candidate-<full HEAD>/lamplit-fast-voice-start.tgz`.
+It retains current layout, reminder, Matrix, thinking and all existing runners,
+freezes acceptance/contracts Bun locks, and records source HEAD/tree, archive,
+manifest and voice-runner identities. Historical candidates remain untouched.
+Review exact bytes before native consumption; a local candidate is not approval.
+
+Run `voice-browser.mjs` against both source-built and freshly extracted browser
+bytes. Install extraction dependencies with `bun install --frozen-lockfile` in
+contracts/package and acceptance. Verify archive, all three manifests and
+`SOURCE_HEAD` before and after each run; include frozen lockfiles in the manifest
+checks. Use the existing external URL/control URL variables above for isolated
+native hosts. The runner requires `holdReady`, `ready`, ordered frame observations
+and resource probes through the same seam, with no fabricated public responses.
+
+The built worklet proves local PCM before delayed recognition, no pre-ready sends,
+early Stop release followed by exact queued frames/residual and one finish,
+remote-first permission delay, late permission cancellation, bounded overflow,
+backpressure, retained startup deadline, premature-result rejection and fresh-take
+recovery. Browser timers and an outbound-buffer probe control deadline/backpressure
+cases; actual PCM still comes from Chromium's synthetic microphone and built worklet.
+Screenshots at 390/1280 show recording while readiness is held and released idle.
+Timing logs separate click-to-first-PCM from click-to-ready. They establish isolated
+ordering, not physical microphone or real-provider latency. App owns this one
+recorder; Chat consumes an approved immutable archive, while codex-for-love prepares
+clean full-SHA-pinned source. Native consumers remain separate follow-up work.

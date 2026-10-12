@@ -1296,16 +1296,17 @@
       return;
     }
     voiceFailure = "";
+    const generation = ++voiceGeneration;
     try {
       voiceOriginDraft = composer.draft;
       voiceInsertion = {
         start: composerInput?.selectionStart ?? composer.draft.length,
         end: composerInput?.selectionEnd ?? composer.draft.length,
       };
-      const generation = ++voiceGeneration;
       if (!(await voiceController.start()) || generation !== voiceGeneration)
         return;
     } catch (error) {
+      if (generation !== voiceGeneration) return;
       if (error instanceof VoiceRecordingError && error.code === "cancelled")
         return;
       voiceFailure = voiceErrorKey(error);
@@ -1854,6 +1855,13 @@
     releaseDeferredPreviewReleases();
   });
 </script>
+
+<svelte:window on:pagehide={() => void cancelVoiceInput()} />
+<svelte:document
+  on:visibilitychange={() => {
+    if (document.hidden) void cancelVoiceInput();
+  }}
+/>
 
 <Page
   name="companion"

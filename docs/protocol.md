@@ -117,18 +117,35 @@ text chat stays usable. Recheck on app mount; the stream must also enforce curre
 authorization and speech availability rather than trusting a prior capability GET.
 
 `/api/voice/stream` opens one transient recognition take per WebSocket. The host
-sends `{ type: "ready" }` after speech setup. Only then does capture start. Audio is
+sends `{ type: "ready" }` after speech setup. Explicit Start opens recognition and
+prepares local capture concurrently. The first valid worklet PCM frame establishes
+local recording readiness; server `ready` independently permits transport. Audio is
 binary signed PCM16 little-endian mono at actual 16,000 Hz: at most 300 seconds,
 9,600,000 raw bytes, 16 KiB per nonempty even-length frame. The client bounds its
-queued WebSocket output at 256 KiB and emits 100 ms frames (3,200 bytes). It requests
+unsent PCM FIFO at 160,000 bytes (five seconds), with FIFO plus WebSocket output
+bounded together at 256 KiB. It emits 100 ms frames (3,200 bytes). Overflow fails
+rather than dropping speech. It requests
 16 kHz from AudioContext and checks the actual rate; unsupported rates fail cleanly
 without an application resampler or batch fallback.
 
 Controls are strictly `{ type: "finish" }` or `{ type: "cancel" }`, at most 128
 UTF-8 bytes. Finish follows the worklet's final partial PCM frame and flush
-acknowledgement. The host then finishes the provider task. Cancel/disconnect
+acknowledgement. Early Stop releases microphone, nodes and AudioContext on that
+acknowledgement, then delivers queued frames in order after readiness before sending
+finish exactly once. A result before the client's own finish is rejected. Stop
+before the first PCM retains cancellation semantics. The 15-second startup deadline
+remains until both local capture and recognition are ready, including after early
+Stop. Flush, post-flush delivery and final-result waits each retain their 20-second
+bounds. The host then finishes the provider task. Cancel/disconnect
 releases capture and provider resources. No audio enters chat replication,
-attachments, persistent storage or model execution.
+attachments, persistent storage or model execution. Hidden-page, pagehide, navigation,
+session change and unmount discard pending audio and invalidate late results.
+
+Nothing is prewarmed before explicit Start. Recognition setup may now begin before
+microphone permission completes, including when permission is eventually denied.
+The host may contact its provider at that point; cancelling releases known resources
+but cannot undo provider processing or billing already incurred. Capability is still
+the current host availability gate, independent of recognition readiness.
 
 Server events are strictly `ready`, `{ type: "result", text }` or
 `{ type: "error", code }`, at most 128 KiB UTF-8. Result requires nonblank finalized
