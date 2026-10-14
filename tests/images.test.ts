@@ -230,11 +230,25 @@ test("image admission, immutable ordered references, steering, native recovery, 
   await fixture.control({ action: "complete" });
   await fixture.control({ action: "history" });
   const view = await fixture.backend.read();
+  const history = [...view.messages];
+  const cursors = new Set<string>();
+  let before = view.before;
+  for (let page = 0; before && page < 40; page++) {
+    expect(cursors.has(before)).toBe(false);
+    cursors.add(before);
+    const older = await fixture.backend.history(before);
+    expect(older.before).not.toBe(before);
+    history.push(...older.messages);
+    before = older.before;
+  }
+  expect(before).toBeNull();
+  expect(new Set(history.map((message) => message.id)).size).toBe(
+    history.length,
+  );
   expect(
-    (await fixture.backend.history(view.before!)).messages.some(
-      (m) => m.images?.length,
-    ),
-  ).toBe(true);
+    history.find((message) => message.operationId === input.operationId)
+      ?.images,
+  ).toEqual(input.images);
   const album = await fixture.backend.album({
     sessionId: view.sessionId,
     cursor: null,

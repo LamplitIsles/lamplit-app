@@ -80,6 +80,7 @@ export interface TimelineMessageUnit {
   items: readonly TimelineItem[];
   pending?: boolean;
   pendingLabel?: string;
+  failed?: boolean;
   origin?: "user" | "steering";
   time?: number;
   thinking?: string;

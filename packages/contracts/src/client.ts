@@ -29,6 +29,13 @@ import {
   awaitWithContext,
 } from "@earendil-works/chord/context";
 import {
+  FinalizeSubmissionSchema,
+  RetryFailedSchema,
+  DeleteFailedSchema,
+  DeleteFailedResultSchema,
+  type FinalizeSubmission,
+  type RetryFailed,
+  type DeleteFailed,
   Chat,
   ViewSchema,
   PageSchema,
@@ -300,6 +307,50 @@ export async function openChat(
         if (receipt && receipt.operationId !== id)
           throw new Error("Wrong operation receipt");
         return receipt;
+      },
+      async finalizeSubmission(input: FinalizeSubmission) {
+        const value = validate(FinalizeSubmissionSchema, input);
+        if ("submission" in value) validateSubmission(value.submission);
+        else if (value.retry.sessionId !== value.sessionId)
+          throw new Error("Wrong retry session");
+        const receipt = validate(
+          LookupSchema,
+          await service.finalizeSubmission(value, BACKGROUND_CONTEXT),
+        );
+        if (
+          receipt &&
+          receipt.operationId !==
+            ("submission" in value
+              ? value.submission.operationId
+              : value.retry.attemptId)
+        )
+          throw new Error("Wrong operation receipt");
+        return receipt;
+      },
+      async retryFailed(input: RetryFailed) {
+        const value = validate(RetryFailedSchema, input);
+        if (value.operationId === value.attemptId)
+          throw new Error("Retry requires new attempt");
+        const receipt = validate(
+          ReceiptSchema,
+          await service.retryFailed(value, BACKGROUND_CONTEXT),
+        );
+        if (receipt.operationId !== value.attemptId)
+          throw new Error("Wrong operation receipt");
+        return receipt;
+      },
+      async deleteFailed(input: DeleteFailed) {
+        const value = validate(DeleteFailedSchema, input);
+        const result = validate(
+          DeleteFailedResultSchema,
+          await service.deleteFailed(value, BACKGROUND_CONTEXT),
+        );
+        if (
+          result.sessionId !== value.sessionId ||
+          result.operationId !== value.operationId
+        )
+          throw new Error("Wrong deletion acknowledgement");
+        return result;
       },
       async stop(id: string) {
         const v = await service.stop(id, BACKGROUND_CONTEXT);

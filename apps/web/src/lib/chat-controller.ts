@@ -6,6 +6,7 @@ import type {
 } from "@lamplit/contracts";
 import {
   CHAT_PATH,
+  OperationIdSchema,
   validateSubmission,
   UPLOAD_PATH,
   UploadResultSchema,
@@ -22,6 +23,10 @@ import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
 import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
 export type PendingSend = Submission & {
   previews?: readonly { id: string; name: string; previewUrl: string }[];
+  logicalId?: string;
+  retrySource?: string;
+  dispatched?: boolean;
+  localImageCount?: number;
   createdAt: number;
   state: "sending" | "sent" | "failed";
 };
@@ -44,12 +49,16 @@ export class ChatController {
   private connecting = false;
   private connectionGeneration = 0;
   private storageKey = "";
-  private receiptChecks = Promise.resolve();
+  private deadlineTimer?: ReturnType<typeof setTimeout>;
+  private checks = new Set<string>();
+  private finalized = new Set<string>();
+  private originals = new Map<string, readonly CompanionImageDraft[]>();
   private retirements = new Map<
     string,
     (result: PendingSubmissionRetirement) => void
   >();
   private inFlight = new Set<string>();
+  private failedActions = new Map<string, symbol>();
   constructor(
     private changed: () => void,
     private storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
@@ -162,9 +171,12 @@ export class ChatController {
     for (const retire of this.retirements.values())
       retire({ reason: "observed" });
     this.retirements.clear();
+    this.originals.clear();
     this.inFlight.clear();
+    this.failedActions.clear();
     this.relationshipGeneration++;
     clearTimeout(this.timer);
+    clearTimeout(this.deadlineTimer);
     this.client?.close();
     this.socket?.close();
   }
@@ -174,7 +186,7 @@ export class ChatController {
         this.storageKey,
         JSON.stringify(
           this.pending
-            .filter((p) => !p.previews || p.images)
+            .filter((p) => !p.previews || p.images || p.state === "failed")
             .slice(-20)
             .map(({ previews: _previews, ...input }) => input),
         ),
@@ -197,6 +209,11 @@ export class ChatController {
       retire({ reason: "observed" });
     this.retirements.clear();
     this.inFlight.clear();
+    this.failedActions.clear();
+    this.checks.clear();
+    this.finalized.clear();
+    this.originals.clear();
+    clearTimeout(this.deadlineTimer);
     this.recovery = [];
     this.dismissed.clear();
     this.relationshipGeneration++;
@@ -213,20 +230,43 @@ export class ChatController {
       const raw: unknown = JSON.parse(stored);
       if (Array.isArray(raw))
         for (const item of raw.slice(0, 20)) {
-          const input = validateSubmission({
-            operationId: item.operationId,
-            text: item.text,
-            ...(item.images ? { images: item.images } : {}),
-            ...(item.replacementSourceIds
-              ? { replacementSourceIds: item.replacementSourceIds }
-              : {}),
-          });
+          validate(OperationIdSchema, item.operationId);
+          if (
+            typeof item.text !== "string" ||
+            item.text.length > 16000 ||
+            (item.localImageCount &&
+              (!Number.isInteger(item.localImageCount) ||
+                item.localImageCount < 1 ||
+                item.localImageCount > 6))
+          )
+            throw new Error("Invalid pending input");
+          const input =
+            item.localImageCount && !item.dispatched
+              ? { operationId: item.operationId, text: item.text }
+              : validateSubmission({
+                  operationId: item.operationId,
+                  text: item.text,
+                  ...(item.images ? { images: item.images } : {}),
+                  ...(item.replacementSourceIds
+                    ? { replacementSourceIds: item.replacementSourceIds }
+                    : {}),
+                });
           if (
             typeof item.createdAt === "number" &&
             Number.isFinite(item.createdAt)
           )
             this.pending.push({
               ...input,
+              logicalId:
+                typeof item.logicalId === "string"
+                  ? item.logicalId
+                  : input.operationId,
+              retrySource:
+                typeof item.retrySource === "string"
+                  ? item.retrySource
+                  : undefined,
+              dispatched: item.dispatched !== false,
+              localImageCount: item.localImageCount,
               createdAt: item.createdAt,
               // One-time local draft normalization; unknown transport outcomes remain pending.
               state:
@@ -275,6 +315,9 @@ export class ChatController {
     }
     this.save();
     this.changed();
+    for (const id of this.finalized)
+      if (!this.checks.has(id)) this.finalized.delete(id);
+    this.scheduleDeadline();
     if (this.pending.length && this.client)
       void this.reconcile().catch(() => {
         this.error = "部分消息尚未核对，连接恢复后会继续核对。";
@@ -291,24 +334,223 @@ export class ChatController {
       if (!observed.has(p.operationId)) return true;
       this.retirements.get(p.operationId)?.({ reason: "observed" });
       this.retirements.delete(p.operationId);
+      this.originals.delete(p.operationId);
       return false;
     });
   }
-  private reconcile() {
+  recheckPending() {
+    for (const id of this.finalized)
+      if (!this.checks.has(id)) this.finalized.delete(id);
+    void this.reconcile().catch(() => {});
+  }
+  private scheduleDeadline() {
+    clearTimeout(this.deadlineTimer);
+    if (
+      !this.connected ||
+      this.closed ||
+      (typeof navigator !== "undefined" && navigator.onLine === false)
+    )
+      return;
+    const deadlines = this.pending.filter(
+      (p) =>
+        p.state === "sending" &&
+        p.dispatched !== false &&
+        !this.checks.has(p.operationId) &&
+        !this.finalized.has(p.operationId),
+    );
+    if (deadlines.length)
+      this.deadlineTimer = setTimeout(
+        () => void this.reconcile().catch(() => {}),
+        Math.max(
+          0,
+          Math.min(...deadlines.map((p) => p.createdAt + 60000)) - Date.now(),
+        ),
+      );
+  }
+  private async reconcile() {
     const client = this.client,
-      key = this.storageKey;
-    const task = this.receiptChecks.then(async () => {
-      if (!client || this.client !== client || this.storageKey !== key) return;
-      for (const input of this.pending) {
-        if (this.inFlight.has(input.operationId) || input.state !== "sending")
-          continue;
-        const receipt = await client.lookup(input.operationId);
-        if (this.client !== client || this.storageKey !== key) return;
-        if (receipt) this.applyReceipt(receipt);
+      key = this.storageKey,
+      sessionId = this.view?.sessionId;
+    if (
+      !client ||
+      !sessionId ||
+      (typeof navigator !== "undefined" && navigator.onLine === false)
+    )
+      return;
+    await Promise.all(
+      this.pending.map(async (input) => {
+        if (
+          input.state !== "sending" ||
+          input.dispatched === false ||
+          this.checks.has(input.operationId)
+        )
+          return;
+        const expired = Date.now() - input.createdAt >= 60000;
+        if (!expired && this.inFlight.has(input.operationId)) return;
+        this.checks.add(input.operationId);
+        if (expired) this.finalized.add(input.operationId);
+        try {
+          const receipt = expired
+            ? await client.finalizeSubmission(
+                input.retrySource
+                  ? {
+                      sessionId,
+                      retry: {
+                        sessionId,
+                        operationId: input.retrySource,
+                        attemptId: input.operationId,
+                      },
+                    }
+                  : { sessionId, submission: this.submission(input) },
+              )
+            : await client.lookup(input.operationId);
+          if (this.client === client && this.storageKey === key && receipt)
+            this.applyReceipt(receipt);
+        } finally {
+          this.checks.delete(input.operationId);
+          this.scheduleDeadline();
+        }
+      }),
+    );
+    this.scheduleDeadline();
+  }
+  private submission(input: PendingSend): Submission {
+    return {
+      operationId: input.operationId,
+      text: input.text,
+      ...(input.images ? { images: input.images } : {}),
+      ...(input.replacementSourceIds
+        ? { replacementSourceIds: input.replacementSourceIds }
+        : {}),
+    };
+  }
+  async retryFailed(id: string) {
+    const input = this.pending.find(
+      (p) => (p.logicalId ?? p.operationId) === id,
+    );
+    const client = this.client,
+      sessionId = this.view?.sessionId;
+    if (
+      !input ||
+      input.state !== "failed" ||
+      !client ||
+      !sessionId ||
+      this.failedActions.has(input.operationId)
+    )
+      return;
+    const originals = this.originals.get(input.operationId);
+    if (input.dispatched === false) {
+      if (input.localImageCount && !originals) {
+        this.error = "原图片不可用，请删除这条消息后重新选择图片发送。";
+        this.changed();
+        return;
       }
-    });
-    this.receiptChecks = task.catch(() => {});
-    return task;
+      try {
+        await this.send(
+          input.text,
+          this.retirements.get(input.operationId),
+          originals ?? [],
+          input.replacementSourceIds,
+          input,
+        );
+      } catch {
+        this.error = "重试失败，请检查连接和原图片后再试。";
+        this.changed();
+      }
+      return;
+    }
+    const retry = {
+      sessionId,
+      operationId: input.operationId,
+      attemptId: crypto.randomUUID(),
+    };
+    const pending: PendingSend = {
+      ...input,
+      operationId: retry.attemptId,
+      retrySource: input.operationId,
+      logicalId: input.logicalId ?? input.operationId,
+      state: "sending",
+      createdAt: Date.now(),
+      dispatched: true,
+    };
+    this.pending = this.pending.map((p) => (p === input ? pending : p));
+    const retire = this.retirements.get(input.operationId);
+    this.retirements.delete(input.operationId);
+    if (retire) this.retirements.set(pending.operationId, retire);
+    this.originals.delete(input.operationId);
+    if (originals) this.originals.set(pending.operationId, originals);
+    this.inFlight.add(pending.operationId);
+    this.error = "";
+    this.save();
+    this.changed();
+    this.scheduleDeadline();
+    try {
+      const receipt = await client.retryFailed(retry);
+      if (this.view?.sessionId === sessionId && !this.closed)
+        this.applyReceipt(receipt);
+    } catch {
+      if (this.view?.sessionId === sessionId) {
+        this.error = "重试结果尚未确认，连接恢复后会继续核对。";
+        this.changed();
+      }
+    } finally {
+      this.inFlight.delete(pending.operationId);
+    }
+  }
+  async deleteFailed(id: string) {
+    const input = this.pending.find(
+      (p) => (p.logicalId ?? p.operationId) === id,
+    );
+    const client = this.client,
+      sessionId = this.view?.sessionId;
+    if (
+      !input ||
+      input.state !== "failed" ||
+      !client ||
+      !sessionId ||
+      this.failedActions.has(input.operationId)
+    )
+      return;
+    const action = Symbol();
+    this.failedActions.set(input.operationId, action);
+    try {
+      // Preparation never dispatched an immutable submission; it has no native admission to delete.
+      const result =
+        input.dispatched === false
+          ? { deleted: true }
+          : await client.deleteFailed({
+              sessionId,
+              operationId: input.operationId,
+            });
+      if (this.view?.sessionId !== sessionId || this.closed) return;
+      if (!result.deleted) {
+        const receipt = await client.lookup(input.operationId);
+        if (this.view?.sessionId === sessionId) {
+          if (receipt) this.applyReceipt(receipt);
+          if (!receipt || receipt.state === "failed") {
+            this.error = "暂时无法删除，请等待连接恢复后重试。";
+            this.changed();
+          }
+        }
+        return;
+      }
+      if (!this.pending.includes(input) || input.state !== "failed") return;
+      this.pending = this.pending.filter((p) => p !== input);
+      this.retirements.get(input.operationId)?.({ reason: "observed" });
+      this.retirements.delete(input.operationId);
+      this.originals.delete(input.operationId);
+      this.updateRecovery();
+      this.save();
+      this.changed();
+    } catch {
+      if (this.view?.sessionId === sessionId) {
+        this.error = "删除失败，请在连接恢复后重试。";
+        this.changed();
+      }
+    } finally {
+      if (this.failedActions.get(input.operationId) === action)
+        this.failedActions.delete(input.operationId);
+    }
   }
   private disconnected = () => {
     if (this.closed) return;
@@ -357,11 +599,12 @@ export class ChatController {
       }
       this.client = client;
       this.connected = true;
+      this.finalized.clear();
       this.panelRevision++;
       void this.refreshRelationship();
       if (!this.error.includes("整理结果尚未确认")) this.error = "";
       this.changed();
-      await this.reconcile();
+      await this.reconcile().catch(() => {});
     } catch {
       this.disconnected();
     } finally {
@@ -374,29 +617,31 @@ export class ChatController {
     );
     if (!pending) return; // Native observation or a session change already retired it.
     // Durable submission/observation cannot be revoked by a later result.
-    if (pending.state === "sent") return;
-    const retire = this.retirements.get(receipt.operationId);
-    if (receipt.state === "failed" && retire) {
-      this.pending = this.pending.filter((p) => p !== pending);
-      this.retirements.delete(receipt.operationId);
-      retire({ reason: "failed" });
-      this.error = receipt.error || "消息未发送，请编辑后重试。";
-    } else {
-      this.pending = this.pending.map((p) =>
-        p === pending
-          ? { ...p, state: receipt.state === "submitted" ? "sent" : "failed" }
-          : p,
-      );
-      if (receipt.state === "failed")
-        this.error = receipt.error || "消息未发送，请恢复编辑。";
-    }
+    if (
+      pending.state === "sent" ||
+      (pending.state === "failed" && receipt.state === "failed")
+    )
+      return;
+    this.pending = this.pending.map((p) =>
+      p === pending
+        ? { ...p, state: receipt.state === "submitted" ? "sent" : "failed" }
+        : p,
+    );
+    if (receipt.state === "failed")
+      this.error = receipt.error || "发送失败，请重试或删除这条消息。";
     this.updateRecovery();
     this.save();
     this.changed();
   }
   private updateRecovery() {
     this.recovery = (this.view?.recovery ?? []).filter(
-      (r) => !this.dismissed.has(r.sourceId),
+      (r) =>
+        !this.dismissed.has(r.sourceId) &&
+        !this.pending.some(
+          (p) =>
+            (p.state !== "sent" && p.operationId === r.operationId) ||
+            p.retrySource === r.operationId,
+        ),
     );
   }
   dismissRecovery(sourceId: string) {
@@ -459,6 +704,7 @@ export class ChatController {
     retired?: (result: PendingSubmissionRetirement) => void,
     images: readonly CompanionImageDraft[] = [],
     replacementSourceIds: readonly string[] = [],
+    previous?: PendingSend,
   ) {
     if (text === "/compact") {
       if (images.length) throw new Error("compact-with-images");
@@ -471,7 +717,8 @@ export class ChatController {
     const client = this.client,
       sessionId = this.view?.sessionId;
     if (!client || !sessionId) throw new Error("连接已断开");
-    if (this.pending.length >= 20) throw new Error("请先核对尚未确认的消息");
+    if (this.pending.length >= 20 && !previous)
+      throw new Error("请先核对尚未确认的消息");
     const operationId = crypto.randomUUID();
     const current = () =>
       this.client === client &&
@@ -492,6 +739,9 @@ export class ChatController {
     checkReplacement();
     const pending: PendingSend = {
       operationId,
+      logicalId: previous?.logicalId ?? previous?.operationId ?? operationId,
+      dispatched: false,
+      localImageCount: images.length,
       text,
       createdAt: Date.now(),
       state: "sending",
@@ -506,7 +756,12 @@ export class ChatController {
           }
         : {}),
     };
-    this.pending = [...this.pending, pending];
+    this.pending = [...this.pending.filter((p) => p !== previous), pending];
+    if (previous) {
+      this.originals.delete(previous.operationId);
+      this.retirements.delete(previous.operationId);
+    }
+    if (images.length) this.originals.set(operationId, images);
     if (retired) this.retirements.set(operationId, retired);
     this.inFlight.add(operationId);
     this.error = "";
@@ -554,28 +809,29 @@ export class ChatController {
         ...(replacements.length ? { replacementSourceIds: replacements } : {}),
       });
       this.pending = this.pending.map((p) =>
-        p.operationId === operationId ? { ...p, ...input } : p,
+        p.operationId === operationId
+          ? { ...p, ...input, dispatched: true }
+          : p,
       );
       this.save();
       this.changed();
       submitted = true;
+      this.scheduleDeadline();
       const receipt = await client.submit(input);
       if (sameSession()) this.applyReceipt(receipt);
     } catch (error) {
       if (!submitted) {
         if (sameSession()) {
-          this.pending = this.pending.filter(
-            (p) => p.operationId !== operationId,
+          this.pending = this.pending.map((p) =>
+            p.operationId === operationId
+              ? { ...p, state: "failed", dispatched: false }
+              : p,
           );
-          const retire = this.retirements.get(operationId);
-          this.retirements.delete(operationId);
-          retire?.({ reason: "failed" });
           this.error =
             error instanceof Error ? error.message : "消息未发送，请重试。";
           this.updateRecovery();
           this.save();
           this.changed();
-          if (!retire) throw error;
         }
       } else if (sameSession()) {
         // A transport error cannot undo durable admission or native observation.

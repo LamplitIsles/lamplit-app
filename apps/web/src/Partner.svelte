@@ -122,22 +122,21 @@
           ],
         }) as TimelineMessageUnit,
     );
-    for (const p of (chatState?.pending ?? []).filter(
-      (p) => p.state !== "failed",
-    ))
+    for (const p of chatState?.pending ?? [])
       if (!unique.some((m) => m.operationId === p.operationId))
         units.push({
-          id: p.operationId,
+          id: p.logicalId ?? p.operationId,
           side: "outgoing",
           time: p.createdAt,
           pending: p.state === "sending",
+          failed: p.state === "failed",
           pendingLabel:
             p.state === "sending" ? t("delivery.sending") : undefined,
           items: [
             ...(p.previews
               ? p.previews.map((image) => ({
                   id: `${p.operationId}:${image.id}`,
-                  messageKey: p.operationId,
+                  messageKey: p.logicalId ?? p.operationId,
                   kind: "image" as const,
                   side: "outgoing" as const,
                   state: "ready" as const,
@@ -146,18 +145,28 @@
                 }))
               : (p.images ?? []).map((image) => ({
                   id: `${p.operationId}:${image.attachmentId}`,
-                  messageKey: p.operationId,
+                  messageKey: p.logicalId ?? p.operationId,
                   kind: "image" as const,
                   side: "outgoing" as const,
                   state: "ready" as const,
                   attachment: image,
                   alt: image.name,
                 }))),
+            ...(!p.previews && !p.images && p.localImageCount
+              ? Array.from({ length: p.localImageCount }, (_, index) => ({
+                  id: `${p.operationId}:missing:${index}`,
+                  messageKey: p.logicalId ?? p.operationId,
+                  kind: "image" as const,
+                  side: "outgoing" as const,
+                  state: "failed" as const,
+                  alt: t("image.failed"),
+                }))
+              : []),
             ...(p.text
               ? [
                   {
                     id: p.operationId,
-                    messageKey: p.operationId,
+                    messageKey: p.logicalId ?? p.operationId,
                     kind: "text" as const,
                     side: "outgoing" as const,
                     text: p.text,
@@ -195,17 +204,7 @@
           (p) => p.operationId === native.operationId && p.state === "failed",
         )?.operationId,
       };
-    const local = chatState?.pending.find((p) => p.state === "failed");
-    return local
-      ? {
-          sourceId: local.operationId,
-          sourceIds: local.replacementSourceIds ?? [],
-          localPendingKey: local.operationId,
-          text: local.text,
-          images: local.images ?? [],
-          replacementEligible: true,
-        }
-      : undefined;
+    return undefined;
   });
   const actions: CompanionActions = {
     async send(text, images, retire, sources) {
@@ -224,6 +223,8 @@
         throw new CompanionPreControllerError(controller.error);
       }
     },
+    retryFailed: (key) => controller.retryFailed(key),
+    deleteFailed: (key) => controller.deleteFailed(key),
     dismissRecovery: (key) => controller.dismissRecovery(key),
     attachmentUrl: async (attachment) => {
       const ref = attachment as ImageRef;
@@ -283,9 +284,16 @@
     );
     revision += 1;
     controller.start();
+    const recheck = () => {
+      if (!document.hidden) controller.recheckPending();
+    };
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("online", recheck);
     return () => {
       media.removeEventListener("change", updateScheme);
       abort.abort();
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("online", recheck);
       notifications.close();
       controller.close();
     };

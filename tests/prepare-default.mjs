@@ -9,22 +9,25 @@ import {
 import { resolve, join, relative, dirname } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const fastVoice = process.argv.includes("--fast-voice-start");
+const failedActions = process.argv.includes("--failed-message-actions");
+const fastVoice = failedActions || process.argv.includes("--fast-voice-start");
 const reading = fastVoice || process.argv.includes("--mobile-reading-layout");
 const matrix = reading || process.argv.includes("--matrix-source-ui");
 const thinking = matrix || process.argv.includes("--collapsed-thinking");
 const appHead = await command(["git", "rev-parse", "HEAD"]);
 const output = join(
   root,
-  fastVoice
-    ? `.scratch/fast-voice-start/candidate-${appHead}`
-    : reading
-      ? `.scratch/mobile-reading-layout/candidate-${appHead}`
-      : matrix
-        ? ".scratch/matrix-source-ui/candidate"
-        : thinking
-          ? ".scratch/collapsed-thinking/candidate"
-          : ".scratch/native-durable-submissions/candidate",
+  failedActions
+    ? `.scratch/failed-message-actions/candidate-${appHead}`
+    : fastVoice
+      ? `.scratch/fast-voice-start/candidate-${appHead}`
+      : reading
+        ? `.scratch/mobile-reading-layout/candidate-${appHead}`
+        : matrix
+          ? ".scratch/matrix-source-ui/candidate"
+          : thinking
+            ? ".scratch/collapsed-thinking/candidate"
+            : ".scratch/native-durable-submissions/candidate",
 );
 if (await Bun.file(join(output, "identity.json")).exists())
   throw new Error("Candidate exists; preserve its identity for Owner review");
@@ -201,15 +204,17 @@ for (const [name, directory] of [
   };
 }
 await writeFile(join(stage, "SOURCE_HEAD"), appHead + "\n");
-const archive = fastVoice
-  ? "lamplit-fast-voice-start.tgz"
-  : reading
-    ? "lamplit-mobile-reading-layout.tgz"
-    : matrix
-      ? "lamplit-matrix-source-ui.tgz"
-      : thinking
-        ? "lamplit-collapsed-thinking.tgz"
-        : "lamplit-native-durable-submissions.tgz";
+const archive = failedActions
+  ? "lamplit-failed-message-actions.tgz"
+  : fastVoice
+    ? "lamplit-fast-voice-start.tgz"
+    : reading
+      ? "lamplit-mobile-reading-layout.tgz"
+      : matrix
+        ? "lamplit-matrix-source-ui.tgz"
+        : thinking
+          ? "lamplit-collapsed-thinking.tgz"
+          : "lamplit-native-durable-submissions.tgz";
 await command(["tar", "-czf", join(output, archive), "."], stage);
 const thinkingRunnerSHA256 = thinking
   ? await hash(join(acceptance, "thinking-browser.mjs"))
@@ -225,26 +230,30 @@ const voiceRunnerSHA256 = fastVoice
   : undefined;
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: fastVoice
-    ? 3734
-    : reading
-      ? 3687
-      : matrix
-        ? 3560
-        : thinking
-          ? 3522
-          : 3435,
+  spec: failedActions
+    ? 3936
+    : fastVoice
+      ? 3734
+      : reading
+        ? 3687
+        : matrix
+          ? 3560
+          : thinking
+            ? 3522
+            : 3435,
   appHead,
   sourceTree: await command(["git", "rev-parse", "HEAD^{tree}"]),
-  baseline: fastVoice
-    ? "6c7c479cbccc0a679939f8c1b4044417b97be56b"
-    : reading
-      ? "e535143b428b70129e2804cb6d191e53a26e26d4"
-      : matrix
-        ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
-        : thinking
-          ? "407aaf72979e0c05442697c6aaa758da845d88e0"
-          : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
+  baseline: failedActions
+    ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
+    : fastVoice
+      ? "6c7c479cbccc0a679939f8c1b4044417b97be56b"
+      : reading
+        ? "e535143b428b70129e2804cb6d191e53a26e26d4"
+        : matrix
+          ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
+          : thinking
+            ? "407aaf72979e0c05442697c6aaa758da845d88e0"
+            : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),

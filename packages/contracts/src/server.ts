@@ -20,6 +20,14 @@ import {
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
+  FinalizeSubmissionSchema,
+  RetryFailedSchema,
+  DeleteFailedSchema,
+  DeleteFailedResultSchema,
+  type FinalizeSubmission,
+  type RetryFailed,
+  type DeleteFailed,
+  type DeleteFailedResult,
   Chat,
   ViewSchema,
   PageSchema,
@@ -49,6 +57,9 @@ export interface ChatBackend extends PanelBackend, SearchBackend {
   history(before: string): Promise<HistoryPage>;
   submit(input: Submission): Promise<Receipt>;
   lookup(operationId: string): Promise<Receipt | null>;
+  finalizeSubmission(input: FinalizeSubmission): Promise<Receipt | null>;
+  retryFailed(input: RetryFailed): Promise<Receipt>;
+  deleteFailed(input: DeleteFailed): Promise<DeleteFailedResult>;
   stop(turnId: string): Promise<{ stopped: boolean }>;
   subscribe(changed: () => void): () => void;
 }
@@ -163,6 +174,59 @@ export async function createChatHost(
         throw new Error("Wrong operation receipt");
       return receipt;
     },
+    async finalizeSubmission(input) {
+      const value = validate(FinalizeSubmissionSchema, input);
+      if ("submission" in value) validateSubmission(value.submission);
+      else if (value.retry.sessionId !== value.sessionId)
+        throw new Error("Wrong retry session");
+      await refresh();
+      if (value.sessionId !== view.value.sessionId)
+        throw new Error("Wrong session");
+      const receipt = validate(
+        LookupSchema,
+        await backend.finalizeSubmission(value),
+      );
+      if (
+        receipt &&
+        receipt.operationId !==
+          ("submission" in value
+            ? value.submission.operationId
+            : value.retry.attemptId)
+      )
+        throw new Error("Wrong operation receipt");
+      await refresh();
+      return receipt;
+    },
+    async retryFailed(input) {
+      const value = validate(RetryFailedSchema, input);
+      if (value.attemptId === value.operationId)
+        throw new Error("Retry requires new attempt");
+      await refresh();
+      if (value.sessionId !== view.value.sessionId)
+        throw new Error("Wrong session");
+      const receipt = validate(ReceiptSchema, await backend.retryFailed(value));
+      if (receipt.operationId !== value.attemptId)
+        throw new Error("Wrong operation receipt");
+      await refresh();
+      return receipt;
+    },
+    async deleteFailed(input) {
+      const value = validate(DeleteFailedSchema, input);
+      await refresh();
+      if (value.sessionId !== view.value.sessionId)
+        throw new Error("Wrong session");
+      const result = validate(
+        DeleteFailedResultSchema,
+        await backend.deleteFailed(value),
+      );
+      if (
+        result.sessionId !== value.sessionId ||
+        result.operationId !== value.operationId
+      )
+        throw new Error("Wrong deletion acknowledgement");
+      await refresh();
+      return result;
+    },
     async stop(id: string) {
       const result = await backend.stop(validateId(id));
       await refresh();
@@ -272,6 +336,9 @@ export async function createChatHost(
               "history",
               "submit",
               "lookup",
+              "finalizeSubmission",
+              "retryFailed",
+              "deleteFailed",
               "stop",
               "compact",
               "search",

@@ -89,15 +89,27 @@ try {
     const errors = [];
     const albumMetadata = [];
     const uploads = [];
-    page.on("websocket", (socket) =>
+    const historyPages = [],
+      historyRequests = new Map();
+    page.on("websocket", (socket) => {
+      socket.on("framesent", ({ payload }) => {
+        const frame = JSON.parse(String(payload));
+        if (frame.type === "call" && frame.call?.member === "history")
+          historyRequests.set(frame.id, frame.call.args[0]);
+      });
       socket.on("framereceived", ({ payload }) => {
-        try {
-          const frame = JSON.parse(String(payload));
-          if (frame.type === "result" && Array.isArray(frame.result?.images))
-            albumMetadata.push(...frame.result.images);
-        } catch {}
-      }),
-    );
+        const frame = JSON.parse(String(payload));
+        if (frame.type === "result" && Array.isArray(frame.result?.images))
+          albumMetadata.push(...frame.result.images);
+        if (frame.type === "result" && historyRequests.has(frame.id)) {
+          historyPages.push({
+            requestedBefore: historyRequests.get(frame.id),
+            ...frame.result,
+          });
+          historyRequests.delete(frame.id);
+        }
+      });
+    });
     page.on("pageerror", (error) => errors.push(String(error)));
     page.on("request", (request) => {
       if (
@@ -312,11 +324,55 @@ try {
     await control({ action: "history" });
     await page.reload();
 
-    // Existing Companion uses a link for older messages.
-    await page
-      .getByRole("button", { name: "查看更早的消息", exact: true })
-      .click();
-    await expect(page.locator('img[alt="pasted.png"]')).toBeVisible();
+    const originalImage = page.locator('img[alt="pasted.png"]');
+    const olderButton = page.getByRole("button", {
+      name: "查看更早的消息",
+      exact: true,
+    });
+    const cursors = new Set();
+    for (
+      let read = 0;
+      read < 40 && !(await originalImage.isVisible());
+      read++
+    ) {
+      const count = historyPages.length;
+      await olderButton.click();
+      await expect.poll(() => historyPages.length).toBe(count + 1);
+      const pageResult = historyPages.at(-1);
+      expect(cursors.has(pageResult.requestedBefore)).toBe(false);
+      if (count)
+        expect(pageResult.requestedBefore).toBe(historyPages[count - 1].before);
+      expect(pageResult.before).not.toBe(pageResult.requestedBefore);
+      cursors.add(pageResult.requestedBefore);
+      // A raw RPC result can precede the controller's rendered history update.
+      if (pageResult.before === null) {
+        await expect(olderButton).toHaveCount(0);
+        await expect(originalImage).toBeVisible();
+      } else await expect(olderButton).toBeEnabled();
+    }
+    await expect(originalImage).toBeVisible();
+    await expect(originalImage).toHaveCount(1);
+    const historyMessages = historyPages.flatMap((p) => p.messages);
+    expect(new Set(historyMessages.map((m) => m.id)).size).toBe(
+      historyMessages.length,
+    );
+    const originalMessage = historyMessages.filter(
+      (m) => m.operationId === first.operationId,
+    );
+    expect(originalMessage).toHaveLength(1);
+    expect(originalMessage[0].text).toBe(first.text);
+    expect(originalMessage[0].images).toEqual(first.images);
+    const second = historyMessages.find(
+      (m) => m.operationId === state.submissions[1].operationId,
+    );
+    expect(second.text).toBe("图片与文字");
+    await expect(page.getByText("图片与文字", { exact: true })).toHaveCount(1);
+    const originalBytes = await context.request.get(
+      new URL(`/api/chat/media/${first.images[0].attachmentId}/original`, url)
+        .href,
+    );
+    expect(originalBytes.ok()).toBe(true);
+    expect((await originalBytes.body()).toString("base64")).toBe(image);
     // Pre-admission failure retains the File and editable text; no execution.
     await control({ action: "uploadFailure", enabled: true });
     await input.fill("上传失败保留");
@@ -324,8 +380,14 @@ try {
     const beforeFailure = (await control({ action: "state" })).submissions
       .length;
     await send.click();
-    await expect(input).toHaveValue("上传失败保留");
-    await expect(drafts).toHaveCount(1);
+    await expect(input).toHaveValue("");
+    await expect(drafts).toHaveCount(0);
+    await expect(
+      page
+        .locator(".message-sent")
+        .filter({ hasText: "上传失败保留" })
+        .getByTestId(/failed-/),
+    ).toBeVisible();
     expect((await control({ action: "state" })).submissions.length).toBe(
       beforeFailure,
     );
@@ -335,7 +397,15 @@ try {
     });
     await control({ action: "uploadFailure", enabled: false });
     await control({ action: "mode", state: "withdrawn" });
-    await send.click();
+    await page
+      .locator(".message-sent")
+      .filter({ hasText: "上传失败保留" })
+      .getByTestId(/failed-/)
+      .click();
+    await page
+      .locator(".companion-action-menu")
+      .getByRole("button", { name: "重试", exact: true })
+      .click();
     await expect(input).toHaveValue("");
     await expect(recovery).toBeVisible();
     await input.fill("当前编辑");
@@ -403,10 +473,37 @@ try {
       await control({ action: "nativeRecovery" });
       await control({ action: "nativeRecovery" });
       const sources = (await control({ action: "state" })).recovery;
-      await expect(recovery).toBeVisible();
+      const restoredSource = sources[0];
+      const nextSource = sources.find(
+        (source) => source.sourceId !== restoredSource.sourceId,
+      );
+      expect(nextSource).toBeDefined();
+      const assertOriginal = async (source) => {
+        await expect(input).toHaveValue(source.text);
+        await expect(drafts).toHaveCount(1);
+        const original = await context.request.get(
+          new URL(
+            `/api/chat/media/${source.images[0].attachmentId}/original`,
+            url,
+          ).href,
+        );
+        expect(original.ok()).toBe(true);
+        const restored = await drafts
+          .first()
+          .evaluate(async (image) =>
+            Array.from(
+              new Uint8Array(await (await fetch(image.src)).arrayBuffer()),
+            ),
+          );
+        expect(Buffer.from(restored)).toEqual(await original.body());
+      };
+      // The control acknowledgement is not delivery of its recovery view to the browser.
+      await expect(recovery.locator("img")).toHaveAttribute(
+        "src",
+        new RegExp(restoredSource.images[0].attachmentId),
+      );
       await restore.click();
-      await expect(input).toHaveValue("原生恢复输入");
-      await expect(drafts).toHaveCount(1);
+      await assertOriginal(restoredSource);
       if (discard)
         await page
           .getByRole("button", { name: "丢弃恢复的输入", exact: true })
@@ -421,10 +518,10 @@ try {
       await expect(recovery).toBeVisible();
       await expect(recovery.locator("img")).toHaveAttribute(
         "src",
-        new RegExp(sources[1].images[0].attachmentId),
+        new RegExp(nextSource.images[0].attachmentId),
       );
       await restore.click();
-      await expect(input).toHaveValue("原生恢复输入");
+      await assertOriginal(nextSource);
       await page.screenshot({
         path: `${evidence}/recovery-${discard ? "discard" : "clear"}-next-${width}.png`,
         fullPage: true,
@@ -462,11 +559,16 @@ try {
     await send.click();
     await expect(input).toHaveValue("");
     releaseUpload();
-    await expect(input).toHaveValue("较早上传失败");
-    await expect(drafts).toHaveCount(1);
+    await expect(input).toHaveValue("");
+    await expect(drafts).toHaveCount(0);
+    await expect(
+      page
+        .locator(".message-sent")
+        .filter({ hasText: "较早上传失败" })
+        .getByTestId(/failed-/),
+    ).toBeVisible();
     await page.unrouteAll({ behavior: "wait" });
     await control({ action: "uploadFailure", enabled: false });
-    await remove.click();
     await input.fill("");
     // Native-origin recovery rehydrates on refresh; missing media requires explicit removal.
     await control({ action: "nativeRecovery" });
@@ -491,8 +593,14 @@ try {
     await control({ action: "mode", state: "failed" });
     await input.fill("拒绝输入");
     await send.click();
-    await expect(input).toHaveValue("拒绝输入");
-    await expect(restore).toBeDisabled();
+    await expect(input).toHaveValue("");
+    await expect(
+      page
+        .locator(".message-sent")
+        .filter({ hasText: "拒绝输入" })
+        .getByTestId(/failed-/),
+    ).toBeVisible();
+    await expect(recovery).toHaveCount(0);
     await input.fill("");
     await control({ action: "consume" });
     await page.reload();

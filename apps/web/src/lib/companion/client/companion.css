@@ -1069,3 +1069,15 @@
   outline: 2px solid currentColor;
   outline-offset: -2px;
 }
+
+.companion-failed-action {
+  background: none;
+  border: 0;
+  color: var(--f7-text-color);
+  opacity: 0.65;
+  cursor: pointer;
+  min-height: 32px;
+}
+.companion-failed-action:focus-visible {
+  outline: 2px solid var(--f7-theme-color);
+}

@@ -29,6 +29,8 @@ export function imagesFixture() {
   const media = new Map<string, ImageUpload["images"][number]>();
   const submissions = new Map<string, Submission>();
   const receipts = new Map<string, Receipt>();
+  const deleted = new Set<string>();
+  const retries = new Map<string, string>();
   const messages: ChatMessage[] = [];
   let recovery: InputRecovery[] = [],
     active: string | null = null,
@@ -117,8 +119,8 @@ export function imagesFixture() {
         activeTurnId: active,
         contextUsage: { tokens: null, capacity: null },
         compaction: null,
-        messages: messages.slice(-30),
-        before: messages.length > 30 ? messages.at(-30)!.id : null,
+        messages: messages.slice(-15),
+        before: messages.length > 15 ? messages.at(-15)!.id : null,
         capabilities: {
           ...capabilities,
           images: disabled ? false : imageLimits,
@@ -133,8 +135,8 @@ export function imagesFixture() {
       const end = messages.findIndex((m) => m.id === before);
       if (end < 0) throw new Error("Invalid cursor");
       return {
-        messages: messages.slice(Math.max(0, end - 30), end),
-        before: end > 30 ? messages[end - 30]!.id : null,
+        messages: messages.slice(Math.max(0, end - 15), end),
+        before: end > 15 ? messages[end - 15]!.id : null,
       };
     },
     async submit(input) {
@@ -200,6 +202,138 @@ export function imagesFixture() {
       changed();
       return receipt;
     },
+    async finalizeSubmission(input) {
+      const { sessionId } = input;
+      if ("retry" in input) {
+        const { operationId, attemptId } = input.retry;
+        if (
+          sessionId !== "fixture-session" ||
+          input.retry.sessionId !== sessionId
+        )
+          throw new Error("Wrong session");
+        const source = retries.get(attemptId);
+        if (source && source !== operationId)
+          throw new Error("Retry identity conflict");
+        if (source) return backend.lookup(attemptId);
+        if (
+          deleted.has(operationId) ||
+          receipts.get(operationId)?.state !== "failed" ||
+          submissions.has(attemptId)
+        )
+          return null;
+        retries.set(attemptId, operationId);
+        recovery = recovery.filter((r) => r.operationId !== operationId);
+        return backend.finalizeSubmission({
+          sessionId,
+          submission: {
+            ...submissions.get(operationId)!,
+            operationId: attemptId,
+          },
+        });
+      }
+      const { submission } = input;
+      if (sessionId !== "fixture-session") throw new Error("Wrong session");
+      const old = submissions.get(submission.operationId);
+      if (old && JSON.stringify(old) !== JSON.stringify(submission))
+        throw new Error("Identity conflict");
+      const receipt = receipts.get(submission.operationId);
+      if (receipt) return receipt;
+      // No await between checking native admission and durable rejection in this owned fake.
+      submissions.set(submission.operationId, structuredClone(submission));
+      const failed: Receipt = {
+        operationId: submission.operationId,
+        state: "failed",
+        messageId: null,
+        turnId: null,
+        error: "消息未被接收",
+      };
+      receipts.set(submission.operationId, failed);
+      recovery.push({
+        sourceId: submission.operationId,
+        operationId: submission.operationId,
+        text: submission.text,
+        images: submission.images ?? [],
+        replacementEligible: true,
+      });
+      changed();
+      return failed;
+    },
+    async retryFailed({ sessionId, operationId, attemptId }) {
+      if (sessionId !== "fixture-session" || operationId === attemptId)
+        throw new Error("Invalid retry");
+      const priorSource = retries.get(attemptId);
+      if (priorSource) {
+        if (priorSource !== operationId)
+          throw new Error("Retry identity conflict");
+        return receipts.get(attemptId)!;
+      }
+      if (
+        deleted.has(operationId) ||
+        receipts.get(operationId)?.state !== "failed"
+      )
+        throw new Error("Not a failed submission");
+      if (submissions.has(attemptId)) throw new Error("Attempt already exists");
+      const source = submissions.get(operationId)!;
+      const originals = (source.images ?? []).map((ref) =>
+        media.get(ref.attachmentId),
+      );
+      if (originals.some((image) => !image)) {
+        retries.set(attemptId, operationId);
+        submissions.set(attemptId, { ...source, operationId: attemptId });
+        const failed: Receipt = {
+          operationId: attemptId,
+          state: "failed",
+          messageId: null,
+          turnId: null,
+          error: "原图片不可用，请删除这条消息后重新选择图片发送。",
+        };
+        receipts.set(attemptId, failed);
+        recovery = recovery.filter((r) => r.operationId !== operationId);
+        changed();
+        return failed;
+      }
+      let images: ImageRef[] | undefined;
+      if (originals.length) {
+        // Reassociate exact stored bytes with the new attempt under the existing owner/session.
+        const input: ImageUpload = {
+          sessionId,
+          operationId: attemptId,
+          images: structuredClone(originals) as ImageUpload["images"],
+        };
+        images = originals.map((image) => {
+          const attachmentId = crypto.randomUUID();
+          media.set(attachmentId, structuredClone(image!));
+          return {
+            attachmentId,
+            name: image!.name,
+            mediaType: image!.mediaType,
+            availability: "available" as const,
+          };
+        });
+        uploads.set(attemptId, { input, refs: images });
+      }
+      retries.set(attemptId, operationId);
+      recovery = recovery.filter((r) => r.operationId !== operationId);
+      const receipt = await backend.submit({
+        ...source,
+        operationId: attemptId,
+        ...(images ? { images } : {}),
+      });
+      changed();
+      return receipt;
+    },
+    async deleteFailed({ sessionId, operationId }) {
+      if (sessionId !== "fixture-session") throw new Error("Wrong session");
+      if (
+        !deleted.has(operationId) &&
+        receipts.get(operationId)?.state !== "failed"
+      )
+        return { sessionId, operationId, deleted: false };
+      deleted.add(operationId);
+      recovery = recovery.filter((r) => r.operationId !== operationId);
+      changed();
+      return { sessionId, operationId, deleted: true };
+    },
     async lookup(id) {
       return receipts.get(id) ?? null;
     },
@@ -229,6 +363,8 @@ export function imagesFixture() {
         media.clear();
         submissions.clear();
         receipts.clear();
+        deleted.clear();
+        retries.clear();
         messages.length = 0;
         recovery = [];
         executions = 0;

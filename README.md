@@ -10,7 +10,7 @@ The app supports main-session text history, sending and steering,
 completed-message delivery, targeted stop, and reconnect reconciliation. Online
 sends appear immediately as normal outgoing bubbles, including images before
 upload finishes. Success is silent; offline text/images stay editable. Confirmed
-nonadmission returns failed content alongside newer edits. Lost replies keep the
+nonadmission retains a failed bubble with direct Retry and confirmed Delete. Lost replies keep the
 optimistic message while its exact operation is looked up, without automatic replay. Agent
 messages appear when each message is complete, as in an IM app. Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
@@ -125,12 +125,14 @@ field definitions, limits and native integration requirements.
 
 Choose or paste supported images, preview/remove them, and send alone or with text.
 The connected host advertises its limits: Pi up to six / 8 MB each / 24 MB originals
-per operation; CFL five / 5 MiB / 20 MiB. Failed upload restores editable selections alongside newer drafts.
+per operation; CFL five / 5 MiB / 20 MiB. Failed upload retains its bubble and page-owned originals for direct retry.
 Submitted input recovery offers explicit inspection/restoration without replacing
 current edits. Missing originals require explicit removal. Null lookup or disconnection
 keeps the original pending bubble without recovery or automatic replay. Receipts are
-submitted/failed; reply failure and stopping remain independent. Unsent drafts are not
-saved across reload. The v2 service requires a matching frontend after update.
+submitted/failed; reply failure and stopping remain independent. Failed submissions never restore or replace newer Composer drafts. After 60 seconds,
+dispatched inputs request authoritative fenced finalization while connected; null or
+unreachable results remain sending. Failed deletion persists after acknowledgement
+and has no undo. Unsent drafts and pre-upload originals are not saved across reload. The v2 service requires a matching frontend after update.
 
 See [image protocol](docs/image-send-recovery.md) and [v2 submission handoff](docs/native-durable-submissions.md).
 

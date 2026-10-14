@@ -33,6 +33,8 @@ export interface CompanionActions {
     onRetire?: (retirement: PendingSubmissionRetirement) => void,
     replacementSourceIds?: readonly string[],
   ) => Promise<void>;
+  retryFailed?: (key: string) => Promise<void>;
+  deleteFailed?: (key: string) => Promise<void>;
   dismissRecovery?: (key: string) => void;
   readPanel?: <K extends keyof PanelBackend>(
     method: K,

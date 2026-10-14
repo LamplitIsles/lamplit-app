@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CircleAlert from "lucide-svelte/icons/circle-alert";
   import RefreshCw from "lucide-svelte/icons/refresh-cw";
   import { visibleViewport, followTimelineResize } from "./viewport.js";
   import { MAX_MESSAGE_LENGTH } from "../../message-input.ts";
@@ -103,7 +104,6 @@
     CompanionRecoveredDraft,
     CompanionHistoryView,
   } from "./companion-bridge.js";
-  import type { PendingSubmissionRetirement } from "./contracts.js";
   import { CompanionPreControllerError } from "./admission.js";
   import {
     createComposerState,
@@ -681,35 +681,6 @@
     return "empty";
   }
 
-  function retireSubmission(
-    images: readonly CompanionImageDraft[],
-    retirement: PendingSubmissionRetirement,
-    restoreText: string,
-    originSessionId: string | undefined,
-  ): void {
-    if (retirement.reason === "observed") {
-      releaseSubmissionImages(images);
-      return;
-    }
-    if (sessionId === originSessionId && sessionId === imageDraftSessionId) {
-      composer = {
-        ...composer,
-        draft:
-          restoreText && composer.draft
-            ? `${restoreText}\n${composer.draft}`
-            : restoreText || composer.draft,
-        composing: false,
-      };
-      imageDrafts = [...imageDrafts, ...images];
-      void scheduleComposerResize();
-      liveAnnouncement = { key: "error.restored" };
-      return;
-    }
-    // A rejection from a Session that is no longer selected cannot be
-    // restored into the current composer; release its page-owned previews.
-    releaseSubmissionImages(images);
-  }
-
   function clearWaitingTimers(): void {
     if (waitingDelayTimer !== undefined) clearTimeout(waitingDelayTimer);
     if (waitingRotationTimer !== undefined) clearInterval(waitingRotationTimer);
@@ -1165,18 +1136,7 @@
     returnToLatest();
     void tick().then(returnToLatest);
     void scheduleComposerResize();
-    const onRetire = (retirement: PendingSubmissionRetirement): void => {
-      if (retirement.reason === "failed" && sessionId === originSessionId)
-        replacementSourceIds = [
-          ...new Set([...replacementSourceIds, ...sources]),
-        ];
-      retireSubmission(
-        submittedDrafts,
-        retirement,
-        restoreText,
-        originSessionId,
-      );
-    };
+    const onRetire = (): void => releaseSubmissionImages(submittedDrafts);
     void Promise.resolve()
       .then(() => actions.send(text, submittedDrafts, onRetire, sources))
       .catch((error: unknown) => {
@@ -1668,6 +1628,7 @@
     });
   }
   function showTextMenu(item: TimelineText, target: HTMLElement): void {
+    if (showFailedMenu(item.messageKey, target)) return;
     if (item.pending || !item.text.trim()) return;
     messageMenu(
       target,
@@ -1675,12 +1636,55 @@
       t("actions.cancel"),
     );
   }
+  function showFailedMenu(key: string, target: HTMLElement): boolean {
+    const unit = projection.messageUnits.find((u) => u.id === key);
+    if (!unit?.failed) return false;
+    const text = unit.items.find(
+      (item): item is TimelineText => item.kind === "text",
+    );
+    messageMenu(
+      target,
+      [
+        ...(text
+          ? [{ text: t("messages.copy"), run: () => copyMessage(text) }]
+          : []),
+        {
+          text: t("messages.retryFailed"),
+          run: () => actions.retryFailed?.(key),
+        },
+        {
+          text: t("messages.deleteFailed"),
+          run: () => {
+            messageMenu(
+              target,
+              [
+                {
+                  text: t("messages.deleteFailed"),
+                  run: () => actions.deleteFailed?.(key),
+                },
+              ],
+              t("actions.cancel"),
+              t("messages.deleteFailedConfirm"),
+            );
+          },
+        },
+      ],
+      t("actions.cancel"),
+    );
+    return true;
+  }
   function showToast(text: string): void {
     const toast = f7.toast.create({ text, closeTimeout: 2500 });
     toast.on("closed", () => toast.destroy());
     toast.open();
   }
-  function showImageMenu(url: string, name: string, target: HTMLElement): void {
+  function showImageMenu(
+    url: string,
+    name: string,
+    target: HTMLElement,
+    key?: string,
+  ): void {
+    if (key && showFailedMenu(key, target)) return;
     if (!url) return;
     const generation = imageSessionGeneration;
     messageMenu(
@@ -2504,9 +2508,17 @@
                             {#if partIndex === 0 && unit.thinking}<Thinking
                                 text={unit.thinking}
                               />{/if}
+                            <!-- svelte-ignore a11y_no_noninteractive_tabindex (failed image content provides keyboard context-menu access without a nested button) -->
                             <div
                               class="companion-image-bubble companion-image-group"
                               data-testid={`image-group-${unit.id}`}
+                              tabindex={unit.failed ? 0 : -1}
+                              use:longPress={{
+                                run: (node) => {
+                                  if (unit.failed)
+                                    showFailedMenu(unit.id, node);
+                                },
+                              }}
                             >
                               {#each part.items as image (image.id)}
                                 <div
@@ -2548,6 +2560,7 @@
                                                 "",
                                               image.alt || t("image.preview"),
                                               node,
+                                              unit.id,
                                             ),
                                         }}
                                         ><img
@@ -2717,6 +2730,15 @@
                               datetime={messageTimeDateTime(unit.time)}
                               data-testid={`message-time-${unit.id}`}
                               >{formatMessageTime(unit.time)}</time
+                            >{/if}
+                          {#if unit.failed && partIndex === parts.length - 1}<button
+                              class="companion-meta companion-failed-action"
+                              aria-label={t("messages.failedActions")}
+                              data-testid={`failed-${unit.id}`}
+                              on:click={(event) =>
+                                showFailedMenu(unit.id, event.currentTarget)}
+                              ><CircleAlert size={12} aria-hidden="true" />
+                              {t("delivery.failed")}</button
                             >{/if}
                           {#if unit.pendingLabel}<div
                               class="companion-meta"

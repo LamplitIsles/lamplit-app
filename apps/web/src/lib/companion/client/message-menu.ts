@@ -13,6 +13,7 @@ export function messageMenu(
   target: HTMLElement,
   actions: { text: string; run(): void | Promise<void> }[],
   cancelLabel: string,
+  confirmation?: string,
 ) {
   closeCurrent?.();
   document.getSelection()?.removeAllRanges();
@@ -24,6 +25,7 @@ export function messageMenu(
     targetEl: target,
     closeOnEscape: true,
     buttons: [
+      ...(confirmation ? [{ text: confirmation, label: true }] : []),
       ...actions.map((action) => ({
         text: action.text,
         onClick: () => {
@@ -39,7 +41,7 @@ export function messageMenu(
         root.setAttribute("aria-modal", "true");
         root.setAttribute(
           "aria-label",
-          actions.map((action) => action.text).join(", "),
+          confirmation ?? actions.map((action) => action.text).join(", "),
         );
         const buttons = [
           ...root.querySelectorAll<HTMLElement>(".list-button, .item-link"),

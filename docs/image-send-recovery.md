@@ -89,24 +89,28 @@ the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
 Online send immediately shows normal-color text and local image previews while
 the composer clears, before preparation/upload; no sending/receipt/consumption
 labels or success toast appear. Offline clicks keep editable text/images.
-Preparation/upload failure or definite submission rejection withdraws the echo and
-merges text/Files with newer drafts in the originating session. Generic RPC errors,
+Preparation/upload failure or definite submission rejection retains a failed bubble.
+Retry sends original text/images directly; Delete requires confirmation. Neither
+action changes the Composer, newer images, selection or voice take. Generic RPC errors,
 disconnection and null lookup retain the bubble without showing recovery. A
 submitted receipt marks local input sent until observation merges it by operation ID.
 Reply failure and stopping remain notices and never restore the Composer.
 Explicit native withdrawal before processing offers human recovery separately,
 using its own source ID, while the submitted receipt remains successful.
 
-Page-owned previews live until observation/definite failure and never enter storage.
+Page-owned previews/originals live until observation or confirmed deletion and never enter storage.
 Reference-only pending metadata is saved after upload; storage failure is visible.
 Before upload finishes, Files remain page-owned and cannot survive reload. Unsent
-Composer drafts likewise remain page-owned. Reloaded definite failures restore
-through authorized originals without overwriting current drafts. Pending unknown
-inputs only look up the original operation ID; edited recovery uses a new ID and
-verified replacement source IDs. Restored local pending records retire separately
+Composer drafts likewise remain page-owned. Reloaded dispatched failures retry through native-owned originals, reassociated
+under the new attempt and existing owner/session guard. Missing originals block retry
+without partial send, with a human error and Delete still available. Pending unknown inputs reconcile the same identity and, after 60 seconds, request
+fenced finalization only for dispatched complete payloads. Pre-upload local failures
+can retry their retained page-owned Files; reload cannot preserve those originals
+and must block image retry rather than silently drop images. Independent withdrawn
+input recovery uses a new ID and verified replacement source IDs. Restored local pending records retire separately
 from native replacement sources.
 
-Recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
+Independent withdrawn-input recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
 current text/images are present; it cannot overwrite new edits. Original bytes are
 rehydrated over authorized HTTP. Missing originals leave editable text and block
 send until the user explicitly removes missing images or selects replacements.
@@ -201,8 +205,7 @@ restore-to-edit and send cannot overlap an active native selection. Session
 changes (including A → B → A) and component disposal invalidate pending results
 and errors; no stale result can enter a later composer. Existing submission and
 recovery ownership continue to apply. `NotReadableError` during preparation
-shows an actionable retry/reselect message and uses existing pre-admission
-restoration; no automatic retry is introduced.
+shows an actionable retry/reselect message and uses existing pre-admission failed bubble and direct retry; no automatic retry is introduced.
 
 The 2026-10-06 Pixel evidence reproduced a 248,633-byte PNG File read failure
 three times, with preview-Blob `ERR_UPLOAD_FILE_CHANGED`, while the same selected
@@ -231,8 +234,7 @@ returned bytes/MIME, unsupported formats, failed reads, and atomic current limit
 After `bun run build`, `bun tests/native-gallery-browser.mjs` drives the real
 composer and mocked native plugin with owned 1080×2400 PNG responses. It checks
 ordered exact returned bytes through upload, remaining/full limits, cancellation,
-no fallback on failure, busy controls during held reads, pre-admission read-error
-restoration, native recovery, and stale session results. These fixtures prove the
+no fallback on failure, busy controls during held reads, pre-admission read-error failed bubble/direct retry, native recovery, and stale session results. These fixtures prove the
 JavaScript boundary preserves plugin-returned bytes; they do not prove source
 file identity inside the native plugin. Existing `bun run test:images-browser`
 checks the web input, Framework7 sizes, submission and recovery at 390/1280/320.

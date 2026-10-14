@@ -59,7 +59,7 @@ const controlUrl =
   new URL("/__test/submissions", url).href;
 const evidence =
   process.env.APP_ACCEPTANCE_EVIDENCE ??
-  ".scratch/native-durable-submissions/browser";
+  ".scratch/failed-message-actions/browser";
 await mkdir(evidence, { recursive: true });
 const browser = await chromium.launch({
   headless: true,
@@ -90,7 +90,46 @@ try {
       await context.addInitScript(denyNativeNotifications);
       const page = await context.newPage();
       const errors = [];
+      const finalizations = [],
+        activeFinalizations = new Set();
+      let publications = 0,
+        connection = 0,
+        unknownSubmission;
+      page.on("websocket", (socket) => {
+        const calls = new Map(),
+          socketId = ++connection;
+        socket.on("framesent", ({ payload }) => {
+          const frame = JSON.parse(String(payload));
+          if (frame.type !== "call") return;
+          if (
+            frame.call?.member === "submit" &&
+            frame.call.args[0].text === "尚无明确结果"
+          )
+            unknownSubmission = frame.call.args[0];
+          if (frame.call?.member !== "finalizeSubmission") return;
+          const call = {
+            id: frame.id,
+            connection: socketId,
+            input: frame.call.args[0],
+            publications,
+            inFlight: activeFinalizations.size + 1,
+          };
+          calls.set(frame.id, call);
+          activeFinalizations.add(call);
+          finalizations.push(call);
+        });
+        socket.on("framereceived", ({ payload }) => {
+          const frame = JSON.parse(String(payload));
+          if (frame.type === "update") publications++;
+          const call = calls.get(frame.id);
+          if (!call || !["result", "error"].includes(frame.type)) return;
+          call.response = frame;
+          calls.delete(frame.id);
+          activeFinalizations.delete(call);
+        });
+      });
       page.on("pageerror", (e) => errors.push(String(e)));
+      await page.clock.install();
       await page.goto(url);
       const input = page.locator("#companion-textarea"),
         send = page.getByRole("button", { name: "发送消息", exact: true });
@@ -196,7 +235,7 @@ try {
       await control({ action: "publish" });
       await expect(bubble("断线前已提交")).toHaveCount(1);
       await control({ action: "complete" });
-      await control({ action: "mode", state: "null" });
+      await control({ action: "mode", state: "null", hidden: true });
       await input.fill("尚无明确结果");
       await send.click();
       await expect
@@ -208,31 +247,166 @@ try {
       await expect(recovery).toHaveCount(0);
       expect((await control({ action: "state" })).submitCalls).toBe(4);
       await snap("null-reload");
+      const socketUrl = new URL("/api/chat/socket", url);
+      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+      const cookies = (await context.cookies(url))
+        .map((c) => `${c.name}=${c.value}`)
+        .join("; ");
+      const headers = { Cookie: cookies };
+      if (process.env.APP_ACCEPTANCE_USERNAME)
+        headers.Authorization = `Basic ${Buffer.from(`${process.env.APP_ACCEPTANCE_USERNAME}:${process.env.APP_ACCEPTANCE_PASSWORD ?? ""}`).toString("base64")}`;
+      const beforeExpiry = await control({ action: "state" });
+      // The real browser deadline requests an authoritative native fence; age alone never fails.
+      await control({ action: "finalizationLost", enabled: true });
+      await page.clock.fastForward(61000);
+      await expect
+        .poll(async () => (await control({ action: "state" })).finalizeCalls)
+        .toBe(1);
+      await expect(sending("尚无明确结果")).toHaveText("正在发送…");
+      await expect
+        .poll(() => finalizations.filter((call) => call.response).length)
+        .toBe(1);
+      const receiptClient = await openChat(
+        new WebSocket(socketUrl, { headers }),
+        () => {},
+        () => {},
+      );
+      let fencedReceipt;
+      try {
+        fencedReceipt = await receiptClient.lookup(
+          unknownSubmission.operationId,
+        );
+        expect(fencedReceipt?.state).toBe("failed");
+      } finally {
+        receiptClient.close();
+      }
+      await page.clock.resume();
+      // A normal view publication may recheck an expired, still-unconfirmed input.
+      await control({ action: "publish" });
+      await expect
+        .poll(() => finalizations.filter((call) => call.response).length)
+        .toBeGreaterThan(1);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await expect(sending("尚无明确结果")).toHaveText("正在发送…");
+      await writeFile(
+        `${evidence}/finalization-publication-${theme}-${width}.json`,
+        JSON.stringify(finalizations, null, 2),
+      );
+      await control({ action: "finalizationLost", enabled: false });
+      await page.reload();
+      await expect(bubble("尚无明确结果").getByTestId(/failed-/)).toBeVisible();
+      await page.clock.resume();
+      const recoveredCalls = finalizations.length;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(finalizations).toHaveLength(recoveredCalls);
+      expect(activeFinalizations.size).toBe(0);
+      for (const [index, call] of finalizations.entries()) {
+        expect(call.inFlight).toBe(1);
+        expect(call.input).toEqual(finalizations[0].input);
+        expect(call.input.submission).toEqual(unknownSubmission);
+        if (index && call.connection === finalizations[index - 1].connection)
+          expect(call.publications).toBeGreaterThan(
+            finalizations[index - 1].publications,
+          );
+        if (call.response.type === "result")
+          expect(call.response.result).toEqual(fencedReceipt);
+        else expect(call.response.type).toBe("error");
+      }
+      expect(finalizations.at(-1).response.result).toEqual(fencedReceipt);
+      const afterExpiry = await control({ action: "state" });
+      expect(afterExpiry.finalizeCalls).toBe(finalizations.length);
+      expect(afterExpiry.submitCalls).toBe(beforeExpiry.submitCalls);
+      expect(afterExpiry.retryCalls).toBe(beforeExpiry.retryCalls);
+      expect(afterExpiry.executions).toBe(beforeExpiry.executions);
+      await writeFile(
+        `${evidence}/finalization-recovery-${theme}-${width}.json`,
+        JSON.stringify(
+          {
+            finalizations,
+            executionDelta: afterExpiry.executions - beforeExpiry.executions,
+            submitDelta: afterExpiry.submitCalls - beforeExpiry.submitCalls,
+            retryDelta: afterExpiry.retryCalls - beforeExpiry.retryCalls,
+          },
+          null,
+          2,
+        ),
+      );
+      await expect(recovery).toHaveCount(0);
+      const failedMark = () =>
+        bubble("明确拒绝文字图片").getByTestId(/failed-/);
+      const menuAction = (name) =>
+        page
+          .locator(".companion-action-menu")
+          .getByRole("button", { name, exact: true });
       await control({ action: "mode", state: "failed" });
       await page.locator("#companion-image-library").setInputFiles(photo);
       await input.fill("明确拒绝文字图片");
       await send.click();
-      await expect(input).toHaveValue("明确拒绝文字图片");
+      await expect(failedMark()).toBeVisible();
+      await expect(input).toHaveValue("");
+      await expect(
+        page.locator(".companion-image-draft-preview img"),
+      ).toHaveCount(0);
+      await input.fill("新草稿保持原样");
+      await page.locator("#companion-image-library").setInputFiles(photo);
+      await snap("failed");
+      await bubble("明确拒绝文字图片")
+        .locator(".companion-text-bubble")
+        .focus();
+      await page.keyboard.press("Shift+F10");
+      await expect(menuAction("复制消息")).toBeVisible();
+      await snap("failed-menu");
+      await page.keyboard.press("Escape");
+      await failedMark().click();
+      await menuAction("删除").click();
+      await expect(
+        page.getByRole("dialog", {
+          name: "删除这条发送失败的消息？",
+          exact: true,
+        }),
+      ).toContainText("删除这条发送失败的消息？");
+      await menuAction("取消").click();
+      await expect(failedMark()).toBeVisible();
+      await failedMark().click();
+      await menuAction("重试").click();
+      await expect(failedMark()).toBeVisible(); // New attempt fails again, same logical bubble.
+      await expect(bubble("明确拒绝文字图片")).toHaveCount(1);
+      await expect(input).toHaveValue("新草稿保持原样");
       await expect(
         page.locator(".companion-image-draft-preview img"),
       ).toHaveCount(1);
-      await expect(bubble("明确拒绝文字图片")).toHaveCount(0);
-      await snap("failed");
+      await control({ action: "mode", state: "slow" });
+      await failedMark().click();
+      await menuAction("重试").click();
+      await expect(sending("明确拒绝文字图片")).toHaveText("正在发送…");
+      await expect(failedMark()).toHaveCount(0);
+      await expect(bubble("明确拒绝文字图片")).toHaveCount(1);
+      await control({ action: "release" });
+      await expect(sending("明确拒绝文字图片")).toHaveCount(0);
+      await expect(input).toHaveValue("新草稿保持原样");
       await page.getByRole("button", { name: "移除图片", exact: true }).click();
       await input.fill("");
       await page.reload();
-      await expect(recovery).toContainText("明确拒绝文字图片");
-      await page.getByRole("button", { name: "恢复编辑", exact: true }).click();
-      await expect(input).toHaveValue("明确拒绝文字图片");
-      await expect(
-        page.locator(".companion-image-draft-preview img"),
-      ).toHaveCount(1);
-      await snap("recovery");
-      await control({ action: "mode", state: "submitted" });
-      await input.fill("编辑后提交");
-      await send.click();
-      await expect(input).toHaveValue("");
+      await expect(bubble("明确拒绝文字图片")).toHaveCount(1);
       await expect(recovery).toHaveCount(0);
+      await bubble("尚无明确结果")
+        .getByTestId(/failed-/)
+        .click();
+      await menuAction("删除").click();
+      await control({ action: "deleteFailure", enabled: true });
+      await menuAction("删除").click();
+      await expect(bubble("尚无明确结果").getByTestId(/failed-/)).toBeVisible();
+      await control({ action: "deleteFailure", enabled: false });
+      await bubble("尚无明确结果")
+        .getByTestId(/failed-/)
+        .click();
+      await menuAction("删除").click();
+      await menuAction("删除").click();
+      await expect(bubble("尚无明确结果")).toHaveCount(0);
+      await page.reload();
+      await expect(bubble("尚无明确结果")).toHaveCount(0);
+      await expect(recovery).toHaveCount(0);
+      await snap("deleted-reload");
       await control({ action: "complete" });
       await control({ action: "mode", state: "withdrawn" });
       await input.fill("处理前撤回");
@@ -264,14 +438,6 @@ try {
       );
       expect(stopped).toBeDefined();
       const original = native.submissions[0];
-      const socketUrl = new URL("/api/chat/socket", url);
-      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
-      const cookies = (await context.cookies(url))
-        .map((c) => `${c.name}=${c.value}`)
-        .join("; ");
-      const headers = { Cookie: cookies };
-      if (process.env.APP_ACCEPTANCE_USERNAME)
-        headers.Authorization = `Basic ${Buffer.from(`${process.env.APP_ACCEPTANCE_USERNAME}:${process.env.APP_ACCEPTANCE_PASSWORD ?? ""}`).toString("base64")}`;
       for (let attempt = 0; attempt < 2; attempt++) {
         const client = await openChat(
           new WebSocket(socketUrl, { headers }),
@@ -319,7 +485,7 @@ try {
     }
   await writeFile(`${evidence}/results.json`, JSON.stringify(results, null, 2));
   console.log(
-    "Submission browser acceptance passed: slow ack/publish order, image/text rejection recovery, null/reload/reconnect no recovery, same-ID dedup/conflict, withdrawal, reply failure/stop; light/dark mobile/desktop.",
+    "Submission browser acceptance passed: slow ack/publish order, deadline fencing, failed image/text direct retry/delete without draft mutation, null/reload/reconnect no recovery, same-ID dedup/conflict, withdrawal, reply failure/stop; light/dark mobile/desktop.",
   );
 } finally {
   await browser.close();

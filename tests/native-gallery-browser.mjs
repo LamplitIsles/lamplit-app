@@ -239,7 +239,7 @@ try {
     "image/png",
   ]);
   expect(uploads[0].images.map((i) => i.order)).toEqual([0, 1]);
-  // The retained read-error message still restores these memory Files before admission.
+  // The read-error keeps a failed bubble and page-owned originals for direct retry.
   await start();
   await resolvePick(["read-recovery"]);
   await expect(drafts).toHaveCount(1);
@@ -261,14 +261,19 @@ try {
     };
   });
   await send.click();
-  await expect(input).toHaveValue("recover this PNG");
-  await expect(drafts).toHaveCount(1);
+  await expect(input).toHaveValue("");
+  await expect(drafts).toHaveCount(0);
+  await expect(page.getByTestId(/failed-/)).toBeVisible();
   await expect(page.getByTestId("input-error")).toContainText(
     "图片暂时无法读取",
   );
   expect(uploads).toHaveLength(1);
   await page.evaluate(() => window.restoreRead());
-  await send.click();
+  await page.getByTestId(/failed-/).click();
+  await page
+    .locator(".companion-action-menu")
+    .getByRole("button", { name: "重试", exact: true })
+    .click();
   await expect.poll(() => uploads.length).toBe(2);
   expect(uploads[1].images[0].original).toBe(
     original("read-recovery").toString("base64"),

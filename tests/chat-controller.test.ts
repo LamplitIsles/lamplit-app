@@ -1,3 +1,4 @@
+import { fixtureBackend } from "./fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
 import { panelsFixture } from "./panels-fixture.ts";
 import { expect, test } from "bun:test";
@@ -29,6 +30,7 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
   const panels = panelsFixture();
   const search = searchFixture();
   const backend: ChatBackend = {
+    ...fixtureBackend().backend,
     ...panels.backend,
     ...search.backend,
     async read() {
@@ -392,7 +394,7 @@ test("slow acknowledgement, publish ordering, null lookup, reload and reconnect 
   }
 });
 
-test("definite rejection restores once; reply failure/stop stay sent; withdrawal alone offers recovery", async () => {
+test("definite rejection retains bubble until acknowledged delete; reply failure/stop stay sent; withdrawal alone offers recovery", async () => {
   const { imagesFixture } = await import("./images-fixture.ts");
   const f = imagesFixture();
   const harness = await controllerHarness(f.backend);
@@ -401,9 +403,12 @@ test("definite rejection restores once; reply failure/stop stay sent; withdrawal
     const reasons: string[] = [];
     await f.control({ action: "mode", state: "failed" });
     await c.send("rejected", (r) => reasons.push(r.reason));
-    expect(reasons).toEqual(["failed"]);
+    expect(reasons).toEqual([]);
+    expect(c.pending[0]?.state).toBe("failed");
+    expect(c.recovery).toEqual([]);
+    await c.deleteFailed(c.pending[0]!.operationId);
+    expect(reasons).toEqual(["observed"]);
     expect(c.pending).toEqual([]);
-    expect(c.recovery[0]?.text).toBe("rejected");
     await f.control({ action: "consume" });
     await f.control({ action: "mode", state: "submitted" });
     await c.send("submitted");
@@ -447,7 +452,7 @@ test("persisted local inputs normalize once without losing text, image reference
           operationId: id,
           text: "preserved",
           images: [image],
-          createdAt: 1,
+          createdAt: Date.now(),
           state: "uncertain",
         },
       ]),
@@ -470,3 +475,161 @@ test("persisted local inputs normalize once without losing text, image reference
     h.close();
   }
 });
+
+test("expired dispatched input finalizes once, survives lost acknowledgement/reopen, retry identity stays one bubble and delete waits for ack", async () => {
+  const { submissionsFixture } = await import("./submissions-fixture.ts");
+  const fixture = submissionsFixture();
+  const id = crypto.randomUUID();
+  const saved = new Map([
+    [
+      "lamplit.pending:fixture-session",
+      JSON.stringify([
+        {
+          operationId: id,
+          text: "expired original",
+          state: "sending",
+          dispatched: true,
+          createdAt: Date.now() - 61000,
+        },
+      ]),
+    ],
+  ]);
+  await fixture.control({ action: "finalizationLost", enabled: true });
+  const h = await controllerHarness(fixture.backend, saved);
+  try {
+    let c = await h.create();
+    await Bun.sleep(30);
+    expect(c.connected).toBe(true);
+    expect((await fixture.control({ action: "state" })).finalizeCalls).toBe(1);
+    expect((await fixture.backend.lookup(id))?.state).toBe("failed");
+    expect(c.pending[0]?.state).toBe("sending");
+    c.close();
+    await fixture.control({ action: "finalizationLost", enabled: false });
+    c = await h.create();
+    await eventually(() => c.pending[0]?.state === "failed");
+    await fixture.control({ action: "mode", state: "slow" });
+    const retry = c.retryFailed(id);
+    await c.retryFailed(id);
+    await eventually(() => c.pending[0]?.state === "sending");
+    await Bun.sleep(30);
+    expect((await fixture.control({ action: "state" })).retryCalls).toBe(1);
+    expect(c.pending).toHaveLength(1);
+    expect(c.pending[0]?.logicalId).toBe(id);
+    expect(c.pending[0]?.operationId).not.toBe(id);
+    await fixture.control({ action: "mode", state: "failed" });
+    await retry;
+    expect(c.pending[0]?.state).toBe("failed");
+    await fixture.control({ action: "deleteFailure", enabled: true });
+    await c.deleteFailed(id);
+    expect(c.pending[0]?.state).toBe("failed");
+    c.close();
+    c = await h.create();
+    expect(c.pending[0]?.logicalId).toBe(id);
+    await fixture.control({ action: "deleteFailure", enabled: false });
+    await c.deleteFailed(id);
+    expect(c.pending).toEqual([]);
+    c.close();
+    c = await h.create();
+    expect(c.pending).toEqual([]);
+    expect(c.recovery).toEqual([]);
+    expect(
+      (
+        await fixture.backend.submit({
+          operationId: id,
+          text: "expired original",
+        })
+      ).state,
+    ).toBe("failed");
+  } finally {
+    await fixture.control({ action: "release" });
+    h.close();
+  }
+});
+
+for (const original of ["submit", "retry"])
+  for (const action of ["retry", "delete"])
+    test(`fenced failure unlocks ${action} while original ${original} RPC remains held`, async () => {
+      const { imagesFixture } = await import("./images-fixture.ts");
+      const f = imagesFixture(),
+        held = gate(),
+        deletion = gate();
+      let heldId = "",
+        retryCalls = 0,
+        deleteCalls = 0;
+      const backend: ChatBackend = {
+        ...f.backend,
+        async submit(input) {
+          if (original === "submit" && !heldId) {
+            heldId = input.operationId;
+            await held.promise;
+          }
+          return f.backend.submit(input);
+        },
+        async retryFailed(input) {
+          retryCalls++;
+          if (original === "retry" && !heldId) {
+            heldId = input.attemptId;
+            await held.promise;
+          }
+          return f.backend.retryFailed(input);
+        },
+        async deleteFailed(input) {
+          deleteCalls++;
+          await deletion.promise;
+          return f.backend.deleteFailed(input);
+        },
+      };
+      const h = await controllerHarness(backend);
+      let unresolved: Promise<void> | undefined;
+      try {
+        const c = await h.create();
+        if (original === "retry") {
+          await f.control({ action: "mode", state: "failed" });
+          await c.send("held terminal original");
+          await f.control({ action: "mode", state: "submitted" });
+          unresolved = c.retryFailed(c.pending[0]!.operationId);
+        } else unresolved = c.send("held terminal original");
+        await eventually(() => !!heldId);
+        const logicalId = c.pending[0]!.logicalId!;
+        const beforeRetry = retryCalls;
+        await c.retryFailed(logicalId);
+        await c.deleteFailed(logicalId);
+        expect(retryCalls).toBe(beforeRetry);
+        expect(deleteCalls).toBe(0);
+        c.pending[0]!.createdAt = Date.now() - 61000;
+        c.recheckPending();
+        await eventually(() => c.pending[0]?.state === "failed");
+        expect((await backend.lookup(heldId))?.state).toBe("failed");
+        if (action === "retry") {
+          await c.retryFailed(logicalId);
+          expect(retryCalls).toBe(beforeRetry + 1);
+          await eventually(() =>
+            c.view!.messages.some((m) => m.text === "held terminal original"),
+          );
+          held.release();
+          await unresolved;
+          expect(c.pending).toEqual([]);
+          expect(
+            c.view!.messages.filter((m) => m.text === "held terminal original"),
+          ).toHaveLength(1);
+        } else {
+          const deleting = c.deleteFailed(logicalId);
+          await eventually(() => deleteCalls === 1);
+          held.release();
+          await unresolved;
+          await c.deleteFailed(logicalId);
+          await c.retryFailed(logicalId);
+          expect(deleteCalls).toBe(1);
+          expect(retryCalls).toBe(beforeRetry);
+          deletion.release();
+          await deleting;
+          expect(c.pending).toEqual([]);
+          expect(c.recovery).toEqual([]);
+        }
+      } finally {
+        held.release();
+        deletion.release();
+        await unresolved;
+        h.close();
+      }
+    });

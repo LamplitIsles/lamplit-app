@@ -11,14 +11,17 @@ Reloading the page reads updated configuration.
 
 `lamplit.chat.v2` is a Chord singleton with:
 
-| Member                                                          | Meaning                                                                                 |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `view`                                                          | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
-| `history(before)`                                               | Previous page of completed messages and user submissions                                |
-| `submit({ operationId, text, images?, replacementSourceIds? })` | New input; the engine adapter starts or steers its native conversation                  |
-| `lookup(operationId)`                                           | Reconcile admission after lost acknowledgement                                          |
-| `compact({ sessionId })`                                        | Explicit native idle compaction; refusal preserves drafts, success has no chat message  |
-| `stop(turnId)`                                                  | Stop this specific turn; a stale turn returns `stopped: false`                          |
+| Member                                                                 | Meaning                                                                                 |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `view`                                                                 | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
+| `history(before)`                                                      | Previous page of completed messages and user submissions                                |
+| `submit({ operationId, text, images?, replacementSourceIds? })`        | New input; the engine adapter starts or steers its native conversation                  |
+| `lookup(operationId)`                                                  | Reconcile admission after lost acknowledgement                                          |
+| `finalizeSubmission({ sessionId, submission } / { sessionId, retry })` | Fenced terminal admission decision for an expired immutable attempt                     |
+| `retryFailed({ sessionId, operationId, attemptId })`                   | Retry failed original content with a new attempt and native-owned media                 |
+| `deleteFailed({ sessionId, operationId })`                             | Acknowledge failed presentation deletion, preserving admission proof                    |
+| `compact({ sessionId })`                                               | Explicit native idle compaction; refusal preserves drafts, success has no chat message  |
+| `stop(turnId)`                                                         | Stop this specific turn; a stale turn returns `stopped: false`                          |
 
 Chord method contracts include an invocation context as their last parameter.
 The browser helper supplies it. Socket cancellation is not passed into execution;
@@ -62,17 +65,27 @@ lookup(operationId: string): Promise<Receipt | null>
 The receipt is about submission, not model consumption or execution. Lookup
 returns `null` when there is currently no definitive result. Repeated nulls,
 timeouts, RPC errors and disconnection do not prove failure and cannot authorize
-restoration or replacement. They retain the pending bubble and original identity
+retry or deletion. They retain the pending bubble and original identity
 for reconciliation on reload/reconnect. The App never automatically replays input.
 
 Same operation ID and identical text, ordered image references and replacement
 source IDs deduplicate. Changing content under that ID must be rejected. This
 identity is distinct from socket request, native turn and message identities.
-Only definitively failed submissions or inputs explicitly withdrawn before
-processing belong in `view.recovery`; its entries have no delivery state.
+Failed web submissions retain a bubble with direct Retry and confirmed Delete,
+without Composer restoration or undo. Independent inputs explicitly withdrawn
+before processing remain recoverable through `view.recovery`; its entries have
+no delivery state.
 A withdrawn input retains a `submitted` receipt and can remain visible in history.
 Replacement eligibility is authoritative and checked atomically by the native
 adapter. Reply execution failures belong in timeline notices, not recovery.
+
+The 60-second deadline runs from original local creation, and applies only after
+dispatch of a complete immutable submission. It requests `finalizeSubmission`,
+never infers failure. Reconnect/publication rechecks unresolved results without
+automatic resubmission or polling. Native admission serialization must fence late
+original requests before returning failed; submitted always wins. Retry finalization
+uses the exact source/attempt association because reassociated media is native-owned.
+See [required methods and native proof](native-durable-submissions.md#failed-message-actions--spec-3936).
 
 The browser persists bounded reference-only pending inputs per origin/session.
 It retains observed messages evicted from the live window and merges paged history

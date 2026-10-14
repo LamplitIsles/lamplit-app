@@ -43,6 +43,36 @@ export const SubmissionSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+export const RetryFailedSchema = Type.Object(
+  {
+    sessionId: Id,
+    operationId: OperationIdSchema,
+    attemptId: OperationIdSchema,
+  },
+  { additionalProperties: false },
+);
+export const FinalizeSubmissionSchema = Type.Union([
+  Type.Object(
+    { sessionId: Id, submission: SubmissionSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { sessionId: Id, retry: RetryFailedSchema },
+    { additionalProperties: false },
+  ),
+]);
+export const DeleteFailedSchema = Type.Object(
+  { sessionId: Id, operationId: OperationIdSchema },
+  { additionalProperties: false },
+);
+export const DeleteFailedResultSchema = Type.Object(
+  { sessionId: Id, operationId: OperationIdSchema, deleted: Type.Boolean() },
+  { additionalProperties: false },
+);
+export type FinalizeSubmission = Static<typeof FinalizeSubmissionSchema>;
+export type RetryFailed = Static<typeof RetryFailedSchema>;
+export type DeleteFailed = Static<typeof DeleteFailedSchema>;
+export type DeleteFailedResult = Static<typeof DeleteFailedResultSchema>;
 export const ReceiptSchema = Type.Object(
   {
     operationId: Id,
@@ -164,6 +194,15 @@ export interface ChatService extends PanelService, SearchService {
   history(before: string, context: Context): Promise<HistoryPage>;
   submit(input: Submission, context: Context): Promise<Receipt>;
   lookup(operationId: string, context: Context): Promise<Receipt | null>;
+  finalizeSubmission(
+    input: FinalizeSubmission,
+    context: Context,
+  ): Promise<Receipt | null>;
+  retryFailed(input: RetryFailed, context: Context): Promise<Receipt>;
+  deleteFailed(
+    input: DeleteFailed,
+    context: Context,
+  ): Promise<DeleteFailedResult>;
   stop(turnId: string, context: Context): Promise<{ stopped: boolean }>;
 }
 export const Chat = defineService<ChatService>("lamplit.chat.v2");

@@ -37,13 +37,23 @@ The existing CFL Framework7 chat design and interaction that the shared frontend
 _Avoid_: New Composer design, Pi-specific frontend
 
 **Message submission（消息提交）**:
-Durable reception of one immutable operation, separate from reply execution. The
-receipt is submitted or failed; no definitive lookup result is null. Local sending
-means awaiting confirmation and never implies an engine-persisted state.
-_Avoid_: Consumed, uncertain delivery, reply failure as submission rejection
+The owner's message being received for conversation, independently of the companion's reply. A failed or stopped reply does not make a received message fail.
+_Avoid_: Reply completion, model processing
+
+**Failed submission（发送失败）**:
+A message confirmed not received. It remains available to retry or delete; waiting for confirmation alone is not failure.
+_Avoid_: Disconnected message, failed reply
+
+**Retry（重试）**:
+Sending a failed message's original content again, directly from that message, while keeping any new draft untouched.
+_Avoid_: Restore to edit, automatic resend
+
+**Deleted failed message（已删除的失败消息）**:
+A failed message the owner has confirmed removing from the conversation. Deleting it does not remove other messages or photos.
+_Avoid_: Undo, archive deletion
 
 **Input recovery（输入恢复）**:
-Explicit editing of confirmed rejected input or input withdrawn before processing.
+Explicit editing of independently withdrawn input before processing. Failed web submissions instead offer direct Retry or Delete.
 A temporary disconnect or stopped/failed reply does not make input recoverable.
 _Avoid_: Automatic replay, recovery inferred from null lookup
 

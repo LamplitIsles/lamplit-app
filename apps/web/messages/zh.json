@@ -279,5 +279,10 @@
   "recovery.removeMissing": "移除缺失图片",
   "recovery.inspect": "查看提交内容",
   "recovery.restored": "已恢复，可编辑后发送。",
-  "recovery.discardRestored": "丢弃恢复的输入"
+  "recovery.discardRestored": "丢弃恢复的输入",
+  "delivery.failed": "发送失败",
+  "messages.retryFailed": "重试",
+  "messages.deleteFailed": "删除",
+  "messages.deleteFailedConfirm": "删除这条发送失败的消息？",
+  "messages.failedActions": "发送失败，重试或删除"
 }

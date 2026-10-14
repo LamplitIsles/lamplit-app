@@ -149,7 +149,7 @@ retry cannot create another native run or timeline entry.
 
 The runner checks immediate text/image bubbles, slow acknowledgement and publish
 order, lost acknowledgement/reload/reconnect without replay, null without recovery,
-definite rejection and original-image restoration, edited replacement, pre-processing
+definite rejection and original-image direct retry/delete, independent withdrawn-input replacement, pre-processing
 withdrawal, reply failure/targeted stop independence, exact-ID dedup/content conflict,
 reload history uniqueness, and light/dark 390/1280 layouts. Local runs use
 `tests/submissions-fixture.ts`; native runs must exercise actual native boundaries.
@@ -169,3 +169,52 @@ search and panels. The unchanged Keet runner supports both image profiles; nativ
 provider prompts/maintenance requests require backend-side evidence in addition to
 browser projection checks. Native-gallery verification uses the app's plugin fake;
 it establishes preserved routing/bytes behavior, not physical device acceptance.
+
+## Failed-message actions — spec #3936
+
+Required public methods on `ChatBackend`/`ChatService` and `openChat`:
+
+```ts
+finalizeSubmission(input:
+  | { sessionId: string; submission: Submission }
+  | { sessionId: string; retry: RetryFailed }): Promise<Receipt | null>
+retryFailed(input: RetryFailed): Promise<Receipt>
+deleteFailed(input: { sessionId: string; operationId: UUID }):
+  Promise<{ sessionId: string; operationId: UUID; deleted: boolean }>
+type RetryFailed = { sessionId: string; operationId: UUID; attemptId: UUID }
+```
+
+For an initial attempt, finalization carries the original immutable submission.
+For a retry, it carries its exact source/new-attempt identity: the browser cannot
+construct the new image references, which belong to the native adapter. Finalization
+must verify that association and target `retry.attemptId`; an unknown association
+returns null until the host can durably reject that exact retry identity. Never
+interpret it as permission to resubmit. All returned receipts correlate to the
+attempt being finalized or retried, and deletion acknowledges its source operation.
+The retry session must match the outer finalization session.
+
+Hosts recheck authenticated owner/session at the final native mutation boundary.
+They serialize original submit, retry and finalization through existing native
+admission, checking durable rejection immediately before admission. Submitted
+native operations remain submitted, including queued/working/completed. Persist
+immutable payload fingerprints and minimal rejected proof across reopen and failed
+deletion. Same ID with changed payload or changed retry source rejects. The public
+host validates session/payload/results; it cannot create the native atomic guarantee.
+If the public native seam cannot establish that guarantee, report concrete evidence;
+never return failed based on time, null or a socket error.
+
+Retry uses server-owned original text and exact stored image bytes. Reassociate
+originals with the new attempt under existing owner/session guards; old-operation
+references cannot simply be submitted under another ID. Missing originals reject
+without partial admission. Duplicate calls with the same retry identity return the
+same attempt outcome. Delete removes failed presentation/recovery only and retains
+admission proof and accepted history/album/originals. `deleted: false` means no
+removal, including accepted racing actions; the client reconciles acceptance.
+
+`bun test tests/failed-message-actions.test.ts` exercises the public socket and owned
+fixture with delayed admission, finalization, identity conflict, repeated retry,
+reopened host/deletion barrier and exact original image bytes. It proves App's
+contract, not native Pi atomicity. The whole final immutable App artifact and Chat
+native joint gate require Orc approval before merge. CFL's existing older pin stays
+unchanged; its next App upgrade must implement these required methods. No capability
+fallback, old wire path, deployment or native SDK patch is supplied.

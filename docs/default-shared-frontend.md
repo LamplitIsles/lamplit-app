@@ -239,3 +239,27 @@ Timing logs separate click-to-first-PCM from click-to-ready. They establish isol
 ordering, not physical microphone or real-provider latency. App owns this one
 recorder; Chat consumes an approved immutable archive, while codex-for-love prepares
 clean full-SHA-pinned source. Native consumers remain separate follow-up work.
+
+## Failed-message actions candidate (#3936)
+
+Use `bun tests/prepare-default.mjs --failed-message-actions` from verified clean
+committed source. The new `.scratch/failed-message-actions/candidate-<full HEAD>/`
+contains `lamplit-failed-message-actions.tgz`, compiled required contracts and all
+current voice/layout/source/default runners. Historical identities stay unchanged.
+Freeze the archive, three manifests and `SOURCE_HEAD`; verify before and after
+source-built and extracted `optimistic-send-browser.mjs` runs at existing 390/1280
+light/dark viewports. Install only extracted owned dependencies with frozen locks.
+Native consumers use the identical approved artifact without rebuilding.
+
+The existing submissions controls additionally return `finalizeCalls`, `retryCalls`
+and `deleteCalls`. `finalizationLost` and `deleteFailure` with `enabled: boolean`
+lose the terminal acknowledgement or reject deletion respectively. Existing `slow`
+and `null` modes apply to retry as well as submit. Native controls drive real native
+state; they cannot forge failed receipts or bypass admission fences. The runner
+checks authoritative deadline failure, direct image/text retry with retained new
+drafts, repeated failure, keyboard menus, delete cancel/failure/success and reload.
+Controller/socket checks cover lost finalization acknowledgement/reopen, repeated
+click suppression, immutable identity and late admission after deletion. App fixture
+passes do not prove Chat native atomicity; the same artifact and actual native joint
+gate require Orc review before merge. Existing CFL pin remains unchanged; its next
+upgrade must implement all required methods with no silent fallback.
