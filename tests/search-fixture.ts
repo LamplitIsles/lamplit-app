@@ -20,7 +20,8 @@ export function searchFixture() {
           : `灯塔 lighthouse record ${i}${i === 22 ? " archiveImported3142" : ""}`,
   }));
   for (const record of records)
-    record.content += " <img src=x onerror=alert(1)>";
+    record.content +=
+      " <mark>literal</mark> `<img src=x onerror=alert(1)>` 中文😀𠮷";
   const failures = new Set<string>();
   const delays = new Map<string, Promise<void>>();
   const calls: string[] = [];
@@ -35,7 +36,12 @@ export function searchFixture() {
         .filter((r) => r.content.toLowerCase().includes(query.toLowerCase()))
         .map(({ content, ...r }) => ({
           ...r,
-          snippet: content.replace(/灯塔/g, "<mark>灯塔</mark>"),
+          snippet: {
+            segments: [
+              { text: "灯塔", highlighted: true },
+              { text: content.slice("灯塔".length), highlighted: false },
+            ],
+          },
         }));
       return {
         hits: hits.slice(0, 20),

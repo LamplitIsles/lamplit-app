@@ -157,6 +157,9 @@ Each hit opens complete text and bounded nearby context in the existing separate
 reader. Back returns to results; reading preserves the active chat and unsent draft.
 Loading, empty, failure/retry and context-truncation states retain the CFL design.
 Results are bounded to 20; a missing native total shows the returned result count.
+Hosts provide `snippet: { segments: [{ text, highlighted }] }`; the shared UI
+renders plain text with explicit highlights. Literal HTML, backticks and Unicode
+stay visible. Old HTML-marked snippet strings are rejected by the public contract.
 
 See [search contract and native fixture](docs/conversation-search.md).
 

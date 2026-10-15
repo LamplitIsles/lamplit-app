@@ -23,7 +23,20 @@ export const SearchReadInputSchema = Type.Object(
   { additionalProperties: false },
 );
 export const SearchCardSchema = Type.Object(
-  { ...metadata, snippet: Type.String() },
+  {
+    ...metadata,
+    snippet: Type.Object(
+      {
+        segments: Type.Array(
+          Type.Object(
+            { text: Type.String(), highlighted: Type.Boolean() },
+            { additionalProperties: false },
+          ),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  },
   { additionalProperties: false },
 );
 export const SearchResultSchema = Type.Object(

@@ -170,6 +170,38 @@ try {
     await expect(cards.first()).toContainText("<img src=x onerror=alert(1)>");
     await submit("灯塔");
     await expect(cards.first().locator("mark")).toHaveText("灯塔");
+    const snippetEvidence = [];
+    const structuredHits = archiveReplies.findLast((r) => r.hits)?.hits;
+    for (let index = 0; index < structuredHits.length; index++) {
+      const hit = structuredHits[index];
+      const snippet = cards.nth(index).locator(".item-text");
+      const text = hit.snippet.segments.map((part) => part.text).join("");
+      await expect(snippet).toHaveText(text);
+      expect(await snippet.textContent()).toBe(text);
+      await expect(snippet.locator("mark")).toHaveText(
+        hit.snippet.segments
+          .filter((part) => part.highlighted)
+          .map((part) => part.text),
+      );
+      await expect(snippet.locator("img, script, code")).toHaveCount(0);
+      await expect(snippet).toContainText("<mark>literal</mark>");
+      await expect(snippet).toContainText(
+        "`<img src=x onerror=alert(1)>` 中文😀𠮷",
+      );
+      snippetEvidence.push({
+        id: hit.id,
+        snippet: hit.snippet,
+        text: await snippet.textContent(),
+        highlights: await snippet.locator("mark").allTextContents(),
+      });
+    }
+    expect(await popup.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+      true,
+    );
+    await writeFile(
+      `${evidence}/snippets-${width}.json`,
+      JSON.stringify(snippetEvidence, null, 2),
+    );
     await page.screenshot({
       path: `${evidence}/results-${width}.png`,
       fullPage: true,
@@ -178,6 +210,11 @@ try {
     await expect(popup.locator(".search-target")).toContainText(
       "灯塔 lighthouse repeated",
     );
+    await expect(popup.locator(".search-target")).toContainText(
+      "<mark>literal</mark>",
+    );
+    await expect(popup.locator(".search-target")).toContainText("中文😀𠮷");
+    await expect(popup.locator("img")).toHaveCount(0);
     await expect(popup).toContainText("before original branch");
     await expect(popup).not.toContainText("before imported branch");
     await expect(popup).toContainText("nearby summary");
@@ -222,9 +259,17 @@ try {
     await control({ action: "failure", method: "searchRead", enabled: true });
     await cards.first().click();
     await expect(popup.getByRole("alert")).toBeVisible();
+    await page.screenshot({
+      path: `${evidence}/read-failure-${width}.png`,
+      fullPage: true,
+    });
     await control({ action: "failure", method: "searchRead", enabled: false });
     await popup.getByRole("button", { name: "重试", exact: true }).click();
     await expect(popup.locator(".search-target")).toContainText("record 22");
+    await page.screenshot({
+      path: `${evidence}/read-retry-${width}.png`,
+      fullPage: true,
+    });
     await back();
     await submit("zz-no-match-zz");
     await expect(cards).toHaveCount(0);
@@ -264,6 +309,10 @@ try {
       ),
     ).toBe(true);
     expect(errors).toEqual([]);
+    await writeFile(
+      `${evidence}/rpc-${width}.json`,
+      JSON.stringify({ archiveReplies, initial, final, sent, errors }, null, 2),
+    );
     await context.close();
   }
   await writeFile(

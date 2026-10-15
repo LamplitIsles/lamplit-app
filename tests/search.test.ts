@@ -8,10 +8,7 @@ import {
 } from "../packages/contracts/src/index.ts";
 import { fixtureBackend } from "./fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
-import {
-  snippetParts,
-  textParts,
-} from "../apps/web/src/lib/companion/client/conversation-search-highlight.ts";
+import { textParts } from "../apps/web/src/lib/companion/client/conversation-search-highlight.ts";
 
 test("archive schemas bound queries, cards and context without capping selected text", async () => {
   const fixture = searchFixture();
@@ -68,13 +65,47 @@ test("archive schemas bound queries, cards and context without capping selected 
       "archive-0",
     ),
   ).toThrow();
-  expect(snippetParts("<mark>灯塔</mark><img src=x>")).toEqual([
-    { text: "灯塔", matched: true },
-    { text: "<img src=x>", matched: false },
-  ]);
   expect(
     textParts("lighthouse LIGHTHOUSE", "lighthouse").filter((p) => p.matched),
   ).toHaveLength(2);
+});
+
+test("structured snippet schema preserves text and rejects old or malformed segments", async () => {
+  const result = await searchFixture().backend.search({ query: "灯塔" });
+  const validateSnippet = (snippet: unknown) =>
+    validateSearchResult({
+      ...result,
+      hits: [{ ...result.hits[0], snippet }],
+    });
+  const snippet = {
+    segments: [
+      {
+        text: "<mark>literal</mark> `<img src=x>` 中文😀𠮷",
+        highlighted: false,
+      },
+      { text: "灯塔😀", highlighted: true },
+      { text: "", highlighted: false },
+      { text: "邻接", highlighted: true },
+    ],
+  };
+  expect(validateSnippet(snippet).hits[0]?.snippet).toBe(snippet);
+  expect(validateSnippet({ segments: [] }).hits[0]?.snippet.segments).toEqual(
+    [],
+  );
+  for (const invalid of [
+    "<mark>灯塔</mark>",
+    null,
+    {},
+    { segments: "text" },
+    { segments: ["text"] },
+    { segments: [{ text: "text" }] },
+    { segments: [{ highlighted: true }] },
+    { segments: [{ text: 1, highlighted: true }] },
+    { segments: [{ text: "text", highlighted: "true" }] },
+    { segments: [{ text: "text", highlighted: true, html: "text" }] },
+    { segments: [], text: "duplicate" },
+  ])
+    expect(() => validateSnippet(invalid)).toThrow();
 });
 
 test("context budget counts Unicode code points across items at the exact native boundary", async () => {
@@ -102,6 +133,8 @@ test("shared search/read validate both boundaries; oversized UTF-8 result and fa
     invalidRequest = false,
     invalidBackend = false,
     invalidWire = false,
+    legacyBackend = false,
+    legacyWire = false,
     offline = false;
   const host = await createChatHost(
     {
@@ -116,6 +149,8 @@ test("shared search/read validate both boundaries; oversized UTF-8 result and fa
       async search(input) {
         const result = await search.backend.search(input);
         if (invalidBackend) Object.assign(result.hits[0]!, { cwd: "/private" });
+        if (legacyBackend)
+          Object.assign(result.hits[0]!, { snippet: "<mark>灯塔</mark>" });
         return result;
       },
     },
@@ -139,6 +174,8 @@ test("shared search/read validate both boundaries; oversized UTF-8 result and fa
                 const frame = JSON.parse(raw);
                 if (invalidWire && frame.result?.hits)
                   frame.result.hits[0].cwd = "/private";
+                if (legacyWire && frame.result?.hits)
+                  frame.result.hits[0].snippet = "<mark>灯塔</mark>";
                 ws.send(JSON.stringify(frame));
               },
               close: (code, reason) => ws.close(code, reason),
@@ -211,6 +248,15 @@ test("shared search/read validate both boundaries; oversized UTF-8 result and fa
     invalidWire = true;
     await expect(client.search({ query: "灯塔" })).rejects.toThrow();
     invalidWire = false;
+    legacyBackend = true;
+    await expect(client.search({ query: "灯塔" })).rejects.toThrow();
+    legacyBackend = false;
+    legacyWire = true;
+    await expect(client.search({ query: "灯塔" })).rejects.toThrow();
+    legacyWire = false;
+    expect(
+      (await client.search({ query: "灯塔" })).hits[0]?.snippet.segments[0],
+    ).toEqual({ text: "灯塔", highlighted: true });
     const calls = search.calls.length;
     await expect(client.search({ query: " " })).rejects.toThrow();
     expect(search.calls.length).toBe(calls);

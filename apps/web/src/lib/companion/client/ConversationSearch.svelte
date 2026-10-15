@@ -29,7 +29,6 @@
   import type { CompanionTranslate } from "./locale.js";
   import {
     contextTargetIndex,
-    snippetParts,
     textParts,
   } from "./conversation-search-highlight.js";
 
@@ -348,7 +347,7 @@
                 onClick={() => void openRecord(card)}
               >
                 {#snippet text()}
-                  {#each snippetParts(card.snippet) as part}{#if part.matched}<mark
+                  {#each card.snippet.segments as part}{#if part.highlighted}<mark
                         >{part.text}</mark
                       >{:else}{part.text}{/if}{/each}
                 {/snippet}

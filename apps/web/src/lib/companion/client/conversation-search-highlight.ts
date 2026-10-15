@@ -3,24 +3,6 @@ export interface HighlightPart {
   matched: boolean;
 }
 
-/** FlickLog supplies only literal mark delimiters. Svelte renders every part as text. */
-export function snippetParts(value: string): HighlightPart[] {
-  const result: HighlightPart[] = [];
-  let matched = false;
-  for (const part of value.split(/(<\/?mark>)/gu)) {
-    if (part === "<mark>") {
-      matched = true;
-      continue;
-    }
-    if (part === "</mark>") {
-      matched = false;
-      continue;
-    }
-    if (part) result.push({ text: part, matched });
-  }
-  return result;
-}
-
 /** Highlight a literal query inside the expanded source text. */
 export function textParts(value: string, query: string): HighlightPart[] {
   if (!query) return [{ text: value, matched: false }];

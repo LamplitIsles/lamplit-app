@@ -169,8 +169,14 @@ at most 20 individual cards. Each card has `id`, `kind: message | compaction`,
 `sessionId`, `snippet`, and optional `sessionName`, `role: user | assistant`,
 `phase`, `createdAt` (native source time string, including unknown import zones).
 IDs are opaque native record references, not text matches. There are no cwd or
-source-path fields. Literal `<mark>` delimiters highlight snippets; all other
-content renders as plain text. Null totals display the returned count; `limited`
+source-path fields. `snippet` is `{ segments: [{ text: string, highlighted: boolean }] }`.
+Segments are the only accepted format: hosts must supply plain text and explicit
+highlight flags, without converting HTML-marked strings. The shared Svelte UI
+renders each segment as a text node, wrapped in `mark` only when `highlighted` is
+true. Literal `<mark>`, `<img>`, backticks and Unicode remain visible text. Empty
+segments/arrays are valid; nested objects reject unknown fields. There is no old
+string compatibility path or duplicated snippet text field.
+Null totals display the returned count; `limited`
 preserves the existing first-20 copy.
 
 `searchRead({ id })` returns `{ record, context }`. Record uses the card metadata
@@ -212,9 +218,12 @@ this fixture matcher is not a required native algorithm. Ranking may differ; fix
   with `灯塔 lighthouse archiveSummary3142`, the only match for `archiveSummary3142`.
 - Remaining text is `灯塔 lighthouse record N` for N=3..22; append unique token
   `archiveImported3142` to record 22. That token uniquely finds the imported record. `zz-no-match-zz` has no matches.
-- Append literal ` <img src=x onerror=alert(1)>` to each seeded record content
+- Append literal ``<mark>literal</mark> `<img src=x onerror=alert(1)>` 中文😀𠮷`` to each seeded record content
   so native snippets include it. Use source time `2026-10-02T12:00:00Z`; snippets
-  mark `灯塔`. This verifies safe plain-text rendering through the real native store.
+  include a highlighted `灯塔` segment and an unhighlighted remainder. The runner
+  compares each card’s complete text and mark nodes to the source segments and
+  rejects extra image/script/code elements. This verifies safe plain-text rendering
+  through the real native store.
 - Reads include a before item, target and summary (`nearby summary`), with
   `truncated: true`. Local fixture indexes are 3/10/17; native source indexes may
   differ and must identify their actual target. No tool/reasoning
@@ -262,3 +271,35 @@ per-file/hash verification and Owner approval before native starts. Historical
 frozen-512ed66 bytes remain unchanged evidence; do not rebuild old identities.
 Both backends previously passed that search artifact at 390/1280, and #3142 merged.
 The new root-relative artifact still needs fresh native/platform acceptance.
+
+## Structured snippet handoff (#4006)
+
+After committing verified source, export a complete candidate with
+`bun tests/prepare-default.mjs --structured-search-snippets`. This reuses the
+existing exporter and includes the current browser, compiled contracts, all
+existing runners and frozen dependency locks. It writes an exclusive
+`.scratch/structured-search-snippets/candidate-<full HEAD>/` with
+`lamplit-structured-search-snippets.tgz`, `identity.json`, and the browser,
+contracts and acceptance manifests. Identity records source HEAD/tree, baseline,
+archive/manifest hashes and the packaged search runner hash. Included unrelated
+runners are delivery resources, not newly claimed acceptance.
+
+The exporter requires clean committed source. When unrelated user edits must
+remain, run it from a test-owned extraction of `git archive HEAD`, with Git's
+repository/work-tree environment pointing to the original metadata and extracted
+committed files; preserve the user's working files. Install the frozen root lock
+in that extraction with Bun 1.3.14 before building. On proxy-only hosts, set
+`NODE_USE_ENV_PROXY=1` for the Node build subprocess so Inlang can fetch its pinned
+message-format plugin; an absent plugin cache otherwise produces untranslated
+keys. The extracted-browser search run must pass before accepting the candidate.
+Do not relax exporter checks.
+Extract the candidate into a new owned directory, verify all three manifests and
+`SOURCE_HEAD`, and pack `contracts/package` into a separate compiled contracts tgz
+without rebuilding. Run the packaged search runner against that same extracted
+browser and keep before/after hashes, raw logs and 390/1280 screenshots.
+
+CFL #4007 consumes the exact approved source SHA; Chat #4008 consumes this frozen
+archive and compiled contracts tgz through its existing artifact verifier. The
+Orc binds the candidate tree to the equal merged tree after review; the candidate
+HEAD and immutable archive stay unchanged. Native consumer acceptance and deployment
+remain separate from App fixture verification.
