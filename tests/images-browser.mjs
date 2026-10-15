@@ -2,6 +2,8 @@ import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
+import { mediaUrl } from "../packages/contracts/src/index.ts";
+import { fixtureImage } from "./panels-fixture.ts";
 import { imagesFixture } from "./images-fixture.ts";
 import { resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -67,7 +69,132 @@ const browser = await chromium.launch({
 });
 const results = [];
 try {
-  for (const width of [390, 1280, 320]) {
+  // Focused output regression reuses this host, media fixture and packaged UI.
+  if (process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1") {
+    for (const count of [6, 7, 11]) {
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        locale: "zh-CN",
+      });
+      const control = async (input) =>
+        (await context.request.post(controlUrl, { data: input })).json();
+      await control({ action: "reset" });
+      const state = await control({ action: "complete", count });
+      await host.refresh();
+      const page = await context.newPage();
+      const errors = [],
+        frames = [],
+        history = [];
+      const historyCalls = new Set(),
+        mediaRequests = new Set();
+      let closed = false;
+      page.on("request", (req) =>
+        mediaRequests.add(new URL(req.url()).pathname),
+      );
+      page.on("pageerror", (e) => errors.push(String(e)));
+      page.on("websocket", (ws) => {
+        ws.on("close", () => {
+          closed = true;
+        });
+        ws.on("framesent", ({ payload }) => {
+          const f = JSON.parse(String(payload));
+          if (f.call?.member === "history") historyCalls.add(f.id);
+        });
+        ws.on("framereceived", ({ payload }) => {
+          frames.push(String(payload));
+          const f = JSON.parse(String(payload));
+          if (historyCalls.has(f.id)) history.push(f);
+        });
+      });
+      await context.addInitScript(denyNativeNotifications);
+      await page.goto(url);
+      const images = page.locator(".companion-image-entry img");
+      const expected = state.messages[0].images.map(
+        (ref) => `image-${state.messages[0].id}:${ref.attachmentId}`,
+      );
+      const assertRefs = async () => {
+        await expect(images).toHaveCount(count);
+        expect(
+          await images.evaluateAll((nodes) =>
+            nodes.map(
+              (n) => n.closest(".companion-image-entry").dataset.testid,
+            ),
+          ),
+        ).toEqual(expected);
+        await expect
+          .poll(() =>
+            images.evaluateAll((nodes) =>
+              nodes.every((n) => n.complete && n.naturalWidth > 0),
+            ),
+          )
+          .toBe(true);
+        for (const ref of state.messages[0].images)
+          expect(mediaRequests.has(mediaUrl(ref.attachmentId))).toBe(true);
+        await expect(page.locator(".companion-status")).toHaveClass(
+          /color-green/,
+        );
+        expect(closed).toBe(false);
+      };
+      await assertRefs();
+      await page.screenshot({
+        path: `${evidence}/output-${count}.png`,
+        fullPage: true,
+      });
+      // Same canonical message and all references remain reachable in older history.
+      await control({ action: "history" });
+      await page.reload();
+      closed = false;
+      const older = page.getByRole("button", {
+        name: "查看更早的消息",
+        exact: true,
+      });
+      await expect(older).toBeVisible();
+      for (let i = 0; i < 2; i++) {
+        await older.click();
+        await expect.poll(() => history.length).toBe(i + 1);
+        if (i === 0) await expect(older).toBeEnabled();
+        else await expect(older).toHaveCount(0);
+      }
+      expect(
+        history
+          .flatMap((f) => f.result.messages)
+          .find((m) => m.id === state.messages[0].id),
+      ).toEqual(state.messages[0]);
+      await assertRefs();
+      await page.screenshot({
+        path: `${evidence}/output-history-${count}.png`,
+        fullPage: true,
+      });
+      // Existing web intake accepts six, rejects a seventh without mutating the batch.
+      const file = {
+        name: "owned.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(fixtureImage),
+      };
+      const choose = page.locator("#companion-image-library");
+      const drafts = page.locator(".companion-image-draft-preview img");
+      await choose.setInputFiles(Array(6).fill(file));
+      await expect(drafts).toHaveCount(6);
+      await choose.setInputFiles(file);
+      await expect(page.getByTestId("input-error")).toBeVisible();
+      await expect(drafts).toHaveCount(6);
+      expect(errors).toEqual([]);
+      expect(frames.length).toBeGreaterThan(0);
+      results.push({
+        count,
+        expected,
+        initial: count,
+        history: count,
+        connected: !closed,
+        inputLimit: 6,
+        errors,
+      });
+      await context.close();
+    }
+  }
+  for (const width of process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
+    ? []
+    : [390, 1280, 320]) {
     const context = await browser.newContext({
       viewport: { width, height: 844 },
       locale: "zh-CN",
@@ -648,7 +775,9 @@ try {
     ) + "\n",
   );
   console.log(
-    "Image/recovery browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, protected recovery/refresh/edit/replacement, missing originals, rejection/withdrawal/submission, disabled storage, 390/1280/320 overflow.",
+    process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
+      ? "Output6/7/11 initial/history ordered refs, connection and six-image input guard passed."
+      : "Image/recovery browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, protected recovery/refresh/edit/replacement, missing originals, rejection/withdrawal/submission, disabled storage, 390/1280/320 overflow.",
   );
 } finally {
   await browser.close();

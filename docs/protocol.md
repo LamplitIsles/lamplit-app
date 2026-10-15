@@ -241,3 +241,13 @@ three are bounded to 255 UTF-16 units by shared schema/format validation. No ext
 single-line rules or payload/context fields are admitted. Adapters provide original
 body and authored time separately; web submissions cannot supply provenance.
 See [Matrix presentation and native acceptance](matrix-source-ui.md).
+
+## Output image references
+
+`ChatMessage.images` in both `view` and `history` preserves every stored reference
+in order, for any message role. It has no image-count ceiling: the six-image
+intake limit applies to Submission, upload and input recovery, not saved output.
+Each reference still requires the strict `ImageRefSchema` fields; unknown fields
+and invalid media IDs/types remain errors. The existing 2 MiB frame and 4 MiB
+outgoing queue protections still bound transport; this does not authorize
+truncating images or splitting a native message identity.

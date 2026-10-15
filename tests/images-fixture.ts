@@ -386,29 +386,33 @@ export function imagesFixture() {
           for (const image of r.images) media.delete(image.attachmentId);
         break;
       case "complete": {
-        const id = crypto.randomUUID();
-        const original = btoa(String.fromCharCode(...fixtureImage));
-        media.set(id, {
-          id,
-          order: 0,
-          name: "generated.png",
-          mediaType: "image/png",
-          original,
-          preview: original,
-          model: original,
-        });
+        const images: ImageRef[] = [];
+        for (let i = 0; i < Number(input.count ?? 1); i++) {
+          const id = crypto.randomUUID();
+          const original = btoa(String.fromCharCode(...fixtureImage));
+          const name =
+            input.count === undefined ? "generated.png" : `generated-${i}.png`;
+          media.set(id, {
+            id,
+            order: i,
+            name,
+            mediaType: "image/png",
+            original,
+            preview: original,
+            model: original,
+          });
+          images.push({
+            attachmentId: id,
+            name,
+            mediaType: "image/png",
+            availability: "available",
+          });
+        }
         messages.push({
           id: crypto.randomUUID(),
           role: "agent",
           text: "完整图片回复",
-          images: [
-            {
-              attachmentId: id,
-              name: "generated.png",
-              mediaType: "image/png",
-              availability: "available",
-            },
-          ],
+          images,
           createdAt: Date.now(),
           operationId: null,
           turnId: active,

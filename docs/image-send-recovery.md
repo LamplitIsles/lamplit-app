@@ -241,3 +241,15 @@ checks the web input, Framework7 sizes, submission and recovery at 390/1280/320.
 No device, gallery, live chat, install/config/permission, merge or deployment
 operations are part of these checks. This change supersedes closed, unmerged
 App PR #13 and has no dependency on that branch.
+
+## Saved output cardinality — spec #4011
+
+Saved message references are independent of the six-image input/upload/recovery
+limit. A reply with 7 or 11 generated images retains its full ordered reference
+list through initial View, history and the existing gallery renderer. Per-item
+reference validation, media authorization and transport bounds still apply.
+After building, `APP_OUTPUT_IMAGE_CARDINALITY=1 bun tests/images-browser.mjs`
+runs the focused owned-fixture initial/history/connection and six-image composer
+guard checks, saving screenshots and reference identities under
+`APP_ACCEPTANCE_EVIDENCE`. This is App fixture evidence; CFL's exact native
+consumer regression remains a separate #4010 acceptance gate.

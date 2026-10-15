@@ -124,7 +124,7 @@ export type MessageSource = Static<typeof MessageSourceSchema>;
 
 export const MessageSchema = Type.Object(
   {
-    images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
+    images: Type.Optional(Type.Array(ImageRefSchema)),
     source: Type.Optional(MessageSourceSchema),
     id: Id,
     role: Type.Union([
