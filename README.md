@@ -11,8 +11,9 @@ completed-message delivery, targeted stop, and reconnect reconciliation. Online
 sends appear immediately as normal outgoing bubbles, including images before
 upload finishes. Success is silent; offline text/images stay editable. Confirmed
 nonadmission retains a failed bubble with direct Retry and confirmed Delete. Lost replies keep the
-optimistic message while its exact operation is looked up, without automatic replay. Companion answers display as messages at source line breaks by default, with real available text
-growing during generation when the backend provides an in-progress reply. Settings
+optimistic message while its exact operation is looked up, without automatic replay. Companion answers display as messages at source line breaks by default, with complete source lines
+appearing during generation when the backend provides an in-progress reply. An
+unfinished line appears when its newline arrives; completion reveals the final tail. Settings
 can switch to one whole-reply bubble. Each display message has its own
 visible avatar, source time and local long-press Copy. History and complete-only arrivals show all
 text immediately; preserved messages remain unchanged. See [sentence replies](docs/sentence-replies.md). Streaming voice

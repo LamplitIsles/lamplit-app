@@ -88,6 +88,8 @@ export interface TimelineMessageUnit {
   thinking?: string;
   /** Only ordinary companion answers participate in sentence display. */
   answer?: boolean;
+  /** In-progress answer source; only complete source lines are displayed. */
+  streaming?: boolean;
   keet?: KeetSource;
   matrix?: MatrixSource;
   alarm?: boolean;

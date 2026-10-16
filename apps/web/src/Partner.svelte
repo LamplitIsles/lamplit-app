@@ -189,6 +189,7 @@
         side: "incoming",
         time: preview.createdAt,
         answer: true,
+        streaming: true,
         items: [
           {
             id: key,

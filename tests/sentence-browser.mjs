@@ -6,6 +6,56 @@ import { denyNativeNotifications } from "./notification-permission.mjs";
 import { resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
+// Exercise the real socket → Partner → Companion → Markdown DOM path.
+async function atomicStreamingChecks(page, control) {
+  await control("session");
+  const bubbles = page.locator(".message-received .companion-text-bubble");
+  await expect(bubbles).toHaveCount(0);
+  const previewDelivered = async (text) => {
+    // Wait for this exact authoritative preview to reach the browser before
+    // checking absence: a count of zero before socket delivery proves nothing.
+    await page.waitForFunction(
+      (text) =>
+        window.atomicPreviewFrames?.some((raw) =>
+          raw.includes(JSON.stringify(text)),
+        ),
+      text,
+    );
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+  };
+  for (const [action, text] of [
+    ["start", "正"],
+    ["advance", "正在"],
+    ["advance", "正在生成。同行第二句。"],
+  ]) {
+    const held = await control(action, text);
+    expect(held.held).toBe(true);
+    await previewDelivered(text);
+    console.log(
+      "atomic held observation",
+      JSON.stringify({ text, visible: await bubbles.allTextContents() }),
+    );
+    await expect(bubbles).toHaveCount(0);
+  }
+  await control("advance", "正在生成。同行第二句。\r");
+  await previewDelivered("正在生成。同行第二句。\r");
+  await expect(bubbles).toHaveCount(0);
+  await control("advance", "正在生成。同行第二句。\r\n第二行");
+  await expect(bubbles).toHaveText(["正在生成。同行第二句。"]);
+  await control("advance", "正在生成。同行第二句。\r\n第二行完成\n最后尾巴");
+  await expect(bubbles).toHaveText(["正在生成。同行第二句。", "第二行完成"]);
+  expect((await control("status")).held).toBe(true);
+  await control("complete", "正在生成。同行第二句。\r\n第二行完成\n最后尾巴");
+  await expect(bubbles).toHaveText([
+    "正在生成。同行第二句。",
+    "第二行完成",
+    "最后尾巴",
+  ]);
+  await expect(page.locator('[data-testid^="message-preview:"]')).toHaveCount(
+    0,
+  );
+}
+
 const profile = process.env.APP_ACCEPTANCE_PROFILE ?? "default";
 if (profile !== "default" && profile !== "cfl")
   throw new Error(`Unknown APP_ACCEPTANCE_PROFILE: ${profile}`);
@@ -76,6 +126,18 @@ try {
     });
     await context.addInitScript(denyNativeNotifications);
     await context.addInitScript(() => {
+      window.atomicPreviewFrames = [];
+      const NativeSocket = window.WebSocket;
+      window.WebSocket = class extends NativeSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener("message", (event) =>
+            window.atomicPreviewFrames.push(String(event.data)),
+          );
+        }
+      };
+    });
+    await context.addInitScript(() => {
       Object.defineProperty(navigator, "clipboard", {
         value: {
           writeText: async (text) => {
@@ -103,6 +165,11 @@ try {
       await expect(userBubbles).toHaveText([SENTENCE_PROMPT]);
       await expect(userBubbles).toBeVisible();
     };
+    if (process.argv.includes("--atomic-only")) {
+      await atomicStreamingChecks(page, control);
+      await context.close();
+      continue;
+    }
     await expect(
       bubbles.filter({ hasText: /^历史第一行。同行第二句。$/ }),
     ).toHaveCount(1);
@@ -209,7 +276,7 @@ try {
     // Reconstructed source line breaks, not the unknown screenshot Markdown.
     const screenshotSource =
       "> **一个222米的新坑，2025年才发现**。同行的说明不再按句号拆开。\n> 发现办法是比对照片。\n> 发现后又拍了半年。\n\n两处「没想到」：\n\n1. 它在**一百多公里以外**留下痕迹；\n2. **喷出角度更大**，而且至少两波。\n\n按模型，平均**132年**才形成一个。赶上一回是一辈子的事。\n它落在**两种岩石的交界**上。只有挖深才翻出材料。\n名字是 **McGetchin**。这个坑三样都齐了。";
-    await control("start", screenshotSource);
+    await control("start", screenshotSource + "\n");
     await expect(
       bubbles.filter({ has: page.locator("blockquote") }),
     ).toHaveCount(3);
@@ -255,7 +322,7 @@ try {
       path: `${evidence}/screenshot-shape-${width}.png`,
     });
     const shapeTexts = await shape.allTextContents();
-    await control("complete", screenshotSource);
+    await control("complete", screenshotSource + "\n");
     await page.reload();
     await expect(shape).toHaveCount(8);
     expect(await shape.allTextContents()).toEqual(shapeTexts);
@@ -325,26 +392,30 @@ try {
         "安全后行",
       ],
     ]) {
-      await control("start", source);
+      await control("start", source + "\n");
       await expect(bubbles.locator(selector).last()).toBeVisible();
       await expect(bubbles.filter({ hasText: marker })).toHaveCount(1);
-      await control("complete", source);
+      await control("complete", source + "\n");
     }
-    const started = await control("start", "正在第一句。同行第二句。");
+    const started = await control("start", "正在第一句。同行第二句。\r");
     expect(started.held).toBe(true);
     expect(started.generationId).toBeTruthy();
     expect(started.executions).toBeGreaterThan(0);
+    await expect(
+      bubbles.filter({ hasText: /^正在第一句。同行第二句。$/ }),
+    ).toHaveCount(0);
+    await control("advance", "正在第一句。同行第二句。\r\n");
     const first = bubbles.filter({ hasText: /^正在第一句。同行第二句。$/ });
     await expect(first).toHaveCount(1);
     await first.evaluate((el) => {
       el.dataset.crIdentity = "stable";
     });
-    await control("advance", "正在第一句。同行第二句。\r");
+
     await expect(first).toHaveAttribute("data-cr-identity", "stable");
     const answer = "正在第一句。同行第二句。\r\n第二行增长";
     await control("advance", answer);
     await expect(first).toHaveAttribute("data-cr-identity", "stable");
-    await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(1);
+    await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(0);
     expect(await copyBubble(first)).toBe("正在第一句。同行第二句。\r\n");
     await page.screenshot({ path: `${evidence}/held-${width}.png` });
     const choose = async (value) => {
@@ -376,12 +447,12 @@ try {
       bubbles.filter({ hasText: /^正在第一句。同行第二句。\s*第二行增长$/ }),
     ).toHaveCount(1);
     await choose(true);
-    await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(1);
+    await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(0);
     expect((await context.request.post(`${controlUrl}/disconnect`)).ok()).toBe(
       true,
     );
-    await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(0);
-    await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(1, {
+    await expect(first).toHaveCount(0);
+    await expect(first).toHaveCount(1, {
       timeout: 15000,
     });
     const reconnected = await control("status");
@@ -445,7 +516,7 @@ try {
       );
     }
     await page.screenshot({ path: `${evidence}/complete-${width}.png` });
-    const scrollText = Array(120).fill("滚动行").join("\n");
+    const scrollText = Array(120).fill("滚动行").join("\n") + "\n";
     await control("start", scrollText);
     const timeline = page.locator(".companion-timeline");
     await expect
@@ -463,7 +534,7 @@ try {
     const top = await timeline.evaluate((el) => el.scrollTop);
     await control(
       "advance",
-      scrollText + "\n" + Array(5).fill("滚动行").join("\n"),
+      scrollText + Array(5).fill("滚动行").join("\n") + "\n",
     );
     await expect(bubbles.filter({ hasText: /^滚动行$/ })).toHaveCount(125);
     expect(
@@ -477,14 +548,14 @@ try {
         .filter({ hasText: "已停止回复" })
         .last(),
     ).toBeVisible();
-    await control("start", "失败临时行");
+    await control("start", "失败临时行\n隐藏尾巴");
     await expect(bubbles.filter({ hasText: "失败临时行" })).toHaveCount(1);
     await control("fail");
     await expect(
       page.locator(".companion-notice").filter({ hasText: "回复失败" }).last(),
     ).toBeVisible();
     await expect(bubbles.filter({ hasText: "失败临时行" })).toHaveCount(0);
-    await control("start", "切换临时行");
+    await control("start", "切换临时行\n隐藏尾巴");
     await expect(bubbles.filter({ hasText: "切换临时行" })).toHaveCount(1);
     await control("session");
     await expect(bubbles.filter({ hasText: "切换临时行" })).toHaveCount(0);
@@ -508,6 +579,7 @@ try {
       await control("session");
       await expect(bubbles).toHaveCount(0);
       await control("start", source);
+      await control("complete", source);
       await expectPrompt();
       await expect(bubbles).toHaveCount(expected.length);
       expect(await bubbles.allTextContents()).toEqual(expected);
@@ -525,7 +597,6 @@ try {
       expect(await bubbles.textContent()).toBe(source);
       await choose(true);
       await expectPrompt();
-      await control("complete", source);
     }
     // HTML cleanup may rewrite raw spelling; only source tokens own offsets.
     for (const source of [
@@ -539,6 +610,7 @@ try {
       await control("session");
       await expect(bubbles).toHaveCount(0);
       await control("start", source);
+      await control("complete", source);
       await expectPrompt();
       const inline = source.includes("before");
       await expect(bubbles).toHaveCount(inline ? 2 : 3);
@@ -562,7 +634,6 @@ try {
       );
       await choose(true);
       await expectPrompt();
-      await control("complete", source);
     }
     for (const parts of [
       ["<span>one\ntwo</span>\n", "after"],
@@ -576,6 +647,7 @@ try {
       await control("session");
       await expect(bubbles).toHaveCount(0);
       await control("start", source);
+      await control("complete", source);
       await expectPrompt();
       await expect(bubbles).toHaveCount(parts.length);
       await expect(bubbles.last()).toHaveText("after");
@@ -589,7 +661,6 @@ try {
       expect(await copyBubble(bubbles.first())).toBe(source);
       await choose(true);
       await expectPrompt();
-      await control("complete", source);
     }
     await control("session");
     await expect(bubbles).toHaveCount(0);
@@ -611,7 +682,7 @@ try {
     await control("advance", stableSource + " extended");
     await expect(
       bubbles.filter({ hasText: "growing tail extended" }),
-    ).toHaveCount(1);
+    ).toHaveCount(0);
     expect(
       await stableRoot.evaluate(
         (p) =>
@@ -629,7 +700,7 @@ try {
     await expectPrompt();
     const reference = bubbles.filter({ hasText: "reference before" });
     await expect(reference.locator("a")).toHaveCount(0);
-    const resolved = referenceSource + "\n\n[r]: https://late.test";
+    const resolved = referenceSource + "\n\n[r]: https://late.test\n";
     await control("advance", resolved);
     await expect(reference.locator("a")).toHaveAttribute(
       "href",
@@ -640,7 +711,7 @@ try {
       window.fixtureResolvedLink = link;
     });
     await control("advance", resolved + "\n\nadditional tail");
-    await expect(bubbles.filter({ hasText: "additional tail" })).toHaveCount(1);
+    await expect(bubbles.filter({ hasText: "additional tail" })).toHaveCount(0);
     expect(
       await reference
         .locator("a")
@@ -656,6 +727,7 @@ try {
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
+    await atomicStreamingChecks(page, control);
     await expectPrivacy();
     expect(errors).toEqual([]);
     await context.close();
@@ -668,6 +740,9 @@ try {
           ? "external semantic host; native provenance supplied by host"
           : "App DTO fixture",
         acceptance: "passed",
+        scope: process.argv.includes("--atomic-only")
+          ? "atomic streaming"
+          : "full sentence replies",
         profile,
         widths: [390, 1280],
         heldBeforeTerminal: true,
@@ -679,7 +754,11 @@ try {
       2,
     ),
   );
-  console.log("Sentence replies browser acceptance passed");
+  console.log(
+    process.argv.includes("--atomic-only")
+      ? "Atomic streaming browser acceptance passed"
+      : "Sentence replies browser acceptance passed",
+  );
 } finally {
   await browser.close();
   host?.close();

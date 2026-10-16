@@ -1,13 +1,18 @@
 # Source-line reply messages
 
-Spec: FlickNote #4105; acceptance profile #4128; research #4103. #4085/#4086 describe the historical first delivery.
+Spec: FlickNote #4150 (atomic streaming source lines), #4105; acceptance profile #4128; research #4103. #4085/#4086 describe the historical first delivery.
 
 Ordinary companion answers display as independent messages at their **source LF or
 CRLF line breaks** by default. Multiple sentences on one source line stay together;
 CSS wrapping does not create a message. Consecutive blank lines produce no empty
 messages, but all original whitespace remains in the source spans. Entirely blank replies
-produce no display row while their preserved source remains untouched. The unfinished
-last line grows immediately, without a reveal queue, pacing timer or fake typing.
+produce no display row while their preserved source remains untouched. While generation continues, an unfinished source line stays hidden until its LF
+arrives (including CRLF received in separate updates). Each completed line appears
+in that update; no punctuation, reveal queue, pacing timer or fake typing is used.
+Completion reveals the exact remaining tail once, even without a final newline.
+Stop/failure discard the preview; reconnect reconstructs it from current authority,
+and session changes cannot reveal a previous reply's held text. Whole reply mode
+continues to show the current full preview immediately.
 Settings → Appearance and language → Reply display switches between Source lines
 and Whole reply, immediately and across reloads. Local storage failure leaves the
 current page usable. History and older pages use the same projection.
@@ -49,8 +54,13 @@ instance retains only its previous identical render-token value to keep inner DO
 nodes stable; comparison includes resolved reference links, so late definitions
 still update the visible link. Single-dollar math cannot span source lines in the
 installed extension; ordinary dollar amounts do not protect following lines.
-Supported multiline `\(...\)` and block math retain their token spans. No
-streaming state machine or global render cache was added. Research #4103's former natural-language boundary recommendation
+Supported multiline `\(...\)` and block math retain their token spans. The source-line presentation parses only the complete-line preview prefix, then
+applies the same Markdown grouping and renderer cleanup as history. Partial next-line
+syntax cannot change that visible prefix. Lists, fences and other necessary
+structures remain grouped as complete source lines accumulate. Copy of a visible
+message contains only its displayed source span; hidden tail text remains solely in
+the authoritative preview until revealed. Final/history parsing uses the complete
+source. No streaming state machine or global render cache was added. Research #4103's former natural-language boundary recommendation
 was superseded by the user's source-newline clarification in #4105. SentenceX,
 sentence-splitter, remend and streaming-markdown are unnecessary for this policy;
 no dependency, WASM initialization or NLP layer was added.
@@ -61,11 +71,13 @@ no dependency, WASM initialization or NLP layer was added.
 bun run build
 bun test tests/sentence-replies.test.ts tests/newline-units.test.ts tests/sentence-stream.test.ts
 bun tests/sentence-browser.mjs
+# Fast actual socket/DOM regression, at both mobile and desktop widths:
+bun tests/sentence-browser.mjs --atomic-only
 ```
 
 The socket/controller test covers field addition, growth, removal, atomic final
 replacement, reconnect, no partial pending storage and completion-only notifications.
-The browser checks history/older pages, default/toggle/reload, held text growth,
+The browser checks history/older pages, default/toggle/reload, atomic complete-line reveal with a held tail,
 local/whole copy, visible avatars/source times, source newlines, same-line sentences, screenshot-shaped Markdown, reconnect, final replacement, stop/failure/session and scroll behavior,
 at 390px and 1280px. The screenshot-shaped fixture reconstructs visible structure, not an unknown
 production Markdown/event trace. Browser checks use real mobile touch holds and

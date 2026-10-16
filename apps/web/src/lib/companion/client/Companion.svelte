@@ -552,14 +552,17 @@
     const content = unit.items
       .flatMap((item) =>
         splitSentences && unit.answer && item.kind === "text"
-          ? replyChunks(item.text, lexMarkdown, cleanMarkdownProjection).map(
-              (chunk) => ({
-                ...item,
-                id: `${item.id}:line:${chunk.start}`,
-                text: chunk.text,
-                markdownTokens: chunk.tokens,
-              }),
-            )
+          ? replyChunks(
+              item.text,
+              lexMarkdown,
+              cleanMarkdownProjection,
+              unit.streaming,
+            ).map((chunk) => ({
+              ...item,
+              id: `${item.id}:line:${chunk.start}`,
+              text: chunk.text,
+              markdownTokens: chunk.tokens,
+            }))
           : [item],
       )
       .filter(

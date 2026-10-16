@@ -194,3 +194,39 @@ test("paired inline HTML protects only through its closing source tag", () => {
     "after",
   ]);
 });
+
+test("streaming projection holds every unfinished source prefix, final projection flushes exact tail", () => {
+  const source = "第一行。同行第二句。\r\n第二行🙂\n最终尾巴";
+  for (let end = 0; end <= source.length; end++) {
+    const prefix = source.slice(0, end);
+    const visible = prefix.slice(0, prefix.lastIndexOf("\n") + 1);
+    expect(
+      replyChunks(prefix, undefined, undefined, true)
+        .map((c) => c.text)
+        .join(""),
+    ).toBe(visible);
+    expect(
+      replyChunks(prefix)
+        .map((c) => c.text)
+        .join(""),
+    ).toBe(prefix);
+  }
+});
+
+test("only complete source lines can change grouped streaming Markdown", () => {
+  for (const source of [
+    "- one\n  - nested\n- two\n",
+    "```js\na();\n```\n",
+    "| A |\n|---|\n| B |\n",
+    "> **across\n> lines**\n",
+    "<span>one\ntwo</span>\n",
+    "first\n\n\n",
+  ]) {
+    const stable = replyChunks(source, undefined, undefined, true);
+    expect(stable.map((c) => c.text).join("")).toBe(source);
+    for (const tail of ["尾", "尾巴", "尾巴**", "尾巴\r"])
+      expect(replyChunks(source + tail, undefined, undefined, true)).toEqual(
+        stable,
+      );
+  }
+});

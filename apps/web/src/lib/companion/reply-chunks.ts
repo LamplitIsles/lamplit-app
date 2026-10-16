@@ -17,7 +17,11 @@ export function replyChunks(
   parse: (source: string) => Token[] = (source) =>
     Lexer.lex(source, { gfm: true }),
   clean: (tokens: Token[]) => Token[] = (tokens) => tokens,
+  streaming = false,
 ): ReplyChunk[] {
+  // Hold the unfinished source line before parsing, so partial Markdown cannot
+  // change the visible structure. Final/history callers retain the exact tail.
+  if (streaming) source = source.slice(0, source.lastIndexOf("\n") + 1);
   if (!source) return [];
   // Marked normalizes line endings. Keep a boundary map back to original UTF-16.
   let text = "";
