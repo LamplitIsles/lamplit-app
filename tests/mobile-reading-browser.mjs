@@ -217,7 +217,11 @@ try {
             touchPoints: [],
           });
         };
-        for (const target of [pre, row("code").locator("table")]) {
+        // Code and table now occupy independent display rows from one source.
+        for (const target of [
+          pre,
+          page.locator(".companion-text-bubble table"),
+        ]) {
           expect(
             await target.evaluate((el) => el.scrollWidth > el.clientWidth),
             "local scroll extent",

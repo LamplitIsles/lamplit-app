@@ -67,9 +67,11 @@ The speech service is ready to receive the current take's audio. Local recording
 may already be underway; recognized text becomes an editable draft only on completion.
 _Avoid_: Microphone permission, recording started, message sent
 
-**Sentence bubble（分句气泡）**:
-A readable piece of one companion reply; several bubbles do not become separate preserved messages.
-_Avoid_: Separate message, saved sentence
+**Display message（显示消息）**:
+A readable source line or necessary Markdown structure from one companion reply, with its own visible
+avatar, source timestamp and local copy. Several display messages share one preserved
+source message; quote render wrappers are not source content.
+_Avoid_: Separate preserved message, punctuation-based sentence, per-line arrival time
 
 **In-progress reply（生成中的回复）**:
 A reply still being produced, distinct from the completed reply preserved in conversation history.

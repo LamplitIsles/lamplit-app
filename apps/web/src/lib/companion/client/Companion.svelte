@@ -127,7 +127,8 @@
   } from "./preferences.js";
   import { companionHistoryChanges } from "../relationship-history.js";
   import type { CompanionHistoryChange } from "../domain.js";
-  import { sentenceChunks } from "../sentence-replies.js";
+  import { lexMarkdown, cleanMarkdownProjection } from "./markdown-options.js";
+  import { replyChunks } from "../reply-chunks.js";
   import Markdown from "./Markdown.svelte";
   import Thinking from "./Thinking.svelte";
   import ConversationSearch from "./ConversationSearch.svelte";
@@ -551,12 +552,14 @@
     const content = unit.items
       .flatMap((item) =>
         splitSentences && unit.answer && item.kind === "text"
-          ? sentenceChunks(item.text).map((chunk) => ({
-              ...item,
-              id: `${item.id}:sentence:${chunk.start}`,
-              text: chunk.text,
-              sourceText: item.text,
-            }))
+          ? replyChunks(item.text, lexMarkdown, cleanMarkdownProjection).map(
+              (chunk) => ({
+                ...item,
+                id: `${item.id}:line:${chunk.start}`,
+                text: chunk.text,
+                markdownTokens: chunk.tokens,
+              }),
+            )
           : [item],
       )
       .filter(
@@ -1112,8 +1115,8 @@
   async function copyMessage(item: TimelineText): Promise<void> {
     try {
       if (Capacitor.isNativePlatform())
-        await Clipboard.write({ string: item.sourceText ?? item.text });
-      else await navigator.clipboard.writeText(item.sourceText ?? item.text);
+        await Clipboard.write({ string: item.text });
+      else await navigator.clipboard.writeText(item.text);
       copyToast = "messages.copied";
     } catch {
       copyToast = "messages.copyFailed";
@@ -2067,7 +2070,7 @@
               />
             {/each}
             <ListItem groupTitle title={t("preferences.replyDisplay")} />
-            {#each [[true, "preferences.sentences"], [false, "preferences.wholeReply"]] as option}
+            {#each [[true, "preferences.lines"], [false, "preferences.wholeReply"]] as option}
               <ListItem
                 radio
                 radioIcon="end"
@@ -2537,6 +2540,11 @@
                         sentenceReplies,
                       )}
                       {#each parts as part, partIndex (part.kind === "images" ? part.items[0].id : part.item.id)}
+                        {@const independentMessage =
+                          sentenceReplies &&
+                          unit.answer &&
+                          part.kind === "item" &&
+                          part.item.kind === "text"}
                         {#snippet imageContent()}{#if part.kind === "images"}
                             {#if partIndex === 0 && unit.thinking}<Thinking
                                 text={unit.thinking}
@@ -2671,7 +2679,10 @@
                                     {t}
                                   />
                                 {:else}
-                                  <Markdown text={part.item.text} />
+                                  <Markdown
+                                    text={part.item.text}
+                                    tokens={part.item.markdownTokens}
+                                  />
                                 {/if}
                               </div>
                             {:else if part.item.kind === "voice"}
@@ -2825,13 +2836,16 @@
                           (unit.keet || unit.matrix || unit.alarm)
                             ? messageSource
                             : undefined}
-                          footer={partIndex === parts.length - 1 &&
+                          footer={(independentMessage ||
+                            partIndex === parts.length - 1) &&
                           (unit.time !== undefined || unit.pendingLabel)
                             ? messageMetadata
                             : undefined}
-                          first={partIndex === 0}
-                          last={partIndex === parts.length - 1}
-                          tail={partIndex === parts.length - 1}
+                          first={independentMessage || partIndex === 0}
+                          last={independentMessage ||
+                            partIndex === parts.length - 1}
+                          tail={independentMessage ||
+                            partIndex === parts.length - 1}
                           type={unit.side === "incoming" ? "received" : "sent"}
                           image={part.kind === "images"
                             ? imageContent

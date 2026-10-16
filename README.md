@@ -11,9 +11,10 @@ completed-message delivery, targeted stop, and reconnect reconciliation. Online
 sends appear immediately as normal outgoing bubbles, including images before
 upload finishes. Success is silent; offline text/images stay editable. Confirmed
 nonadmission retains a failed bubble with direct Retry and confirmed Delete. Lost replies keep the
-optimistic message while its exact operation is looked up, without automatic replay. Companion answers display as sentence bubbles by default, with real available text
+optimistic message while its exact operation is looked up, without automatic replay. Companion answers display as messages at source line breaks by default, with real available text
 growing during generation when the backend provides an in-progress reply. Settings
-can switch to one whole-reply bubble. History and complete-only arrivals show all
+can switch to one whole-reply bubble. Each display message has its own
+visible avatar, source time and local long-press Copy. History and complete-only arrivals show all
 text immediately; preserved messages remain unchanged. See [sentence replies](docs/sentence-replies.md). Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
 reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery

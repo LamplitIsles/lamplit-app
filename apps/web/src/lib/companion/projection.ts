@@ -12,8 +12,8 @@ export interface TimelineText {
   /** Durable source kind used by the Chat target. */
   origin?: "user" | "steering";
   text: string;
-  /** Full source answer for copy from any sentence fragment. */
-  sourceText?: string;
+  /** Optional display-only Markdown tokens with shared source context. */
+  markdownTokens?: import("marked").Token[];
   pending?: boolean;
   /** Whether this submission was admitted while an earlier reply was active. */
   waitsForCurrentReply?: boolean;

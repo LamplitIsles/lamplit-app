@@ -232,6 +232,17 @@ const archive = sentence
             : thinking
               ? "lamplit-collapsed-thinking.tgz"
               : "lamplit-native-durable-submissions.tgz";
+if (sentence) {
+  await command([
+    "git",
+    "archive",
+    "--format=tar.gz",
+    "--output",
+    join(output, "source.tgz"),
+    appHead,
+  ]);
+  await copyFile(join(output, "source.tgz"), join(stage, "source.tgz"));
+}
 await command(["tar", "-czf", join(output, archive), "."], stage);
 const thinkingRunnerSHA256 = thinking
   ? await hash(join(acceptance, "thinking-browser.mjs"))
@@ -255,7 +266,7 @@ const searchRunnerSHA256 =
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
   spec: sentence
-    ? 4085
+    ? 4105
     : structuredSearch
       ? 4006
       : failedActions
@@ -272,7 +283,7 @@ const identity = {
   appHead,
   sourceTree: await command(["git", "rev-parse", "HEAD^{tree}"]),
   baseline: sentence
-    ? "3b24dce8fa06a7a9602463524a578d8b8721b4de"
+    ? "82cc86c679266b097e003d7b001edfc56f0cb7cf"
     : structuredSearch
       ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
       : failedActions
@@ -289,6 +300,12 @@ const identity = {
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),
+  ...(sentence
+    ? {
+        sourceArchive: "source.tgz",
+        sourceArchiveSHA256: await hash(join(output, "source.tgz")),
+      }
+    : {}),
   manifests,
   ...(reading ? { readingRunnerSHA256 } : {}),
   ...(fastVoice ? { voiceRunnerSHA256 } : {}),

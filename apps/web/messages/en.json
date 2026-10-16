@@ -286,6 +286,6 @@
   "messages.deleteFailedConfirm": "Delete this failed message?",
   "messages.failedActions": "Failed message actions",
   "preferences.replyDisplay": "Reply display",
-  "preferences.sentences": "Sentences",
+  "preferences.lines": "Source lines",
   "preferences.wholeReply": "Whole reply"
 }

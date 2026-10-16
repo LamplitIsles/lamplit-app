@@ -4,6 +4,8 @@ import type {
   StreamingReply,
 } from "../packages/contracts/src/index.ts";
 
+export const SENTENCE_PROMPT = "Test-owned sentence acceptance input";
+
 /** App-only model of the semantic controls documented in docs/sentence-replies.md.
  * Native acceptance must translate them to its real held fake provider/events. */
 export function sentenceFixture() {
@@ -31,10 +33,14 @@ export function sentenceFixture() {
   });
   const seed = () => {
     messages = [
-      record("history", "历史第一句。历史第二句。", { thinking: "一次思考" }),
+      record("history", "历史第一行。同行第二句。\n历史第二行。", {
+        thinking: "一次思考",
+      }),
     ];
     older = [
-      record("older", "更早第一句。更早第二句。", { createdAt: 1792127000000 }),
+      record("older", "更早第一行。\n更早第二行。", {
+        createdAt: 1792127000000,
+      }),
     ];
     preview = undefined;
     active = null;
@@ -58,6 +64,15 @@ export function sentenceFixture() {
         if (preview) throw new Error("Provider already held");
         executions++;
         active = `turn-${++attempt}`;
+        // Model real user/answer coexistence in isolated handoff cases.
+        // Existing seeded-history cases stay within the contract page limit.
+        if (messages.length === 0)
+          messages.push(
+            record(`prompt-${attempt}`, SENTENCE_PROMPT, {
+              role: "user",
+              turnId: active,
+            }),
+          );
         preview = {
           id: `attempt-${attempt}`,
           turnId: active,
@@ -108,7 +123,7 @@ export function sentenceFixture() {
         break;
       case "excluded":
         messages.push(
-          record("keet", "Keet第一句。Keet第二句。", {
+          record("keet", "Keet第一行。\nKeet第二行。", {
             source: {
               kind: "keet",
               channel: "dm",
@@ -118,7 +133,7 @@ export function sentenceFixture() {
           }),
         );
         messages.push(
-          record("matrix", "Matrix第一句。Matrix第二句。", {
+          record("matrix", "Matrix第一行。\nMatrix第二行。", {
             source: {
               kind: "matrix",
               senderId: "@fixture:test",
@@ -130,17 +145,26 @@ export function sentenceFixture() {
         messages.push(
           record(
             "rich",
-            "普通第一句。普通第二句。\n\n**粗体第一句。粗体第二句。**\n\n```js\na.b();\n```",
+            "普通第一行。同行第二句。\n普通第二行。\n\n**粗体第一句。粗体第二句。**\n\n```js\na.b();\n```",
+            {
+              thinking: "图片组合一次思考",
+              images: [1, 2].map((i) => ({
+                attachmentId: `sentence-image-${i}`,
+                name: `image-${i}.png`,
+                mediaType: "image/png" as const,
+                availability: "missing" as const,
+              })),
+            },
           ),
         );
         messages.push(
-          record("user", "用户第一句。用户第二句。", { role: "user" }),
+          record("user", "用户第一行。\n用户第二行。", { role: "user" }),
         );
         messages.push(
-          record("notice", "提示第一句。提示第二句。", { role: "notice" }),
+          record("notice", "提示第一行。\n提示第二行。", { role: "notice" }),
         );
         messages.push(
-          record("reminder", "提醒第一句。提醒第二句。", {
+          record("reminder", "提醒第一行。\n提醒第二行。", {
             source: {
               kind: "reminder",
               reminderId: "alarm",
