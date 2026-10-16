@@ -25,6 +25,7 @@
     writePreference,
     LANGUAGE_STORAGE_KEY,
     APPEARANCE_STORAGE_KEY,
+    SENTENCE_STORAGE_KEY,
     type CompanionLanguage,
     type CompanionAppearance,
   } from "./lib/companion/client/preferences.ts";
@@ -41,6 +42,7 @@
   const preferences = initialPreferences();
   let language = $state<CompanionLanguage>(preferences.language);
   let appearance = $state<CompanionAppearance>(preferences.appearance);
+  let sentenceReplies = $state(preferences.sentenceReplies);
   let systemDark = $state(preferences.systemDark);
   const scheme = $derived(resolveScheme(appearance, systemDark));
   const t = $derived(companionTranslate(language));
@@ -85,6 +87,7 @@
       (m) =>
         ({
           id: m.id,
+          answer: m.role === "agent" && !m.source,
           thinking: m.role === "agent" ? m.thinking : undefined,
           alarm: m.source?.kind === "reminder",
           keet: m.source?.kind === "keet" ? m.source : undefined,
@@ -175,6 +178,28 @@
               : []),
           ],
         });
+    const preview = chatState?.connected ? view?.streamingReply : undefined;
+    if (preview?.text) {
+      const key = `preview:${preview.id}`;
+      const position = units.findIndex(
+        (unit) => (unit.time ?? 0) > preview.createdAt,
+      );
+      units.splice(position < 0 ? units.length : position, 0, {
+        id: key,
+        side: "incoming",
+        time: preview.createdAt,
+        answer: true,
+        items: [
+          {
+            id: key,
+            messageKey: key,
+            kind: "text",
+            side: "incoming",
+            text: preview.text,
+          },
+        ],
+      });
+    }
     const compacting =
       !!chatState?.compactPending || view?.compaction?.status === "running";
     return {
@@ -315,6 +340,11 @@
   {t}
   locale={language}
   {appearance}
+  {sentenceReplies}
+  onSentenceRepliesChange={(value) => {
+    sentenceReplies = value;
+    writePreference(SENTENCE_STORAGE_KEY, String(value));
+  }}
   panelRevision={chatState?.panelRevision ?? 0}
   history={{
     status: chatState?.relationshipStatus ?? "loading",

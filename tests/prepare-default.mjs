@@ -9,6 +9,7 @@ import {
 import { resolve, join, relative, dirname } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
+const sentence = process.argv.includes("--sentence-replies");
 const failedActions = process.argv.includes("--failed-message-actions");
 const structuredSearch = process.argv.includes("--structured-search-snippets");
 const fastVoice =
@@ -21,19 +22,21 @@ const thinking = matrix || process.argv.includes("--collapsed-thinking");
 const appHead = await command(["git", "rev-parse", "HEAD"]);
 const output = join(
   root,
-  structuredSearch
-    ? `.scratch/structured-search-snippets/candidate-${appHead}`
-    : failedActions
-      ? `.scratch/failed-message-actions/candidate-${appHead}`
-      : fastVoice
-        ? `.scratch/fast-voice-start/candidate-${appHead}`
-        : reading
-          ? `.scratch/mobile-reading-layout/candidate-${appHead}`
-          : matrix
-            ? ".scratch/matrix-source-ui/candidate"
-            : thinking
-              ? ".scratch/collapsed-thinking/candidate"
-              : ".scratch/native-durable-submissions/candidate",
+  sentence
+    ? `.scratch/sentence-replies/candidate-${appHead}`
+    : structuredSearch
+      ? `.scratch/structured-search-snippets/candidate-${appHead}`
+      : failedActions
+        ? `.scratch/failed-message-actions/candidate-${appHead}`
+        : fastVoice
+          ? `.scratch/fast-voice-start/candidate-${appHead}`
+          : reading
+            ? `.scratch/mobile-reading-layout/candidate-${appHead}`
+            : matrix
+              ? ".scratch/matrix-source-ui/candidate"
+              : thinking
+                ? ".scratch/collapsed-thinking/candidate"
+                : ".scratch/native-durable-submissions/candidate",
 );
 if (await Bun.file(join(output, "identity.json")).exists())
   throw new Error("Candidate exists; preserve its identity for Owner review");
@@ -71,7 +74,7 @@ async function copyTree(source, target) {
     await copyFile(path, destination);
   }
 }
-if (fastVoice) {
+if (fastVoice || sentence) {
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output); // Exclusive new task/HEAD directory, including partial attempts.
 } else await mkdir(output, { recursive: true });
@@ -89,6 +92,7 @@ for (const name of ["package.json", "LICENSE"])
 const acceptance = join(stage, "acceptance");
 await mkdir(join(acceptance, "docs"), { recursive: true });
 for (const name of [
+  ...(sentence ? ["sentence-browser.mjs", "sentence-fixture.ts"] : []),
   ...(reading ? ["mobile-reading-browser.mjs"] : []),
   ...(matrix ? ["matrix-browser.mjs", "matrix-fixture.ts"] : []),
   ...(thinking ? ["thinking-browser.mjs", "thinking-fixture.ts"] : []),
@@ -138,17 +142,20 @@ await writeFile(
     await readFile(
       join(
         root,
-        fastVoice
-          ? "docs/default-shared-frontend.md"
-          : reading
-            ? "docs/mobile-reading-layout.md"
-            : "docs/default-shared-frontend.md",
+        sentence
+          ? "docs/sentence-replies.md"
+          : fastVoice
+            ? "docs/default-shared-frontend.md"
+            : reading
+              ? "docs/mobile-reading-layout.md"
+              : "docs/default-shared-frontend.md",
       ),
       "utf8",
     )
   ).replace(/\(([a-z-]+\.md)\)/g, "(docs/$1)"),
 );
 for (const name of [
+  ...(sentence ? ["sentence-replies.md"] : []),
   ...(reading ? ["mobile-reading-layout.md"] : []),
   ...(matrix ? ["matrix-source-ui.md"] : []),
   ...(thinking ? ["collapsed-thinking.md"] : []),
@@ -182,7 +189,7 @@ await writeFile(
     2,
   ) + "\n",
 );
-if (thinking) {
+if (thinking || sentence) {
   // Freeze dependency resolution as in the existing Keet preparation.
   await command(
     ["bun", "install", "--lockfile-only"],
@@ -210,19 +217,21 @@ for (const [name, directory] of [
   };
 }
 await writeFile(join(stage, "SOURCE_HEAD"), appHead + "\n");
-const archive = structuredSearch
-  ? "lamplit-structured-search-snippets.tgz"
-  : failedActions
-    ? "lamplit-failed-message-actions.tgz"
-    : fastVoice
-      ? "lamplit-fast-voice-start.tgz"
-      : reading
-        ? "lamplit-mobile-reading-layout.tgz"
-        : matrix
-          ? "lamplit-matrix-source-ui.tgz"
-          : thinking
-            ? "lamplit-collapsed-thinking.tgz"
-            : "lamplit-native-durable-submissions.tgz";
+const archive = sentence
+  ? "lamplit-sentence-replies.tgz"
+  : structuredSearch
+    ? "lamplit-structured-search-snippets.tgz"
+    : failedActions
+      ? "lamplit-failed-message-actions.tgz"
+      : fastVoice
+        ? "lamplit-fast-voice-start.tgz"
+        : reading
+          ? "lamplit-mobile-reading-layout.tgz"
+          : matrix
+            ? "lamplit-matrix-source-ui.tgz"
+            : thinking
+              ? "lamplit-collapsed-thinking.tgz"
+              : "lamplit-native-durable-submissions.tgz";
 await command(["tar", "-czf", join(output, archive), "."], stage);
 const thinkingRunnerSHA256 = thinking
   ? await hash(join(acceptance, "thinking-browser.mjs"))
@@ -236,49 +245,61 @@ const readingRunnerSHA256 = reading
 const voiceRunnerSHA256 = fastVoice
   ? await hash(join(acceptance, "voice-browser.mjs"))
   : undefined;
-const searchRunnerSHA256 = structuredSearch
-  ? await hash(join(acceptance, "search-browser.mjs"))
+const sentenceRunnerSHA256 = sentence
+  ? await hash(join(acceptance, "sentence-browser.mjs"))
   : undefined;
+const searchRunnerSHA256 =
+  structuredSearch || sentence
+    ? await hash(join(acceptance, "search-browser.mjs"))
+    : undefined;
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: structuredSearch
-    ? 4006
-    : failedActions
-      ? 3936
-      : fastVoice
-        ? 3734
-        : reading
-          ? 3687
-          : matrix
-            ? 3560
-            : thinking
-              ? 3522
-              : 3435,
+  spec: sentence
+    ? 4085
+    : structuredSearch
+      ? 4006
+      : failedActions
+        ? 3936
+        : fastVoice
+          ? 3734
+          : reading
+            ? 3687
+            : matrix
+              ? 3560
+              : thinking
+                ? 3522
+                : 3435,
   appHead,
   sourceTree: await command(["git", "rev-parse", "HEAD^{tree}"]),
-  baseline: structuredSearch
-    ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
-    : failedActions
+  baseline: sentence
+    ? "3b24dce8fa06a7a9602463524a578d8b8721b4de"
+    : structuredSearch
       ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
-      : fastVoice
-        ? "6c7c479cbccc0a679939f8c1b4044417b97be56b"
-        : reading
-          ? "e535143b428b70129e2804cb6d191e53a26e26d4"
-          : matrix
-            ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
-            : thinking
-              ? "407aaf72979e0c05442697c6aaa758da845d88e0"
-              : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
+      : failedActions
+        ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
+        : fastVoice
+          ? "6c7c479cbccc0a679939f8c1b4044417b97be56b"
+          : reading
+            ? "e535143b428b70129e2804cb6d191e53a26e26d4"
+            : matrix
+              ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
+              : thinking
+                ? "407aaf72979e0c05442697c6aaa758da845d88e0"
+                : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),
   manifests,
-  ...(structuredSearch ? { searchRunnerSHA256 } : {}),
   ...(reading ? { readingRunnerSHA256 } : {}),
   ...(fastVoice ? { voiceRunnerSHA256 } : {}),
   ...(thinking ? { thinkingRunnerSHA256 } : {}),
   ...(matrix ? { matrixRunnerSHA256 } : {}),
+  ...(sentence ? { sentenceRunnerSHA256 } : {}),
+  ...(structuredSearch || sentence ? { searchRunnerSHA256 } : {}),
   runners: [
+    ...(sentence
+      ? ["sentence (App fixture or test-owned native held provider)"]
+      : []),
     ...(reading ? ["mobile-reading (App fixture only)"] : []),
     ...(matrix ? ["matrix"] : []),
     ...(thinking ? ["thinking"] : []),
@@ -295,7 +316,15 @@ const identity = {
     "native-gallery (plugin fake only)",
   ],
   localAcceptance: "test-owned App fixture; not native acceptance",
-  actualPiCflAcceptance: "pending Owner-approved exact-artifact native runs",
+  ...(sentence
+    ? {
+        actualChatAcceptance:
+          "pending Orc-approved exact-artifact native run; CFL excluded",
+      }
+    : {
+        actualPiCflAcceptance:
+          "pending Owner-approved exact-artifact native runs",
+      }),
 };
 await writeFile(
   join(output, "identity.json"),

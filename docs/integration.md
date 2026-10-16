@@ -180,3 +180,19 @@ including frozen contracts/browser and runnable acceptance. Both hosts remain
 blocked until Orc review and Owner byte approval; App merge waits for same-artifact
 native acceptance. Bind pins to the actual squash commit after equal-tree checking.
 See [Matrix fixture controls and verification](matrix-source-ui.md).
+
+## Sentence replies (#4085 / Chat #4086)
+
+Pi adapters may provide the optional answer-only `streamingReply` described in
+[the protocol](protocol.md). Read current native generation snapshots and events;
+keep native persistence unchanged. The authoritative final view removes the
+preview and includes the completed record together. Stop/failure/retry/reset
+must follow native history, without preserving a new partial answer. CFL is out
+of scope and can keep omitting previews. Browser disconnect discards preview
+authority; reconnect refresh restores current native truth.
+
+Use the exact reviewed App archive, compiled contracts and browser assets for
+Chat acceptance; do not rebuild or copy legacy types. Both PRs stay unmerged
+until joint same-artifact native/browser acceptance passes. The native-compatible
+runner, controls and freeze procedure are documented in
+[sentence replies](sentence-replies.md). Deployment is separate and not requested.

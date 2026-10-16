@@ -27,6 +27,7 @@
     "framework7-svelte": "9.2.0",
     "katex": "0.16.47",
     "lucide-svelte": "1.0.1",
+    "marked": "18.0.14",
     "svelte": "5.57.0"
   }
 }

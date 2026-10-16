@@ -12,6 +12,8 @@ export interface TimelineText {
   /** Durable source kind used by the Chat target. */
   origin?: "user" | "steering";
   text: string;
+  /** Full source answer for copy from any sentence fragment. */
+  sourceText?: string;
   pending?: boolean;
   /** Whether this submission was admitted while an earlier reply was active. */
   waitsForCurrentReply?: boolean;
@@ -84,6 +86,8 @@ export interface TimelineMessageUnit {
   origin?: "user" | "steering";
   time?: number;
   thinking?: string;
+  /** Only ordinary companion answers participate in sentence display. */
+  answer?: boolean;
   keet?: KeetSource;
   matrix?: MatrixSource;
   alarm?: boolean;

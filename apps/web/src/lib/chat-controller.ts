@@ -164,6 +164,7 @@ export class ChatController {
     void this.connect();
   }
   close() {
+    this.discardPreview();
     this.closed = true;
     this.connectionGeneration++;
     this.compactGeneration++;
@@ -552,9 +553,15 @@ export class ChatController {
         this.failedActions.delete(input.operationId);
     }
   }
+  private discardPreview() {
+    if (!this.view?.streamingReply) return;
+    const { streamingReply: _, ...completed } = this.view;
+    this.view = completed;
+  }
   private disconnected = () => {
     if (this.closed) return;
     this.connected = false;
+    this.discardPreview();
     this.updateRecovery();
     if (this.storageKey) this.save();
     if (this.compactPending) {

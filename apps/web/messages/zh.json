@@ -284,5 +284,8 @@
   "messages.retryFailed": "重试",
   "messages.deleteFailed": "删除",
   "messages.deleteFailedConfirm": "删除这条发送失败的消息？",
-  "messages.failedActions": "发送失败，重试或删除"
+  "messages.failedActions": "发送失败，重试或删除",
+  "preferences.replyDisplay": "回复显示",
+  "preferences.sentences": "按句显示",
+  "preferences.wholeReply": "整段显示"
 }

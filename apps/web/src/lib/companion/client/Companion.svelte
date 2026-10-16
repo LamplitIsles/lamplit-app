@@ -127,6 +127,7 @@
   } from "./preferences.js";
   import { companionHistoryChanges } from "../relationship-history.js";
   import type { CompanionHistoryChange } from "../domain.js";
+  import { sentenceChunks } from "../sentence-replies.js";
   import Markdown from "./Markdown.svelte";
   import Thinking from "./Thinking.svelte";
   import ConversationSearch from "./ConversationSearch.svelte";
@@ -192,6 +193,9 @@
   };
   export let onHistoryOpenChange: ((open: boolean) => void) | undefined;
   export let panelRevision = 0;
+  export let sentenceReplies = true;
+  export let onSentenceRepliesChange: (value: boolean) => void = () =>
+    undefined;
   export let appearance: CompanionAppearance = "system";
   export let onAppearanceChange: (
     appearance: CompanionAppearance,
@@ -542,11 +546,25 @@
 
   function messageContentParts(
     unit: TimelineMessageUnit,
+    splitSentences: boolean,
   ): MessageContentPart[] {
-    const content = unit.items.filter(
-      (item): item is TimelineText | TimelineImage | TimelineVoice =>
-        item.kind === "text" || item.kind === "image" || item.kind === "voice",
-    );
+    const content = unit.items
+      .flatMap((item) =>
+        splitSentences && unit.answer && item.kind === "text"
+          ? sentenceChunks(item.text).map((chunk) => ({
+              ...item,
+              id: `${item.id}:sentence:${chunk.start}`,
+              text: chunk.text,
+              sourceText: item.text,
+            }))
+          : [item],
+      )
+      .filter(
+        (item): item is TimelineText | TimelineImage | TimelineVoice =>
+          item.kind === "text" ||
+          item.kind === "image" ||
+          item.kind === "voice",
+      );
     if (unit.side === "outgoing") {
       const images = content.filter(
         (item): item is TimelineImage => item.kind === "image",
@@ -1094,8 +1112,8 @@
   async function copyMessage(item: TimelineText): Promise<void> {
     try {
       if (Capacitor.isNativePlatform())
-        await Clipboard.write({ string: item.text });
-      else await navigator.clipboard.writeText(item.text);
+        await Clipboard.write({ string: item.sourceText ?? item.text });
+      else await navigator.clipboard.writeText(item.sourceText ?? item.text);
       copyToast = "messages.copied";
     } catch {
       copyToast = "messages.copyFailed";
@@ -2048,6 +2066,18 @@
                   onAppearanceChange(option[0] as CompanionAppearance)}
               />
             {/each}
+            <ListItem groupTitle title={t("preferences.replyDisplay")} />
+            {#each [[true, "preferences.sentences"], [false, "preferences.wholeReply"]] as option}
+              <ListItem
+                radio
+                radioIcon="end"
+                name="companion-reply-display"
+                value={String(option[0])}
+                title={t(option[1] as CompanionLocaleKey)}
+                checked={sentenceReplies === option[0]}
+                onChange={() => onSentenceRepliesChange(option[0] as boolean)}
+              />
+            {/each}
             <ListItem groupTitle title={t("preferences.language")} />
             {#each [["zh", "中文"], ["en", "English"]] as option}
               <ListItem
@@ -2502,7 +2532,10 @@
                         <p>{noticeText(first, t)}</p>
                       </div>
                     {:else}
-                      {@const parts = messageContentParts(unit)}
+                      {@const parts = messageContentParts(
+                        unit,
+                        sentenceReplies,
+                      )}
                       {#each parts as part, partIndex (part.kind === "images" ? part.items[0].id : part.item.id)}
                         {#snippet imageContent()}{#if part.kind === "images"}
                             {#if partIndex === 0 && unit.thinking}<Thinking

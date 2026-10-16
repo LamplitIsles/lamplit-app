@@ -66,3 +66,11 @@ _Avoid_: Recognition connected, transcript ready
 The speech service is ready to receive the current take's audio. Local recording
 may already be underway; recognized text becomes an editable draft only on completion.
 _Avoid_: Microphone permission, recording started, message sent
+
+**Sentence bubble（分句气泡）**:
+A readable piece of one companion reply; several bubbles do not become separate preserved messages.
+_Avoid_: Separate message, saved sentence
+
+**In-progress reply（生成中的回复）**:
+A reply still being produced, distinct from the completed reply preserved in conversation history.
+_Avoid_: Completed reply, preserved message

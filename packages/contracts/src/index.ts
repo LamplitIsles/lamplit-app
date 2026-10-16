@@ -147,12 +147,19 @@ export const PageSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+/** Transient answer-only preview; omission removes the current generation attempt. */
+export const StreamingReplySchema = Type.Object(
+  { id: Id, turnId: NullableId, createdAt: Type.Number(), text: Type.String() },
+  { additionalProperties: false },
+);
+export type StreamingReply = Static<typeof StreamingReplySchema>;
 export const ViewSchema = Type.Object(
   {
     version: Type.Literal(PROTOCOL_VERSION),
     sessionId: Id,
     name: Type.String(),
     activeTurnId: NullableId,
+    streamingReply: Type.Optional(StreamingReplySchema),
     contextUsage: ContextUsageSchema,
     compaction: CompactionSchema,
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),

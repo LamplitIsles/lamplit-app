@@ -2,6 +2,8 @@ export type CompanionLanguage = "en" | "zh";
 export type CompanionAppearance = "light" | "dark" | "system";
 export type CompanionScheme = Exclude<CompanionAppearance, "system">;
 
+export const SENTENCE_STORAGE_KEY = "her.companion.sentence-replies";
+
 export const LANGUAGE_STORAGE_KEY = "her.companion.language";
 export const APPEARANCE_STORAGE_KEY = "her.companion.appearance";
 
@@ -51,6 +53,7 @@ export function initialPreferences(): {
   language: CompanionLanguage;
   appearance: CompanionAppearance;
   systemDark: boolean;
+  sentenceReplies: boolean;
 } {
   const language =
     languagePreference(readPreference(LANGUAGE_STORAGE_KEY)) ??
@@ -64,5 +67,10 @@ export function initialPreferences(): {
   } catch {
     /* system default remains light */
   }
-  return { language, appearance, systemDark };
+  return {
+    language,
+    appearance,
+    systemDark,
+    sentenceReplies: readPreference(SENTENCE_STORAGE_KEY) !== "false",
+  };
 }

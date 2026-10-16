@@ -242,6 +242,22 @@ single-line rules or payload/context fields are admitted. Adapters provide origi
 body and authored time separately; web submissions cannot supply provenance.
 See [Matrix presentation and native acceptance](matrix-source-ui.md).
 
+## In-progress answers
+
+`ChatView.streamingReply?` is `{ id, turnId, createdAt, text }`, using the same
+bounded nonempty ID, nullable turn ID, number time and string text conventions as
+messages. It contains only available answer text, never thinking, signatures,
+tool arguments or output. Omission means there is no current preview. The shared
+host refresh copies or deletes this field alongside completed messages atomically.
+No protocol/service identity changes are needed; unchanged CFL may omit it.
+
+The ID is stable per observed generation attempt and may differ from the final
+native entry ID. Reconnect snapshots can replace preview identity and text. On
+completion, remove the preview and include the final native message in the same
+view. Retry/stop/error/session reset must reconcile to native truth. Previews are
+excluded from completed messages, history, search, receipts and notifications;
+they create no durable record. See [sentence replies](sentence-replies.md).
+
 ## Output image references
 
 `ChatMessage.images` in both `view` and `history` preserves every stored reference

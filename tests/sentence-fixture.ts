@@ -1,0 +1,188 @@
+import { fixtureBackend } from "./fixture.ts";
+import type {
+  ChatMessage,
+  StreamingReply,
+} from "../packages/contracts/src/index.ts";
+
+/** App-only model of the semantic controls documented in docs/sentence-replies.md.
+ * Native acceptance must translate them to its real held fake provider/events. */
+export function sentenceFixture() {
+  const base = fixtureBackend();
+  let sessionId = "sentence-session";
+  let messages: ChatMessage[] = [];
+  let older: ChatMessage[] = [];
+  let preview: StreamingReply | undefined;
+  let active: string | null = null;
+  let attempt = 0;
+  let executions = 0;
+  const listeners = new Set<() => void>();
+  const record = (
+    id: string,
+    text: string,
+    extra: Partial<ChatMessage> = {},
+  ): ChatMessage => ({
+    id,
+    text,
+    role: "agent",
+    operationId: null,
+    turnId: null,
+    createdAt: 1792128000000 + messages.length,
+    ...extra,
+  });
+  const seed = () => {
+    messages = [
+      record("history", "历史第一句。历史第二句。", { thinking: "一次思考" }),
+    ];
+    older = [
+      record("older", "更早第一句。更早第二句。", { createdAt: 1792127000000 }),
+    ];
+    preview = undefined;
+    active = null;
+  };
+  seed();
+  const control = (input: { action: string; text?: string }) => {
+    if (
+      (input.action === "advance" || input.action === "complete") &&
+      (!preview ||
+        typeof input.text !== "string" ||
+        !input.text.startsWith(preview.text))
+    )
+      throw new Error("Provider text must extend the held prefix");
+    switch (input.action) {
+      case "reset":
+        sessionId = "sentence-session";
+        executions = 0;
+        seed();
+        break;
+      case "start":
+        if (preview) throw new Error("Provider already held");
+        executions++;
+        active = `turn-${++attempt}`;
+        preview = {
+          id: `attempt-${attempt}`,
+          turnId: active,
+          createdAt: 1792129000000 + attempt,
+          text: input.text ?? "",
+        };
+        break;
+      case "advance":
+        if (!preview) throw new Error("No held provider");
+        preview = { ...preview, text: input.text ?? "" };
+        break;
+      case "complete":
+        if (!preview) throw new Error("No held provider");
+        messages.push(
+          record(`native-entry-${attempt}`, input.text ?? preview.text, {
+            turnId: active,
+            createdAt: preview.createdAt,
+          }),
+        );
+        preview = undefined;
+        active = null;
+        break;
+      case "stop":
+      case "fail":
+        preview = undefined;
+        active = null;
+        messages.push(
+          record(
+            `notice-${++attempt}`,
+            input.action === "stop" ? "已停止回复" : "回复失败",
+            { role: "notice" },
+          ),
+        );
+        break;
+      case "session":
+        sessionId = `session-${++attempt}`;
+        messages = [];
+        older = [];
+        preview = undefined;
+        active = null;
+        break;
+      case "update":
+        messages = messages.map((m) =>
+          m.id === "history" ? { ...m, text: input.text ?? "" } : m,
+        );
+        break;
+      case "status":
+        break;
+      case "excluded":
+        messages.push(
+          record("keet", "Keet第一句。Keet第二句。", {
+            source: {
+              kind: "keet",
+              channel: "dm",
+              senderLabel: "Friend",
+              destination: "Test",
+            },
+          }),
+        );
+        messages.push(
+          record("matrix", "Matrix第一句。Matrix第二句。", {
+            source: {
+              kind: "matrix",
+              senderId: "@fixture:test",
+              senderDisplayName: "Friend",
+              roomId: "!fixture:test",
+            },
+          }),
+        );
+        messages.push(
+          record(
+            "rich",
+            "普通第一句。普通第二句。\n\n**粗体第一句。粗体第二句。**\n\n```js\na.b();\n```",
+          ),
+        );
+        messages.push(
+          record("user", "用户第一句。用户第二句。", { role: "user" }),
+        );
+        messages.push(
+          record("notice", "提示第一句。提示第二句。", { role: "notice" }),
+        );
+        messages.push(
+          record("reminder", "提醒第一句。提醒第二句。", {
+            source: {
+              kind: "reminder",
+              reminderId: "alarm",
+              occurrenceId: "occurrence",
+            },
+          }),
+        );
+        break;
+      default:
+        throw new Error("Unknown sentence fixture action");
+    }
+    listeners.forEach((fn) => fn());
+    return {
+      held: !!preview,
+      generationId: preview?.id ?? null,
+      executions,
+      completed: input.action === "complete",
+    };
+  };
+  return {
+    control,
+    backend: {
+      ...base.backend,
+      async read() {
+        return {
+          ...(await base.backend.read()),
+          sessionId,
+          messages: [...messages],
+          activeTurnId: active,
+          before: older.length ? "older" : null,
+          ...(preview ? { streamingReply: preview } : {}),
+        };
+      },
+      async history() {
+        return { messages: [...older], before: null };
+      },
+      subscribe(fn: () => void) {
+        listeners.add(fn);
+        return () => {
+          listeners.delete(fn);
+        };
+      },
+    },
+  };
+}

@@ -88,6 +88,9 @@ export async function createChatHost(
           if (JSON.stringify(next) !== JSON.stringify(view.value))
             view.change(BACKGROUND_CONTEXT, (draft) => {
               draft.messages = next.messages;
+              if (next.streamingReply)
+                draft.streamingReply = next.streamingReply;
+              else delete draft.streamingReply;
               draft.before = next.before;
               draft.activeTurnId = next.activeTurnId;
               draft.name = next.name;

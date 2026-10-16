@@ -284,5 +284,8 @@
   "messages.retryFailed": "Retry",
   "messages.deleteFailed": "Delete",
   "messages.deleteFailedConfirm": "Delete this failed message?",
-  "messages.failedActions": "Failed message actions"
+  "messages.failedActions": "Failed message actions",
+  "preferences.replyDisplay": "Reply display",
+  "preferences.sentences": "Sentences",
+  "preferences.wholeReply": "Whole reply"
 }
