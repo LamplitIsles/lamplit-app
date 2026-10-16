@@ -8,7 +8,7 @@ export const SENTENCE_PROMPT = "Test-owned sentence acceptance input";
 
 /** App-only model of the semantic controls documented in docs/sentence-replies.md.
  * Native acceptance must translate them to its real held fake provider/events. */
-export function sentenceFixture() {
+export function sentenceFixture(profile = "default") {
   const base = fixtureBackend();
   let sessionId = "sentence-session";
   let messages: ChatMessage[] = [];
@@ -33,9 +33,11 @@ export function sentenceFixture() {
   });
   const seed = () => {
     messages = [
-      record("history", "历史第一行。同行第二句。\n历史第二行。", {
-        thinking: "一次思考",
-      }),
+      record(
+        "history",
+        "历史第一行。同行第二句。\n历史第二行。",
+        profile === "cfl" ? {} : { thinking: "一次思考" },
+      ),
     ];
     older = [
       record("older", "更早第一行。\n更早第二行。", {
@@ -147,7 +149,7 @@ export function sentenceFixture() {
             "rich",
             "普通第一行。同行第二句。\n普通第二行。\n\n**粗体第一句。粗体第二句。**\n\n```js\na.b();\n```",
             {
-              thinking: "图片组合一次思考",
+              ...(profile === "cfl" ? {} : { thinking: "图片组合一次思考" }),
               images: [1, 2].map((i) => ({
                 attachmentId: `sentence-image-${i}`,
                 name: `image-${i}.png`,

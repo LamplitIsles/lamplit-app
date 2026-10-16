@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises";
 import { resolve, join, relative, dirname } from "node:path";
 
-const root = resolve(import.meta.dir, "..");
+let root = resolve(import.meta.dir, "..");
 const sentence = process.argv.includes("--sentence-replies");
 const failedActions = process.argv.includes("--failed-message-actions");
 const structuredSearch = process.argv.includes("--structured-search-snippets");
@@ -20,6 +20,7 @@ const reading = fastVoice || process.argv.includes("--mobile-reading-layout");
 const matrix = reading || process.argv.includes("--matrix-source-ui");
 const thinking = matrix || process.argv.includes("--collapsed-thinking");
 const appHead = await command(["git", "rev-parse", "HEAD"]);
+const sourceTree = await command(["git", "rev-parse", `${appHead}^{tree}`]);
 const output = join(
   root,
   sentence
@@ -52,7 +53,23 @@ async function command(args, cwd = root) {
 }
 if (await command(["git", "status", "--porcelain"]))
   throw new Error("Commit all source before preparing the candidate");
-await command(["bun", "run", "build"]);
+if (sentence) {
+  await mkdir(dirname(output), { recursive: true });
+  await mkdir(output); // Bind an exclusive candidate to one Git snapshot.
+  await command([
+    "git",
+    "archive",
+    "--format=tar.gz",
+    "--output",
+    join(output, "source.tgz"),
+    appHead,
+  ]);
+  root = join(output, "source-build");
+  await mkdir(root);
+  await command(["tar", "-xzf", join(output, "source.tgz"), "-C", root]);
+  await command(["bun", "install", "--frozen-lockfile"], root);
+}
+await command(["bun", "run", "build"], root);
 const hash = async (path) =>
   new Bun.CryptoHasher("sha256")
     .update(await Bun.file(path).arrayBuffer())
@@ -74,10 +91,10 @@ async function copyTree(source, target) {
     await copyFile(path, destination);
   }
 }
-if (fastVoice || sentence) {
+if (fastVoice && !sentence) {
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output); // Exclusive new task/HEAD directory, including partial attempts.
-} else await mkdir(output, { recursive: true });
+} else if (!sentence) await mkdir(output, { recursive: true });
 const stage = join(output, "stage");
 await copyTree(join(root, "apps/web/build"), join(stage, "browser"));
 await copyTree(
@@ -233,14 +250,6 @@ const archive = sentence
               ? "lamplit-collapsed-thinking.tgz"
               : "lamplit-native-durable-submissions.tgz";
 if (sentence) {
-  await command([
-    "git",
-    "archive",
-    "--format=tar.gz",
-    "--output",
-    join(output, "source.tgz"),
-    appHead,
-  ]);
   await copyFile(join(output, "source.tgz"), join(stage, "source.tgz"));
 }
 await command(["tar", "-czf", join(output, archive), "."], stage);
@@ -266,7 +275,7 @@ const searchRunnerSHA256 =
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
   spec: sentence
-    ? 4105
+    ? 4128
     : structuredSearch
       ? 4006
       : failedActions
@@ -281,9 +290,9 @@ const identity = {
                 ? 3522
                 : 3435,
   appHead,
-  sourceTree: await command(["git", "rev-parse", "HEAD^{tree}"]),
+  sourceTree,
   baseline: sentence
-    ? "82cc86c679266b097e003d7b001edfc56f0cb7cf"
+    ? "3d568b2a1300cf6ae2443b9a962bf01ab8853b8a"
     : structuredSearch
       ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
       : failedActions
@@ -336,7 +345,7 @@ const identity = {
   ...(sentence
     ? {
         actualChatAcceptance:
-          "pending Orc-approved exact-artifact native run; CFL excluded",
+          "pending Orc-approved exact-artifact native runs; CFL uses cfl profile",
       }
     : {
         actualPiCflAcceptance:

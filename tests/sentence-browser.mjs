@@ -6,12 +6,16 @@ import { denyNativeNotifications } from "./notification-permission.mjs";
 import { resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
+const profile = process.env.APP_ACCEPTANCE_PROFILE ?? "default";
+if (profile !== "default" && profile !== "cfl")
+  throw new Error(`Unknown APP_ACCEPTANCE_PROFILE: ${profile}`);
+const thinkingCount = profile === "cfl" ? 0 : 1;
 const external = process.env.APP_ACCEPTANCE_URL;
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error(
     "Native acceptance requires a test-owned semantic control URL",
   );
-const fixture = external ? undefined : sentenceFixture();
+const fixture = external ? undefined : sentenceFixture(profile);
 const host = fixture ? await createChatHost(fixture.backend) : undefined;
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
@@ -103,7 +107,18 @@ try {
       bubbles.filter({ hasText: /^历史第一行。同行第二句。$/ }),
     ).toHaveCount(1);
     await expect(bubbles.filter({ hasText: /^历史第二行。$/ })).toHaveCount(1);
-    await expect(page.locator(".companion-thinking")).toHaveCount(1);
+    const expectPrivacy = async () => {
+      if (profile === "cfl") {
+        await expect(page.locator(".companion-thinking")).toHaveCount(0);
+        await expect(page.locator("body")).not.toContainText(
+          "CFL_REASONING_PRIVATE_SENTINEL",
+        );
+      }
+    };
+    await expect(page.locator(".companion-thinking")).toHaveCount(
+      thinkingCount,
+    );
+    await expectPrivacy();
     await page
       .getByRole("button", { name: "查看更早的消息", exact: true })
       .click();
@@ -415,8 +430,11 @@ try {
       ).toBe("普通第二行。\n\n");
       await expect(
         page.locator('[data-testid="message-rich"] .companion-thinking'),
-      ).toHaveCount(1);
-      await expect(page.locator(".companion-thinking")).toHaveCount(2);
+      ).toHaveCount(thinkingCount);
+      await expect(page.locator(".companion-thinking")).toHaveCount(
+        2 * thinkingCount,
+      );
+      await expectPrivacy();
       const images = page.locator(".companion-image-entry");
       await expect(images).toHaveCount(2);
       expect(await images.nth(0).getAttribute("data-testid")).toBe(
@@ -638,6 +656,7 @@ try {
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
+    await expectPrivacy();
     expect(errors).toEqual([]);
     await context.close();
   }
@@ -649,6 +668,7 @@ try {
           ? "external semantic host; native provenance supplied by host"
           : "App DTO fixture",
         acceptance: "passed",
+        profile,
         widths: [390, 1280],
         heldBeforeTerminal: true,
         userPrompt: SENTENCE_PROMPT,

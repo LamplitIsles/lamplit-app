@@ -1,6 +1,6 @@
 # Source-line reply messages
 
-Spec: FlickNote #4105; research #4103. #4085/#4086 describe the historical first delivery.
+Spec: FlickNote #4105; acceptance profile #4128; research #4103. #4085/#4086 describe the historical first delivery.
 
 Ordinary companion answers display as independent messages at their **source LF or
 CRLF line breaks** by default. Multiple sentences on one source line stay together;
@@ -90,7 +90,8 @@ commit/tree, archive hash, component manifest hashes and runner hash. Preserve t
 candidate unchanged; repairs create a new commit/candidate. The same combined
 archive includes `source.tgz`, an exact `git archive` of that HEAD, also delivered
 beside the archive with its SHA-256 in identity.json. This excludes local evidence
-and generated output; it is the source for the frozen build. Orc reviews and
+and generated output; it is the source for the frozen build. The sentence exporter installs with the frozen
+lockfile and builds inside that extracted snapshot, never from a changing checkout. Orc reviews and
 approves the precise identity before Chat consumption. No deployment is implied.
 
 Extract into a new test-owned directory, verify the archive hash against the
@@ -116,6 +117,25 @@ APP_ACCEPTANCE_ASSETS=../browser \
 APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence \
 bun sentence-browser.mjs
 ```
+
+`APP_ACCEPTANCE_PROFILE` accepts only `default` (also used when omitted) and `cfl`;
+unknown values fail before starting a host or browser. Default App/Pi/Chat checks
+retain one seeded thinking disclosure. CFL retains its existing privacy policy:
+seed the same completed/older answer text with the optional `thinking` field omitted,
+expect zero thinking elements, and keep `CFL_REASONING_PRIVATE_SENTINEL` out of the
+DOM. The native CFL fake engine must seed that sentinel as official reasoning and
+independently verify its absence from view/history/notifications. Select the same
+profile for local fixture and approved frozen native acceptance:
+
+```sh
+APP_ACCEPTANCE_PROFILE=cfl APP_ACCEPTANCE_ASSETS=../browser bun sentence-browser.mjs
+```
+
+The profile changes only test fixture thinking and its explicit assertions;
+all answer/user, copy, rich content and lifecycle checks still run. App rich
+thinking remains positively checked under default, and absent under CFL.
+Local fixture PASS is not native CFL proof; #4126 owns the native run after
+Orc approves the exact new #4128 archive. Earlier #4105 archives remain immutable.
 
 Optional `APP_ACCEPTANCE_BROWSER` selects a local Chrome executable. The runner
 uses fresh isolated browser contexts, fictional gateway auth if the fixture needs
@@ -143,6 +163,8 @@ string | null, executions: number, completed: boolean }`. `generationId` is a
 fixture-owned provider execution identity stable across observation disconnects,
 not necessarily the public preview ID. `executions` counts actual fake-provider
 requests since reset. `completed` is true only for the `complete` action.
+
+The reset table describes default; under `cfl`, omit thinking as specified above.
 
 | Action JSON                                                 | Meaning                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
