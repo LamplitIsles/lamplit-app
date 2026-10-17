@@ -4,6 +4,7 @@ import type { SearchBackend } from "./search.ts";
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
 export * from "./images.ts";
+export * from "./workspace-images.ts";
 export * from "./compact.ts";
 import {
   ContextUsageSchema,
@@ -173,6 +174,7 @@ export const ViewSchema = Type.Object(
         steer: Type.Literal(true),
         stop: Type.Literal(true),
         images: Type.Union([Type.Literal(false), ImageLimitsSchema]),
+        workspaceImages: Type.Optional(Type.Literal(true)),
       },
       { additionalProperties: false },
     ),

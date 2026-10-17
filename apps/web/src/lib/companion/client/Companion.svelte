@@ -180,6 +180,7 @@
   export let workspaceReadiness: CompanionReadiness = "loading";
   export let sessionReadiness: CompanionReadiness = "loading";
   export let sessionId: string | undefined;
+  export let workspaceImages = false;
   export let imageLimits:
     | import("./contracts.js").ImageAttachmentLimits
     | undefined;
@@ -2686,6 +2687,10 @@
                                   <Markdown
                                     text={part.item.text}
                                     tokens={part.item.markdownTokens}
+                                    agentReply={unit.answer}
+                                    {workspaceImages}
+                                    workspaceImageScope={sessionId}
+                                    {t}
                                   />
                                 {/if}
                               </div>

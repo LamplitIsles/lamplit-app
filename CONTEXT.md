@@ -81,3 +81,7 @@ _Avoid_: Completed reply, preserved message
 The bottom chat indicator that the companion is still producing reply content. It ends
 with the final reply body, independently of execution cleanup, running status or Stop.
 _Avoid_: Execution status, message receipt, per-line completion
+
+**Workspace image reference（工作区图片引用）**:
+A Markdown reference in an agent reply to an image kept in the agent execution workspace. It reads the current file and is distinct from retained conversation images and uploaded attachments; it does not add an image to the Chat Image Library.
+_Avoid_: Attachment, saved conversation image, image snapshot

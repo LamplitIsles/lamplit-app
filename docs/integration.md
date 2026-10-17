@@ -196,3 +196,6 @@ Chat acceptance; do not rebuild or copy legacy types. Both PRs stay unmerged
 until joint same-artifact native/browser acceptance passes. The native-compatible
 runner, controls and freeze procedure are documented in
 [sentence replies](sentence-replies.md). Deployment is separate and not requested.
+
+See [workspace Markdown images](workspace-markdown-images.md) for the optional
+`workspaceImages` host capability and authenticated CFL image URL contract.

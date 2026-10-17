@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { setContext } from "svelte";
   import SvelteMarkdown, {
     buildUnsupportedHTML,
     defaultRenderers,
@@ -7,9 +8,23 @@
 
   import { markdownExtensions } from "./markdown-options.js";
   import MarkdownLink from "./MarkdownLink.svelte";
+  import WorkspaceMarkdownImage from "./WorkspaceMarkdownImage.svelte";
+  import { english, type CompanionTranslate } from "./locale.js";
 
   export let text = "";
   export let tokens: import("marked").Token[] | undefined = undefined;
+  export let agentReply = false;
+  export let workspaceImages = false;
+  export let workspaceImageScope: string | undefined = undefined;
+  export let t: CompanionTranslate = english;
+  setContext("workspaceMarkdown", {
+    get enabled() {
+      return workspaceImages;
+    },
+    get t() {
+      return t;
+    },
+  });
 
   // Keep one prior render value per display message. Compare complete parsed
   // semantics (including resolved references), never source text alone.
@@ -27,9 +42,10 @@
 
   // Matches Sliqs: render Markdown tokens as Svelte nodes, never via
   // browser-parsed HTML strings. Raw HTML remains unsupported.
-  const renderers = {
+  $: renderers = {
     ...defaultRenderers,
     link: MarkdownLink,
+    image: agentReply ? WorkspaceMarkdownImage : defaultRenderers.image,
     html: buildUnsupportedHTML(),
     inlineKatex: KatexRenderer,
     blockKatex: KatexRenderer,
@@ -38,5 +54,7 @@
 </script>
 
 <div class="markdown">
-  <SvelteMarkdown source={renderTokens ?? text} {renderers} {extensions} />
+  {#key `${workspaceImageScope}:${workspaceImages}`}
+    <SvelteMarkdown source={renderTokens ?? text} {renderers} {extensions} />
+  {/key}
 </div>

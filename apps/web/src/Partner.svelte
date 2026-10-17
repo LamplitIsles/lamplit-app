@@ -365,6 +365,7 @@
     writePreference(APPEARANCE_STORAGE_KEY, value);
   }}
   imageLimits={chatState?.view?.capabilities.images || undefined}
+  workspaceImages={chatState?.view?.capabilities.workspaceImages === true}
   recoveredDraft={recovered
     ? {
         key: recovered.sourceId,
