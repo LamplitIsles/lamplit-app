@@ -65,6 +65,21 @@ was superseded by the user's source-newline clarification in #4105. SentenceX,
 sentence-splitter, remend and streaming-markdown are unnecessary for this policy;
 no dependency, WASM initialization or NLP layer was added.
 
+## Reply typing and finality (#4156)
+
+The bottom typing row remains while subsequent source lines generate, including
+when several completed lines are already visible. Explicit current-turn final-body
+evidence removes it in the same update that reveals the exact final tail, in both
+Source lines and Whole reply modes. Execution may continue: header running state,
+Stop and queued/steered input remain truthful. Non-final item completion cannot
+hide typing. See [the public final-body contract](protocol.md#final-reply-body-evidence).
+
+`bun tests/reply-typing-browser.mjs` exercises the actual built Partner/Companion
+DOM over an owned socket at mobile/desktop widths, including held execution after
+final body, atomic DOM observations, stale evidence, omission, reconnect, new
+turn/session and stop/failure. It is App fixture evidence, not native integration.
+Use `APP_ACCEPTANCE_BROWSER` for a local Chromium executable.
+
 ## Checks
 
 ```sh

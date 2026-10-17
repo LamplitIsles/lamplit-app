@@ -98,6 +98,28 @@ cutover boundary: an old page cannot subscribe to the new service or silently
 accept the new view. Reload/update to the matching built frontend is required;
 there is no negotiation or old-wire fallback. The transport envelope remains v1.
 
+## Final reply body evidence
+
+`ChatView.replyCompletedTurnId?: string` is explicit native-host evidence that the
+**final reply body** for the current turn is complete, independently of execution
+cleanup (spec #4156). Publish it in the same view update as the final preserved
+body and removal of `streamingReply`. Only equality with a non-null `activeTurnId`
+suppresses the bottom typing row. A completed non-final agent item, history entry,
+missing preview, or ended turn does not establish finality.
+
+Omission means no evidence; snapshot refresh removes an omitted field. Hosts omit
+it for a new turn/session and after execution ends, stops or fails. Reconnect
+replaces the observed view with the fresh authoritative snapshot; no completion
+cache is carried between sessions or turns. During an observation disconnect,
+the last completed-body evidence remains attached to its observed turn, so typing
+does not reappear merely because the socket closed. Running status, Stop and
+queued/steered submission continue to follow execution and connection authority.
+Image-generation indicators retain precedence. The field is transient, not history.
+
+The App schema/renderer and owned socket/browser fixture establish this contract.
+Native producers must independently prove which engine phase identifies a final
+reply and publish it atomically; App DTO fixture success is not native proof.
+
 ## Frames and validation
 
 Calls use `{ type: "call", version: 1, id, call }`, where `call` is Chord's own

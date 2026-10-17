@@ -91,6 +91,9 @@ export async function createChatHost(
               if (next.streamingReply)
                 draft.streamingReply = next.streamingReply;
               else delete draft.streamingReply;
+              if (next.replyCompletedTurnId !== undefined)
+                draft.replyCompletedTurnId = next.replyCompletedTurnId;
+              else delete draft.replyCompletedTurnId;
               draft.before = next.before;
               draft.activeTurnId = next.activeTurnId;
               draft.name = next.name;

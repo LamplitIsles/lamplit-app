@@ -160,6 +160,8 @@ export const ViewSchema = Type.Object(
     name: Type.String(),
     activeTurnId: NullableId,
     streamingReply: Type.Optional(StreamingReplySchema),
+    /** Explicit final-body evidence for the active turn, independent of execution. */
+    replyCompletedTurnId: Type.Optional(Id),
     contextUsage: ContextUsageSchema,
     compaction: CompactionSchema,
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),

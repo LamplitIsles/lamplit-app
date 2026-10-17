@@ -76,3 +76,8 @@ _Avoid_: Separate preserved message, punctuation-based sentence, per-line arriva
 **In-progress reply（生成中的回复）**:
 A reply still being produced, distinct from the completed reply preserved in conversation history.
 _Avoid_: Completed reply, preserved message
+
+**Reply typing indicator（回复输入提示）**:
+The bottom chat indicator that the companion is still producing reply content. It ends
+with the final reply body, independently of execution cleanup, running status or Stop.
+_Avoid_: Execution status, message receipt, per-line completion

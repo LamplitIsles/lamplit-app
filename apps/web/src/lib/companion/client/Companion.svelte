@@ -383,7 +383,8 @@
       item.kind === "image" &&
       (item.state === "running" || item.state === "loading"),
   );
-  $: typingVisible = projection.running && !imageGenerationRunning;
+  $: typingVisible =
+    projection.running && !projection.replyCompleted && !imageGenerationRunning;
   $: commandSuggestion = imageDrafts.length
     ? undefined
     : findComposerCommand(composer.draft, t);

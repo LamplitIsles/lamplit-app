@@ -6,6 +6,7 @@ import {
   SENTENCE_STORAGE_KEY,
   writePreference,
 } from "../apps/web/src/lib/companion/client/preferences.ts";
+import { ViewSchema, validate } from "../packages/contracts/src/index.ts";
 import { createChatHost } from "../packages/contracts/src/server.ts";
 import { sentenceFixture } from "./sentence-fixture.ts";
 
@@ -73,7 +74,12 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     } as unknown as Document,
     () => ({ title: "Test", body: "New reply" }),
   );
-  const snapshots: { preview?: string; answers: string[] }[] = [];
+  const snapshots: {
+    preview?: string;
+    answers: string[];
+    active: string | null;
+    replyCompleted?: string;
+  }[] = [];
   const controller = new ChatController(
     () => {},
     {
@@ -85,6 +91,8 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     (view) => {
       snapshots.push({
         preview: view.streamingReply?.text,
+        active: view.activeTurnId,
+        replyCompleted: view.replyCompletedTurnId,
         answers: view.messages
           .filter((m) => m.role === "agent")
           .map((m) => m.text),
@@ -115,7 +123,7 @@ test("socket refresh grows/removes preview atomically, controller discards disco
       "First sentence. Second",
     );
     fixture.control({
-      action: "complete",
+      action: "body-complete",
       text: "First sentence. Second completed.",
     });
     await host.refresh();
@@ -125,6 +133,24 @@ test("socket refresh grows/removes preview atomically, controller discards disco
           (m) => m.text === "First sentence. Second completed.",
         ) === true,
     );
+    const turn = controller.view!.activeTurnId;
+    expect(turn).not.toBeNull();
+    expect(controller.view?.replyCompletedTurnId).toBe(turn!);
+    expect(
+      snapshots
+        .filter((s) => s.answers.includes("First sentence. Second completed."))
+        .every((s) => s.replyCompleted === s.active && s.active === turn),
+    ).toBe(true);
+    for (const channel of channels.values()) channel.disconnect();
+    await until(() => !controller.connected);
+    await until(() => controller.connected);
+    expect(controller.view?.replyCompletedTurnId).toBe(turn!);
+    fixture.control({ action: "evidence" });
+    await host.refresh();
+    await until(() => controller.view?.replyCompletedTurnId === undefined);
+    fixture.control({ action: "finish-execution" });
+    await host.refresh();
+    await until(() => controller.view?.activeTurnId === null);
     expect(controller.view?.streamingReply).toBeUndefined();
     expect(
       snapshots
@@ -178,4 +204,17 @@ test("sentence preference defaults on and tolerates unavailable storage", () => 
     if (previous) Object.defineProperty(globalThis, "localStorage", previous);
     else Reflect.deleteProperty(globalThis, "localStorage");
   }
+});
+
+test("final-body evidence validates as an optional bounded turn identity", async () => {
+  const view = await sentenceFixture().backend.read();
+  expect(validate(ViewSchema, view).replyCompletedTurnId).toBeUndefined();
+  expect(
+    validate(ViewSchema, { ...view, replyCompletedTurnId: "turn" })
+      .replyCompletedTurnId,
+  ).toBe("turn");
+  for (const invalid of [null, false, 1, "", "x".repeat(301)])
+    expect(() =>
+      validate(ViewSchema, { ...view, replyCompletedTurnId: invalid }),
+    ).toThrow();
 });

@@ -15,6 +15,7 @@ export function sentenceFixture(profile = "default") {
   let older: ChatMessage[] = [];
   let preview: StreamingReply | undefined;
   let active: string | null = null;
+  let replyCompletedTurnId: string | undefined;
   let attempt = 0;
   let executions = 0;
   const listeners = new Set<() => void>();
@@ -46,11 +47,14 @@ export function sentenceFixture(profile = "default") {
     ];
     preview = undefined;
     active = null;
+    replyCompletedTurnId = undefined;
   };
   seed();
   const control = (input: { action: string; text?: string }) => {
     if (
-      (input.action === "advance" || input.action === "complete") &&
+      ["advance", "complete", "item-complete", "body-complete"].includes(
+        input.action,
+      ) &&
       (!preview ||
         typeof input.text !== "string" ||
         !input.text.startsWith(preview.text))
@@ -64,6 +68,7 @@ export function sentenceFixture(profile = "default") {
         break;
       case "start":
         if (preview) throw new Error("Provider already held");
+        replyCompletedTurnId = undefined;
         executions++;
         active = `turn-${++attempt}`;
         // Model real user/answer coexistence in isolated handoff cases.
@@ -86,6 +91,8 @@ export function sentenceFixture(profile = "default") {
         if (!preview) throw new Error("No held provider");
         preview = { ...preview, text: input.text ?? "" };
         break;
+      case "item-complete":
+      case "body-complete":
       case "complete":
         if (!preview) throw new Error("No held provider");
         messages.push(
@@ -95,11 +102,14 @@ export function sentenceFixture(profile = "default") {
           }),
         );
         preview = undefined;
-        active = null;
+        replyCompletedTurnId =
+          input.action === "body-complete" ? (active ?? undefined) : undefined;
+        if (input.action === "complete") active = null;
         break;
       case "stop":
       case "fail":
         preview = undefined;
+        replyCompletedTurnId = undefined;
         active = null;
         messages.push(
           record(
@@ -114,7 +124,15 @@ export function sentenceFixture(profile = "default") {
         messages = [];
         older = [];
         preview = undefined;
+        replyCompletedTurnId = undefined;
         active = null;
+        break;
+      case "evidence":
+        replyCompletedTurnId = input.text;
+        break;
+      case "finish-execution":
+        active = null;
+        replyCompletedTurnId = undefined;
         break;
       case "update":
         messages = messages.map((m) =>
@@ -196,9 +214,17 @@ export function sentenceFixture(profile = "default") {
           sessionId,
           messages: [...messages],
           activeTurnId: active,
+          ...(replyCompletedTurnId === undefined
+            ? {}
+            : { replyCompletedTurnId }),
           before: older.length ? "older" : null,
           ...(preview ? { streamingReply: preview } : {}),
         };
+      },
+      async stop(turnId: string) {
+        if (turnId !== active) return { stopped: false };
+        control({ action: "stop" });
+        return { stopped: true };
       },
       async history() {
         return { messages: [...older], before: null };

@@ -101,6 +101,8 @@ export interface CompanionProjection {
   messageUnits: readonly TimelineMessageUnit[];
   pendingCount: number;
   running: boolean;
+  /** Final reply body is known complete while execution may still be running. */
+  replyCompleted?: boolean;
   canSubmit?: boolean;
   status: "ready" | "working" | "offline";
   openState: "cold" | "loading" | "open" | "error";

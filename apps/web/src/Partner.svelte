@@ -208,6 +208,8 @@
       messageUnits: units,
       pendingCount: chatState?.pending.length ?? 0,
       running: !!view?.activeTurnId,
+      replyCompleted:
+        !!view?.activeTurnId && view.replyCompletedTurnId === view.activeTurnId,
       canSubmit: !!chatState?.connected && !compacting,
       status: !chatState?.connected
         ? "offline"
