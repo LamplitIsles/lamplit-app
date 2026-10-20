@@ -9,6 +9,7 @@ import {
 import { resolve, join, relative, dirname } from "node:path";
 
 let root = resolve(import.meta.dir, "..");
+const post = process.argv.includes("--post-source-ui");
 const sentence = process.argv.includes("--sentence-replies");
 const failedActions = process.argv.includes("--failed-message-actions");
 const structuredSearch = process.argv.includes("--structured-search-snippets");
@@ -17,27 +18,29 @@ const fastVoice =
   failedActions ||
   process.argv.includes("--fast-voice-start");
 const reading = fastVoice || process.argv.includes("--mobile-reading-layout");
-const matrix = reading || process.argv.includes("--matrix-source-ui");
+const matrix = post || reading || process.argv.includes("--matrix-source-ui");
 const thinking = matrix || process.argv.includes("--collapsed-thinking");
 const appHead = await command(["git", "rev-parse", "HEAD"]);
 const sourceTree = await command(["git", "rev-parse", `${appHead}^{tree}`]);
 const output = join(
   root,
-  sentence
-    ? `.scratch/sentence-replies/candidate-${appHead}`
-    : structuredSearch
-      ? `.scratch/structured-search-snippets/candidate-${appHead}`
-      : failedActions
-        ? `.scratch/failed-message-actions/candidate-${appHead}`
-        : fastVoice
-          ? `.scratch/fast-voice-start/candidate-${appHead}`
-          : reading
-            ? `.scratch/mobile-reading-layout/candidate-${appHead}`
-            : matrix
-              ? ".scratch/matrix-source-ui/candidate"
-              : thinking
-                ? ".scratch/collapsed-thinking/candidate"
-                : ".scratch/native-durable-submissions/candidate",
+  post
+    ? `.scratch/post-source-rendering/candidate-${appHead}`
+    : sentence
+      ? `.scratch/sentence-replies/candidate-${appHead}`
+      : structuredSearch
+        ? `.scratch/structured-search-snippets/candidate-${appHead}`
+        : failedActions
+          ? `.scratch/failed-message-actions/candidate-${appHead}`
+          : fastVoice
+            ? `.scratch/fast-voice-start/candidate-${appHead}`
+            : reading
+              ? `.scratch/mobile-reading-layout/candidate-${appHead}`
+              : matrix
+                ? ".scratch/matrix-source-ui/candidate"
+                : thinking
+                  ? ".scratch/collapsed-thinking/candidate"
+                  : ".scratch/native-durable-submissions/candidate",
 );
 if (await Bun.file(join(output, "identity.json")).exists())
   throw new Error("Candidate exists; preserve its identity for Owner review");
@@ -53,7 +56,7 @@ async function command(args, cwd = root) {
 }
 if (await command(["git", "status", "--porcelain"]))
   throw new Error("Commit all source before preparing the candidate");
-if (sentence) {
+if (sentence || post) {
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output); // Bind an exclusive candidate to one Git snapshot.
   await command([
@@ -64,12 +67,20 @@ if (sentence) {
     join(output, "source.tgz"),
     appHead,
   ]);
-  root = join(output, "source-build");
-  await mkdir(root);
-  await command(["tar", "-xzf", join(output, "source.tgz"), "-C", root]);
-  await command(["bun", "install", "--frozen-lockfile"], root);
+  if (sentence) {
+    root = join(output, "source-build");
+    await mkdir(root);
+    await command(["tar", "-xzf", join(output, "source.tgz"), "-C", root]);
+    await command(["bun", "install", "--frozen-lockfile"], root);
+  }
 }
 await command(["bun", "run", "build"], root);
+if (
+  post &&
+  ((await command(["git", "rev-parse", "HEAD"])) !== appHead ||
+    (await command(["git", "status", "--porcelain"])))
+)
+  throw new Error("Post candidate source changed during preparation");
 const hash = async (path) =>
   new Bun.CryptoHasher("sha256")
     .update(await Bun.file(path).arrayBuffer())
@@ -91,10 +102,10 @@ async function copyTree(source, target) {
     await copyFile(path, destination);
   }
 }
-if (fastVoice && !sentence) {
+if (fastVoice && !sentence && !post) {
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output); // Exclusive new task/HEAD directory, including partial attempts.
-} else if (!sentence) await mkdir(output, { recursive: true });
+} else if (!sentence && !post) await mkdir(output, { recursive: true });
 const stage = join(output, "stage");
 await copyTree(join(root, "apps/web/build"), join(stage, "browser"));
 await copyTree(
@@ -109,6 +120,7 @@ for (const name of ["package.json", "LICENSE"])
 const acceptance = join(stage, "acceptance");
 await mkdir(join(acceptance, "docs"), { recursive: true });
 for (const name of [
+  ...(post ? ["post-browser.mjs", "post-fixture.ts"] : []),
   ...(sentence ? ["sentence-browser.mjs", "sentence-fixture.ts"] : []),
   ...(reading ? ["mobile-reading-browser.mjs"] : []),
   ...(matrix ? ["matrix-browser.mjs", "matrix-fixture.ts"] : []),
@@ -172,6 +184,7 @@ await writeFile(
   ).replace(/\(([a-z-]+\.md)\)/g, "(docs/$1)"),
 );
 for (const name of [
+  ...(post ? ["post-source-ui.md"] : []),
   ...(sentence ? ["sentence-replies.md"] : []),
   ...(reading ? ["mobile-reading-layout.md"] : []),
   ...(matrix ? ["matrix-source-ui.md"] : []),
@@ -206,7 +219,7 @@ await writeFile(
     2,
   ) + "\n",
 );
-if (thinking || sentence) {
+if (thinking || sentence || post) {
   // Freeze dependency resolution as in the existing Keet preparation.
   await command(
     ["bun", "install", "--lockfile-only"],
@@ -234,22 +247,24 @@ for (const [name, directory] of [
   };
 }
 await writeFile(join(stage, "SOURCE_HEAD"), appHead + "\n");
-const archive = sentence
-  ? "lamplit-sentence-replies.tgz"
-  : structuredSearch
-    ? "lamplit-structured-search-snippets.tgz"
-    : failedActions
-      ? "lamplit-failed-message-actions.tgz"
-      : fastVoice
-        ? "lamplit-fast-voice-start.tgz"
-        : reading
-          ? "lamplit-mobile-reading-layout.tgz"
-          : matrix
-            ? "lamplit-matrix-source-ui.tgz"
-            : thinking
-              ? "lamplit-collapsed-thinking.tgz"
-              : "lamplit-native-durable-submissions.tgz";
-if (sentence) {
+const archive = post
+  ? "lamplit-post-source-ui.tgz"
+  : sentence
+    ? "lamplit-sentence-replies.tgz"
+    : structuredSearch
+      ? "lamplit-structured-search-snippets.tgz"
+      : failedActions
+        ? "lamplit-failed-message-actions.tgz"
+        : fastVoice
+          ? "lamplit-fast-voice-start.tgz"
+          : reading
+            ? "lamplit-mobile-reading-layout.tgz"
+            : matrix
+              ? "lamplit-matrix-source-ui.tgz"
+              : thinking
+                ? "lamplit-collapsed-thinking.tgz"
+                : "lamplit-native-durable-submissions.tgz";
+if (sentence || post) {
   await copyFile(join(output, "source.tgz"), join(stage, "source.tgz"));
 }
 await command(["tar", "-czf", join(output, archive), "."], stage);
@@ -272,44 +287,51 @@ const searchRunnerSHA256 =
   structuredSearch || sentence
     ? await hash(join(acceptance, "search-browser.mjs"))
     : undefined;
+const postRunnerSHA256 = post
+  ? await hash(join(acceptance, "post-browser.mjs"))
+  : undefined;
 await rm(stage, { recursive: true }); // Only this invocation's staging tree.
 const identity = {
-  spec: sentence
-    ? 4128
-    : structuredSearch
-      ? 4006
-      : failedActions
-        ? 3936
-        : fastVoice
-          ? 3734
-          : reading
-            ? 3687
-            : matrix
-              ? 3560
-              : thinking
-                ? 3522
-                : 3435,
+  spec: post
+    ? 4352
+    : sentence
+      ? 4128
+      : structuredSearch
+        ? 4006
+        : failedActions
+          ? 3936
+          : fastVoice
+            ? 3734
+            : reading
+              ? 3687
+              : matrix
+                ? 3560
+                : thinking
+                  ? 3522
+                  : 3435,
   appHead,
   sourceTree,
-  baseline: sentence
-    ? "3d568b2a1300cf6ae2443b9a962bf01ab8853b8a"
-    : structuredSearch
-      ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
-      : failedActions
+  baseline: post
+    ? "a41762d2f5b4320e88adaec7f5c16dc102edf043"
+    : sentence
+      ? "3d568b2a1300cf6ae2443b9a962bf01ab8853b8a"
+      : structuredSearch
         ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
-        : fastVoice
-          ? "6c7c479cbccc0a679939f8c1b4044417b97be56b"
-          : reading
-            ? "e535143b428b70129e2804cb6d191e53a26e26d4"
-            : matrix
-              ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
-              : thinking
-                ? "407aaf72979e0c05442697c6aaa758da845d88e0"
-                : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
+        : failedActions
+          ? "97da354fb27697e530c9be1be9dceb7b2599f71e"
+          : fastVoice
+            ? "6c7c479cbccc0a679939f8c1b4044417b97be56b"
+            : reading
+              ? "e535143b428b70129e2804cb6d191e53a26e26d4"
+              : matrix
+                ? "364e5a169a42ea17a4b57b9876d2191a7bd085a7"
+                : thinking
+                  ? "407aaf72979e0c05442697c6aaa758da845d88e0"
+                  : "75f6d3fe7789c8cc28922ae98caa8385459e4c65",
   status: "candidate; native workers blocked until Owner approval",
   archive,
   archiveSHA256: await hash(join(output, archive)),
-  ...(sentence
+  ...(sentence || post
     ? {
         sourceArchive: "source.tgz",
         sourceArchiveSHA256: await hash(join(output, "source.tgz")),
@@ -322,7 +344,11 @@ const identity = {
   ...(matrix ? { matrixRunnerSHA256 } : {}),
   ...(sentence ? { sentenceRunnerSHA256 } : {}),
   ...(structuredSearch || sentence ? { searchRunnerSHA256 } : {}),
+  ...(post ? { postRunnerSHA256 } : {}),
   runners: [
+    ...(post
+      ? ["post (owned App display fixture; native CFL acceptance separate)"]
+      : []),
     ...(sentence
       ? ["sentence (App fixture or test-owned native held provider)"]
       : []),

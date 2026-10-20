@@ -92,6 +92,7 @@
           alarm: m.source?.kind === "reminder",
           keet: m.source?.kind === "keet" ? m.source : undefined,
           matrix: m.source?.kind === "matrix" ? m.source : undefined,
+          post: m.source?.kind === "post" ? m.source : undefined,
           side: m.role === "user" && !m.source ? "outgoing" : "incoming",
           time: m.createdAt,
           items: [

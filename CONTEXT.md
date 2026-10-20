@@ -8,6 +8,10 @@ Terms for the shared chat experience across agent engines.
 A privacy-preserving notice that identifies the companion and announces a newly completed reply without revealing message content. It is distinct from the reply itself and from execution-status updates.
 _Avoid_: Message preview, turn status, delivery guarantee
 
+**Unified frontend（统一前端）**:
+The common Lamplit chat experience used with both Pi and Codex Partners. Sharing this experience does not merge Partner identities, conversations, or their execution owners.
+_Avoid_: Unified engine, shared conversation, engine switcher
+
 **Conversation archive（聊天档案）**:
 The owner's preserved conversations, including past and imported conversations, available for reading and search. The archive is distinct from the current model context and the companion's selected memories.
 _Avoid_: Active context, companion memory

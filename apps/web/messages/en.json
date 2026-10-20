@@ -89,6 +89,8 @@
   "drawer.diary": "Diary",
   "drawer.images": "Album",
   "drawer.alarms": "Auto wake",
+  "source.group": "Group",
+  "source.direct": "Direct",
   "alarm.source": "App reminder",
   "alarm.once": "One time",
   "alarm.interval": "Every {minutes} minutes",

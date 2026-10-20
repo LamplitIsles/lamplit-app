@@ -115,10 +115,40 @@ export const MatrixSourceSchema = Type.Object(
   { additionalProperties: false },
 );
 export type MatrixSource = Static<typeof MatrixSourceSchema>;
+// Post IDs match the canonical producer's 256 UTF-16-unit capacity.
+Format.Set("post-native-id", (value) => value.length <= 256);
+const PostNativeIdSchema = Type.String({
+  minLength: 1,
+  maxLength: 256,
+  format: "post-native-id",
+});
+// JSON Schema length counts Unicode code points. Producers normalize names.
+const PostDisplayNameSchema = Type.String({
+  minLength: 1,
+  maxLength: 256,
+  pattern: "\\S",
+});
+export const PostSourceSchema = Type.Object(
+  {
+    kind: Type.Literal("post"),
+    platform: Type.Union([Type.Literal("qq"), Type.Literal("matrix")]),
+    conversationType: Type.Union([
+      Type.Literal("group"),
+      Type.Literal("direct"),
+    ]),
+    conversationId: PostNativeIdSchema,
+    conversationName: Type.Optional(PostDisplayNameSchema),
+    senderId: PostNativeIdSchema,
+    senderDisplayName: Type.Optional(PostDisplayNameSchema),
+  },
+  { additionalProperties: false },
+);
+export type PostSource = Static<typeof PostSourceSchema>;
 export const MessageSourceSchema = Type.Union([
   ReminderSourceSchema,
   KeetSourceSchema,
   MatrixSourceSchema,
+  PostSourceSchema,
 ]);
 export type KeetSource = Static<typeof KeetSourceSchema>;
 export type MessageSource = Static<typeof MessageSourceSchema>;

@@ -2834,6 +2834,26 @@
                                   >{unit.matrix.roomId}</span
                                 >
                               </div>
+                            {:else if unit.post}<div
+                                class="companion-post-source"
+                                role="group"
+                                aria-label={unit.post.platform === "qq"
+                                  ? "QQ"
+                                  : "Matrix"}
+                                data-testid={`post-source-${unit.id}`}
+                              >
+                                <span class="badge"
+                                  >{`${unit.post.platform === "qq" ? "QQ" : "Matrix"} ${t(unit.post.conversationType === "group" ? "source.group" : "source.direct")}`}</span
+                                >
+                                <span class="companion-post-sender"
+                                  >{unit.post.senderDisplayName ??
+                                    unit.post.senderId}</span
+                                >
+                                <span class="companion-post-conversation"
+                                  >{unit.post.conversationName ??
+                                    unit.post.conversationId}</span
+                                >
+                              </div>
                             {:else if unit.alarm}<span
                                 class="badge companion-alarm-source"
                                 >{t("alarm.source")}</span
@@ -2842,7 +2862,7 @@
                         {/snippet}
                         <Message
                           header={partIndex === 0 &&
-                          (unit.keet || unit.matrix || unit.alarm)
+                          (unit.keet || unit.matrix || unit.post || unit.alarm)
                             ? messageSource
                             : undefined}
                           footer={(independentMessage ||
@@ -2862,7 +2882,7 @@
                           text={part.kind !== "images"
                             ? textContent
                             : undefined}
-                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""}`}
+                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""}`}
                           data-pending={unit.pending || undefined}
                           data-testid={partIndex === 0
                             ? unitTestId(unit)
@@ -2873,6 +2893,10 @@
                               {#if unit.keet}<span aria-hidden="true">K</span
                                 >{:else if unit.matrix}<span aria-hidden="true"
                                   >M</span
+                                >{:else if unit.post}<span aria-hidden="true"
+                                  >{unit.post.platform === "qq"
+                                    ? "Q"
+                                    : "M"}</span
                                 >{:else if unit.alarm}<AlarmClock
                                   size={16}
                                   aria-hidden="true"

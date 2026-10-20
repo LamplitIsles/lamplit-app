@@ -89,6 +89,8 @@
   "drawer.diary": "日记",
   "drawer.images": "相册",
   "drawer.alarms": "自动唤醒",
+  "source.group": "群聊",
+  "source.direct": "私聊",
   "alarm.source": "应用提醒",
   "alarm.once": "一次性",
   "alarm.interval": "每 {minutes} 分钟",

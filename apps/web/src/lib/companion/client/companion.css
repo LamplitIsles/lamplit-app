@@ -253,13 +253,15 @@
 }
 /* Legacy Keet emphasis adapted to the current Framework7 palette. */
 #dsh-companion .companion-row-keet .message-bubble,
-#dsh-companion .companion-row-matrix .message-bubble {
+#dsh-companion .companion-row-matrix .message-bubble,
+#dsh-companion .companion-row-post .message-bubble {
   background: var(--companion-color-surface-strong);
   color: var(--f7-message-received-text-color);
   border-inline-start: 3px solid var(--companion-color-accent);
 }
 .companion-keet-source,
-.companion-matrix-source {
+.companion-matrix-source,
+.companion-post-source {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -1004,12 +1006,14 @@
   margin-bottom: 12px;
 }
 
-.companion-matrix-source > span {
+.companion-matrix-source > span,
+.companion-post-source > span {
   min-width: 0;
   max-width: 100%;
   white-space: pre-wrap;
 }
-.companion-matrix-room {
+.companion-matrix-room,
+.companion-post-conversation {
   flex-basis: 100%;
 }
 
