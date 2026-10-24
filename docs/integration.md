@@ -40,6 +40,18 @@ native acceptance instead installs the exact extracted package in test-owned
 locations using the [complete handoff](default-shared-frontend.md). Do not refresh
 or rebuild approved acceptance artifacts.
 
+## Snapshot readiness
+
+`createChatHost` is ready after one schema/recovery-validated ChatView and an
+installed backend subscription. Readiness does not mean refresh synchronization
+is complete or execution is idle. A background catch-up covers the initial
+read/subscription window; notifications coalesce into serial subsequent reads.
+`refresh()` and operation confirmations wait for a read started after their
+request, without waiting for later notifications to stop. Failed reads reject
+covered callers and report through `onError`; later invalidations can recover.
+Closing releases observation and suppresses late results without stopping execution.
+These scheduling guarantees do not establish the cause of a live incident.
+
 ## Collapsed-thinking handoff
 
 For #3522/#3523 use `bun tests/prepare-default.mjs --collapsed-thinking` after

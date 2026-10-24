@@ -73,15 +73,19 @@ export async function createChatHost(
   const provider = new RemoteServiceProvider([Chat]);
   let closed = false,
     dirty = false;
-  let refreshTask: Promise<void> | undefined;
-  const refresh = (): Promise<void> => {
-    if (closed) return Promise.resolve();
-    dirty = true;
-    if (refreshTask) return refreshTask;
-    refreshTask = (async () => {
-      try {
-        while (dirty && !closed) {
-          dirty = false;
+  type Waiter = { resolve(): void; reject(error: unknown): void };
+  let running = false;
+  let pending: Waiter[] = [],
+    active: Waiter[] = [];
+  const drain = async () => {
+    running = true;
+    try {
+      while (dirty && !closed) {
+        dirty = false;
+        // Only callers present before this read starts are covered by it.
+        active = pending;
+        pending = [];
+        try {
           const next = validate(ViewSchema, await backend.read());
           next.recovery.forEach(validateRecovery);
           if (closed) return;
@@ -103,12 +107,35 @@ export async function createChatHost(
               draft.contextUsage = next.contextUsage;
               draft.compaction = next.compaction;
             });
+          for (const waiter of active) waiter.resolve();
+        } catch (error) {
+          if (closed) return;
+          for (const waiter of active) waiter.reject(error);
+          try {
+            onError(error);
+          } catch {
+            // Error observers must not interrupt draining or strand later callers.
+          }
+        } finally {
+          active = [];
         }
-      } finally {
-        refreshTask = undefined;
       }
-    })();
-    return refreshTask;
+    } finally {
+      running = false;
+    }
+  };
+  const invalidate = () => {
+    if (closed) return;
+    dirty = true;
+    if (!running) void drain();
+  };
+  const refresh = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    const result = new Promise<void>((resolve, reject) => {
+      pending.push({ resolve, reject });
+    });
+    invalidate();
+    return result;
   };
   const panels = Object.fromEntries(
     Object.entries(panelMethods).map(([method, schemas]) => [
@@ -239,9 +266,14 @@ export async function createChatHost(
       return result;
     },
   });
-  const off = backend.subscribe(() => {
-    void refresh().catch(onError);
-  });
+  let off: () => void;
+  try {
+    off = backend.subscribe(invalidate);
+  } catch (error) {
+    closed = true;
+    provider.dispose();
+    throw error;
+  }
   const connections = new Set<ReturnType<typeof connect>>();
   function connect(socket: WireSocket, authorize: () => Promise<boolean>) {
     let disposed = false;
@@ -393,12 +425,16 @@ export async function createChatHost(
     connections.add(connection);
     return connection;
   }
-  await refresh();
+  // Catch up the initial read/subscription window without delaying readiness.
+  invalidate();
   return {
     connect,
     refresh,
     close() {
+      if (closed) return;
       closed = true;
+      for (const waiter of [...active, ...pending]) waiter.resolve();
+      pending = [];
       off();
       for (const c of connections) c.disconnect();
       provider.dispose();
