@@ -289,3 +289,24 @@ Each reference still requires the strict `ImageRefSchema` fields; unknown fields
 and invalid media IDs/types remain errors. The existing 2 MiB frame and 4 MiB
 outgoing queue protections still bound transport; this does not authorize
 truncating images or splitting a native message identity.
+
+## Reconstructing a Chat channel
+
+The server channel exposes `getSubscription()` and
+`restoreSubscription(checkpoint: unknown): Promise<void>`. `ChatSubscription` is
+exactly `{ version: 1, subscriptionId, serviceId: "lamplit.chat.v2", mode: "singleton" }`;
+the nonempty ID is bounded to 100 JavaScript characters. Only this identity is
+retained, never snapshots, codec state, calls or results. `null` restores an empty
+channel; malformed metadata closes the channel.
+
+`connect(socket, authorize, { onSubscriptionChange })` awaits the optional
+persistence callback before acknowledging subscribe/unsubscribe. Callback failure
+closes the channel without success acknowledgment. Explicit unsubscribe persists
+`null`; `close()` only disposes local resources, so a host may detach without
+clearing its checkpoint. Metadata getters and callbacks receive detached copies.
+Restoration and incoming calls are serialized. Restoration reauthorizes and queues
+an existing-protocol reset under the original subscription ID, with a fresh
+encoder, before activating subsequent deltas. Every outgoing frame is authorized
+again. Close during an await prevents later delivery or subscription resurrection.
+The attachment owner must restore before dispatching the waking message; ordinary
+business calls are never replayed. This does not require a browser rebuild.
