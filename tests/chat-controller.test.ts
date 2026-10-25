@@ -284,8 +284,13 @@ async function controllerHarness(
     },
   };
   const controllers: ChatController[] = [];
+  let disconnections = 0;
   const create = async () => {
-    const c = new ChatController(() => {}, storage);
+    let connected = false;
+    const c = new ChatController(() => {
+      if (connected && !c.connected) disconnections++;
+      connected = c.connected;
+    }, storage);
     controllers.push(c);
     c.start();
     await eventually(() => c.connected);
@@ -294,6 +299,9 @@ async function controllerHarness(
   return {
     host,
     saved,
+    get disconnections() {
+      return disconnections;
+    },
     create,
     disconnect() {
       for (const ws of channels.keys())
@@ -376,8 +384,9 @@ test("slow acknowledgement, publish ordering, null lookup, reload and reconnect 
     c = await harness.create();
     expect(c.pending[0]?.operationId).toBe(id);
     expect(c.pending[0]?.state).toBe("sending");
+    const beforeDisconnect = harness.disconnections;
     harness.disconnect();
-    await eventually(() => !c.connected);
+    await eventually(() => harness.disconnections > beforeDisconnect);
     expect(c.recovery).toEqual([]);
     await eventually(() => c.connected, 5000);
     expect(c.pending[0]?.state).toBe("sending");
@@ -597,7 +606,10 @@ for (const original of ["submit", "retry"])
         expect(retryCalls).toBe(beforeRetry);
         expect(deleteCalls).toBe(0);
         c.pending[0]!.createdAt = Date.now() - 61000;
-        c.recheckPending();
+        // The host serializes calls on each carrier. Recover onto a new carrier
+        // before fencing a request whose native handler remains held.
+        c.setVisible(false);
+        c.setVisible(true);
         await eventually(() => c.pending[0]?.state === "failed");
         expect((await backend.lookup(heldId))?.state).toBe("failed");
         if (action === "retry") {

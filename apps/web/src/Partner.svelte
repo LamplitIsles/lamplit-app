@@ -79,6 +79,9 @@
         }
       : undefined;
   });
+  const readiness = $derived(
+    chatState?.view ? "ready" : chatState?.error ? "error" : "loading",
+  );
   const projection = $derived.by((): CompanionProjection => {
     const view = chatState?.view;
     const messages = [...(chatState?.older ?? []), ...(view?.messages ?? [])];
@@ -217,7 +220,7 @@
         : view?.activeTurnId || compacting
           ? "working"
           : "ready",
-      openState: view ? "open" : "loading",
+      openState: view ? "open" : readiness === "error" ? "error" : "loading",
       hasMore: !!chatState?.before,
       loadingOlder: !!chatState?.loadingOlder,
       promptError: chatState?.error,
@@ -312,17 +315,23 @@
       (view) => notifications.observe(view),
     );
     revision += 1;
+    controller.setVisible(!document.hidden);
     controller.start();
-    const recheck = () => {
-      if (!document.hidden) controller.recheckPending();
-    };
-    document.addEventListener("visibilitychange", recheck);
-    window.addEventListener("online", recheck);
+    const visibility = () => controller.setVisible(!document.hidden);
+    const recover = () => controller.recover(false);
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("online", recover);
+    window.addEventListener("pageshow", recover);
+    document.addEventListener("pointerdown", recover);
+    document.addEventListener("keydown", recover);
     return () => {
       media.removeEventListener("change", updateScheme);
       abort.abort();
-      document.removeEventListener("visibilitychange", recheck);
-      window.removeEventListener("online", recheck);
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("online", recover);
+      window.removeEventListener("pageshow", recover);
+      document.removeEventListener("pointerdown", recover);
+      document.removeEventListener("keydown", recover);
       notifications.close();
       controller.close();
     };
@@ -334,6 +343,7 @@
   ></svelte:head
 >
 <Companion
+  on:recovery={() => controller.recover()}
   {projection}
   backgrounds={profile?.backgrounds}
   continuity={{
@@ -405,6 +415,6 @@
       ? t(stageKeys[affinityStage(chatState.relationship.current.affinity)])
       : undefined,
   }}
-  workspaceReadiness={chatState?.view ? "ready" : "loading"}
-  sessionReadiness={chatState?.view ? "ready" : "loading"}
+  workspaceReadiness={readiness}
+  sessionReadiness={readiness}
 />

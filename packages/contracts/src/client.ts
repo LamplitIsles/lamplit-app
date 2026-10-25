@@ -13,7 +13,6 @@ import {
 } from "./panels.ts";
 import {
   createRemoteServiceBinding,
-  createServiceCatalogueCall,
   createServiceSubscribeCall,
   createServiceUnsubscribeCall,
   createServiceStateDecoder,
@@ -53,25 +52,40 @@ import {
 } from "./compact.ts";
 import { decodeFrame, sendFrame } from "./wire.ts";
 
+export class ChatConnectionError extends Error {
+  constructor(
+    message: string,
+    readonly retryable = true,
+  ) {
+    super(message);
+    this.name = "ChatConnectionError";
+  }
+}
+
 export async function openChat(
   socket: WebSocket,
   changed: (view: ChatView) => void,
-  offline: () => void,
+  offline: (error: ChatConnectionError) => void,
 ) {
   await new Promise<void>((resolve, reject) => {
     if (socket.readyState === 1) return resolve();
     const timer = setTimeout(() => {
       cleanup();
       socket.close();
-      reject(new Error("Connection timed out"));
+      reject(new ChatConnectionError("Connection timed out"));
     }, 10000);
     const opened = () => {
       cleanup();
       resolve();
     };
-    const failed = () => {
+    const failed = (event: Event) => {
       cleanup();
-      reject(new Error("Connection failed"));
+      reject(
+        new ChatConnectionError(
+          "Connection failed",
+          (event as CloseEvent).code !== 1008,
+        ),
+      );
     };
     const cleanup = () => {
       clearTimeout(timer);
@@ -102,16 +116,17 @@ export async function openChat(
       if (closed) return reject(new Error("Offline"));
       const id = String(++sequence);
       const timer = setTimeout(() => {
-        reject(new Error("Request timed out"));
-        pending.delete(id);
+        fail(new ChatConnectionError("Request timed out"));
       }, 30000);
       pending.set(id, { resolve, reject, timer });
       try {
         sendFrame(socket, { type: "call", version: 1, id, call });
       } catch (error) {
-        clearTimeout(timer);
-        pending.delete(id);
-        reject(error as Error);
+        fail(
+          new ChatConnectionError(
+            error instanceof Error ? error.message : "Send failed",
+          ),
+        );
       }
     });
     return awaitWithContext(task, context);
@@ -181,21 +196,29 @@ export async function openChat(
   });
   const service = binding.use(Chat);
   let unsubscribe = () => {};
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  const finish = () => {
+  const finish = (error = new ChatConnectionError("Offline")) => {
     if (closed) return;
     closed = true;
-    clearInterval(heartbeat);
+    socket.removeEventListener("message", message);
+    socket.removeEventListener("close", ended);
+    socket.removeEventListener("error", failed);
     unsubscribe();
     listeners.clear();
     for (const p of pending.values()) {
       clearTimeout(p.timer);
-      p.reject(new Error("Offline"));
+      p.reject(error);
     }
     pending.clear();
     void binding.dispose(BACKGROUND_CONTEXT).catch(() => {});
-    offline();
+    offline(error);
   };
+  const fail = (error: ChatConnectionError) => {
+    finish(error);
+    socket.close();
+  };
+  const ended = (event: CloseEvent) =>
+    finish(new ChatConnectionError("Connection closed", event.code !== 1008));
+  const failed = () => fail(new ChatConnectionError("Connection failed"));
   const message = (event: MessageEvent) => {
     try {
       if (typeof event.data !== "string") throw new Error("Invalid frame");
@@ -225,14 +248,8 @@ export async function openChat(
     }
   };
   socket.addEventListener("message", message);
-  socket.addEventListener("close", finish, { once: true });
-  socket.addEventListener("error", finish, { once: true });
-  heartbeat = setInterval(() => {
-    void invoke(createServiceCatalogueCall(), BACKGROUND_CONTEXT).catch(() => {
-      socket.close();
-      finish();
-    });
-  }, 15000);
+  socket.addEventListener("close", ended, { once: true });
+  socket.addEventListener("error", failed, { once: true });
   try {
     await binding.ready(BACKGROUND_CONTEXT);
     unsubscribe = service.view.subscribe((value) => {
@@ -245,6 +262,7 @@ export async function openChat(
         finish();
       }
     });
+    if (closed) throw new ChatConnectionError("Offline");
     const panels = Object.fromEntries(
       Object.entries(panelMethods).map(([method, schemas]) => [
         method,

@@ -211,3 +211,22 @@ runner, controls and freeze procedure are documented in
 
 See [workspace Markdown images](workspace-markdown-images.md) for the optional
 `workspaceImages` host capability and authenticated CFL image URL contract.
+
+### Chat recovery ownership
+
+`openChat` reports `ChatConnectionError` with `retryable`; policy close `1008` stops
+automatic retries. Unknown browser handshake status is not evidence of HTTP 401/403.
+`ChatController` immediately reconnects after an established carrier fails; unsuccessful
+attempts wait 1.5 seconds, doubling to a 30-second cap. Hidden pages pause retries.
+`recover()` is explicit recovery; passive online/pageshow handlers use `recover(false)`
+so policy denial stays closed. Pointer/key interaction also interrupts backoff without
+unblocking policy denial. `setVisible()` tracks actual suspension and replaces
+an uncertain carrier once on return. Duplicate hints reuse an active attempt or a
+healthy carrier. Browser online status is a hint, not an authorization or health gate.
+Close removes lifecycle listeners, clears timers, and suppresses stale generations.
+
+Consumer delivery must include rebuilt browser bytes as well as contracts. CFL can
+use a complete pinned App candidate. Chat's approved `06459f0` UI needs an App-owned
+scoped composite build with readiness/restoration and this recovery patch; its source
+identity must name the approved base and patches rather than claim whole-current-App
+identity. Original archives, licenses, full manifests and source hashes remain required.

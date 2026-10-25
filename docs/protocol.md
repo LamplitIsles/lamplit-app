@@ -310,3 +310,17 @@ encoder, before activating subsequent deltas. Every outgoing frame is authorized
 again. Close during an await prevents later delivery or subscription resurrection.
 The attachment owner must restore before dispatching the waking message; ordinary
 business calls are never replayed. This does not require a browser rebuild.
+
+## Demand-driven connection recovery
+
+A healthy idle Chat connection sends no periodic catalogue RPC, ping, or application
+probe. The initial subscription and ordinary business calls remain. Readiness means
+a validated conversation snapshot and installed update subscription, not socket open.
+Silent carrier loss and missed autonomous updates may remain undiscovered until an
+actual request, lifecycle recovery, or transport event; recovery obtains a fresh snapshot.
+
+The 10-second opening and 30-second request bounds remain. A transport deadline,
+send failure, close, or error invalidates that carrier once. Valid business errors
+reject only their request; caller-context cancellation does not invalidate the carrier.
+A dispatched submission with a lost acknowledgement stays unconfirmed: reconcile
+its original operation ID and receipt, never replay submit, stop, or compact.

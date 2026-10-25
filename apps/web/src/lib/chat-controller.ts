@@ -17,7 +17,7 @@ import {
   type Receipt,
   type Submission,
 } from "@lamplit/contracts";
-import { openChat } from "@lamplit/contracts/client";
+import { ChatConnectionError, openChat } from "@lamplit/contracts/client";
 import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
 import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
@@ -47,6 +47,9 @@ export class ChatController {
   private timer?: ReturnType<typeof setTimeout>;
   private closed = false;
   private connecting = false;
+  private visible = true;
+  private retryFailures = 0;
+  private retryable = true;
   private connectionGeneration = 0;
   private storageKey = "";
   private deadlineTimer?: ReturnType<typeof setTimeout>;
@@ -81,7 +84,10 @@ export class ChatController {
   ): Promise<Awaited<ReturnType<PanelBackend[K]>>> {
     const client = this.client,
       sessionId = this.view?.sessionId;
-    if (!client || !sessionId) throw new Error("Offline");
+    if (!client || !sessionId) {
+      this.recover();
+      throw new Error("Offline");
+    }
     const result = await (
       client[method] as (input: unknown) => Promise<unknown>
     )({ ...input, sessionId });
@@ -99,7 +105,10 @@ export class ChatController {
   ): Promise<Awaited<ReturnType<SearchBackend[K]>>> {
     const client = this.client,
       sessionId = this.view?.sessionId;
-    if (!client || !sessionId) throw new Error("Offline");
+    if (!client || !sessionId) {
+      this.recover();
+      throw new Error("Offline");
+    }
     const result = await (
       client[method] as (input: unknown) => Promise<unknown>
     )(input);
@@ -163,9 +172,39 @@ export class ChatController {
   start() {
     void this.connect();
   }
+  recover(explicit = true) {
+    if (this.closed || !this.visible) return;
+    clearTimeout(this.timer);
+    if (explicit) this.retryable = true;
+    if (!this.retryable) return;
+    if (!this.connected) void this.connect();
+  }
+  setVisible(visible: boolean) {
+    if (this.closed || this.visible === visible) return;
+    this.visible = visible;
+    clearTimeout(this.timer);
+    if (!visible) return;
+    // A lifecycle suspension can leave an open but unusable carrier.
+    if (this.connected) {
+      this.connectionGeneration++;
+      const client = this.client;
+      this.disconnected();
+      client?.close();
+    } else this.recover(false);
+  }
+  private scheduleReconnect() {
+    clearTimeout(this.timer);
+    if (this.closed || !this.visible || !this.retryable) return;
+    const delay = Math.min(
+      30000,
+      1500 * 2 ** Math.min(this.retryFailures++, 5),
+    );
+    this.timer = setTimeout(() => void this.connect(), delay);
+  }
   close() {
     this.discardPreview();
     this.closed = true;
+    this.connected = false;
     this.connectionGeneration++;
     this.compactGeneration++;
     this.compactPending = false;
@@ -346,12 +385,7 @@ export class ChatController {
   }
   private scheduleDeadline() {
     clearTimeout(this.deadlineTimer);
-    if (
-      !this.connected ||
-      this.closed ||
-      (typeof navigator !== "undefined" && navigator.onLine === false)
-    )
-      return;
+    if (!this.connected || this.closed) return;
     const deadlines = this.pending.filter(
       (p) =>
         p.state === "sending" &&
@@ -372,12 +406,7 @@ export class ChatController {
     const client = this.client,
       key = this.storageKey,
       sessionId = this.view?.sessionId;
-    if (
-      !client ||
-      !sessionId ||
-      (typeof navigator !== "undefined" && navigator.onLine === false)
-    )
-      return;
+    if (!client || !sessionId) return;
     await Promise.all(
       this.pending.map(async (input) => {
         if (
@@ -558,9 +587,13 @@ export class ChatController {
     const { streamingReply: _, ...completed } = this.view;
     this.view = completed;
   }
-  private disconnected = () => {
+  private disconnected = (error?: ChatConnectionError) => {
     if (this.closed) return;
+    const wasConnected = this.connected;
     this.connected = false;
+    this.retryable = error?.retryable !== false;
+    if (!this.view) this.error = "连接未能建立，请重试。";
+    clearTimeout(this.deadlineTimer);
     this.discardPreview();
     this.updateRecovery();
     if (this.storageKey) this.save();
@@ -573,12 +606,12 @@ export class ChatController {
     this.client = undefined;
     this.changed();
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      void this.connect();
-    }, 1500);
+    if (wasConnected && this.retryable && this.visible) void this.connect();
   };
   private async connect() {
-    if (this.closed || this.connecting) return;
+    if (this.closed || this.connecting || this.connected || !this.visible)
+      return;
+    clearTimeout(this.timer);
     this.connecting = true;
     const generation = ++this.connectionGeneration;
     try {
@@ -592,8 +625,9 @@ export class ChatController {
           if (!this.closed && generation === this.connectionGeneration)
             this.observe(view);
         },
-        () => {
-          if (generation === this.connectionGeneration) this.disconnected();
+        (error) => {
+          if (generation === this.connectionGeneration)
+            this.disconnected(error);
         },
       );
       if (
@@ -606,16 +640,24 @@ export class ChatController {
       }
       this.client = client;
       this.connected = true;
+      this.retryFailures = 0;
+      this.connecting = false;
       this.finalized.clear();
       this.panelRevision++;
       void this.refreshRelationship();
       if (!this.error.includes("整理结果尚未确认")) this.error = "";
       this.changed();
       await this.reconcile().catch(() => {});
-    } catch {
-      this.disconnected();
+    } catch (error) {
+      if (generation === this.connectionGeneration && !this.closed)
+        this.disconnected(
+          error instanceof ChatConnectionError ? error : undefined,
+        );
     } finally {
-      this.connecting = false;
+      if (generation === this.connectionGeneration) {
+        this.connecting = false;
+        if (!this.connected) this.scheduleReconnect();
+      }
     }
   }
   private applyReceipt(receipt: Receipt) {
@@ -670,7 +712,10 @@ export class ChatController {
   async compact() {
     const client = this.client,
       sessionId = this.view?.sessionId;
-    if (!client || !sessionId) throw new Error("连接已断开");
+    if (!client || !sessionId) {
+      this.recover();
+      throw new Error("连接已断开");
+    }
     if (
       this.compactPending ||
       this.view?.activeTurnId ||
@@ -723,7 +768,10 @@ export class ChatController {
       throw new Error("请等待对话整理完成。");
     const client = this.client,
       sessionId = this.view?.sessionId;
-    if (!client || !sessionId) throw new Error("连接已断开");
+    if (!client || !sessionId) {
+      this.recover();
+      throw new Error("连接已断开");
+    }
     if (this.pending.length >= 20 && !previous)
       throw new Error("请先核对尚未确认的消息");
     const operationId = crypto.randomUUID();
@@ -860,6 +908,7 @@ export class ChatController {
   }
   async stop() {
     const turn = this.view?.activeTurnId;
+    if (!this.client) this.recover();
     if (!this.client || !turn) return;
     try {
       await this.client.stop(turn);

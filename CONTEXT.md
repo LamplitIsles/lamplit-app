@@ -4,6 +4,15 @@ Terms for the shared chat experience across agent engines.
 
 ## Language
 
+**Chat readiness（聊天就绪）**:
+A valid conversation snapshot is available and its update subscription is established.
+It is distinct from continuous network reachability, engine activity, and confirmation that a message was received.
+_Avoid_: Socket opened, agent always online, message accepted
+
+**Unconfirmed submission（待确认提交）**:
+A dispatched message whose acceptance has not yet been confirmed. A lost connection or elapsed wait does not establish failure or permit automatic resend.
+_Avoid_: Failed submission, unsent draft, automatic retry
+
 **Companion notification（聊天提醒）**:
 A privacy-preserving notice that identifies the companion and announces a newly completed reply without revealing message content. It is distinct from the reply itself and from execution-status updates.
 _Avoid_: Message preview, turn status, delivery guarantee
