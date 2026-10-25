@@ -80,8 +80,14 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     active: string | null;
     replyCompleted?: string;
   }[] = [];
+  const transitions: { connected: boolean; preview?: string }[] = [];
   const controller = new ChatController(
-    () => {},
+    () => {
+      transitions.push({
+        connected: controller.connected,
+        preview: controller.view?.streamingReply?.text,
+      });
+    },
     {
       getItem: (key) => saved.get(key) ?? null,
       setItem: (key, value) => {
@@ -115,9 +121,15 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     expect(controller.view!.streamingReply!.id).toBe(id);
     expect(notices).toBe(0);
     expect([...saved.values()].join("")).not.toContain("First");
+    let transitionStart = transitions.length;
     for (const channel of channels.values()) channel.disconnect();
-    await until(() => !controller.connected);
-    expect(controller.view?.streamingReply).toBeUndefined();
+    await until(() =>
+      transitions.slice(transitionStart).some((state) => !state.connected),
+    );
+    expect(
+      transitions.slice(transitionStart).find((state) => !state.connected)
+        ?.preview,
+    ).toBeUndefined();
     await until(() => controller.connected);
     expect(controller.view?.streamingReply?.text).toBe(
       "First sentence. Second",
@@ -141,8 +153,11 @@ test("socket refresh grows/removes preview atomically, controller discards disco
         .filter((s) => s.answers.includes("First sentence. Second completed."))
         .every((s) => s.replyCompleted === s.active && s.active === turn),
     ).toBe(true);
+    transitionStart = transitions.length;
     for (const channel of channels.values()) channel.disconnect();
-    await until(() => !controller.connected);
+    await until(() =>
+      transitions.slice(transitionStart).some((state) => !state.connected),
+    );
     await until(() => controller.connected);
     expect(controller.view?.replyCompletedTurnId).toBe(turn!);
     fixture.control({ action: "evidence" });

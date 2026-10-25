@@ -41,17 +41,27 @@ test("actual socket contract fences delayed admission, preserves rejection after
     () => {},
   );
   const sessionId = "fixture-session";
+  const originalClient = client;
+  let delayed: ReturnType<typeof client.submit> | undefined;
   try {
     const submission = { operationId: crypto.randomUUID(), text: "完整原文" };
     await fixture.control({ action: "mode", state: "slow" });
-    const delayed = client.submit(submission);
+    delayed = originalClient.submit(submission);
+    void delayed.catch(() => {});
     await Bun.sleep(20);
+    // Receive is serialized per carrier; reconcile while submit is held.
+    client = await openChat(
+      new WebSocket(`ws://127.0.0.1:${server.port}`),
+      () => {},
+      () => {},
+    );
     expect(await client.lookup(submission.operationId)).toBeNull();
-    expect(
-      (await client.finalizeSubmission({ sessionId, submission }))?.state,
-    ).toBe("failed");
+    const fenced = await client.finalizeSubmission({ sessionId, submission });
+    expect(fenced?.state).toBe("failed");
+    expect(fenced?.operationId).toBe(submission.operationId);
     await fixture.control({ action: "release" });
-    expect((await delayed).state).toBe("failed");
+    expect(fenced).toEqual(await delayed);
+    originalClient.close();
     await expect(
       client.finalizeSubmission({
         sessionId,
@@ -214,6 +224,9 @@ test("actual socket contract fences delayed admission, preserves rejection after
       ))!.bytes,
     ).toEqual(fixtureImage);
   } finally {
+    await fixture.control({ action: "release" });
+    await delayed?.catch(() => {});
+    originalClient.close();
     client.close();
     host.close();
     server.stop(true);
