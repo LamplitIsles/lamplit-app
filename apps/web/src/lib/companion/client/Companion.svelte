@@ -1933,8 +1933,7 @@
               : projection.status === 'working'
                 ? 'color-orange'
                 : 'color-green'}"
-          ></span>{statusText}{#if identity.moodLabel}
-            · {identity.moodLabel}{/if}
+          ></span>{statusText}
         </div>
       </div>
       {#if projection.running && actions.stop}<button
@@ -3216,12 +3215,6 @@
         >
           <h3 id="companion-history-current-title">{t("history.current")}</h3>
           <dl class="companion-history-current-list">
-            <dt>{t("mood.label")}</dt>
-            <dd>
-              {identity.moodLabel}{identity.moodNote
-                ? ` · ${identity.moodNote}`
-                : ""}
-            </dd>
             <dt>{t("affinity.label")}</dt>
             <dd>
               {identity.affinity === undefined
@@ -3256,17 +3249,6 @@
           {:else if history.records.length === 0}
             <p class="companion-history-state">{t("history.empty")}</p>
           {:else}
-            {#if history.hasEarlier}
-              <button
-                type="button"
-                class="button button-tonal button-small companion-history-earlier"
-                disabled={history.loadingEarlier}
-                on:click={() => void loadEarlierHistory()}
-                >{history.loadingEarlier
-                  ? t("history.loadingEarlier")
-                  : t("history.earlier")}</button
-              >
-            {/if}
             <div class="companion-history-entries">
               {#each history.records as record, index (`${record.at}:${index}`)}
                 {@const changes = changesForHistoryRecord(index)}
@@ -3314,6 +3296,17 @@
                 </article>
               {/each}
             </div>
+            {#if history.hasEarlier}
+              <button
+                type="button"
+                class="button button-tonal button-small companion-history-earlier"
+                disabled={history.loadingEarlier}
+                on:click={() => void loadEarlierHistory()}
+                >{history.loadingEarlier
+                  ? t("history.loadingNextPage")
+                  : t("history.nextPage")}</button
+              >
+            {/if}
           {/if}
         </section>
       {/if}

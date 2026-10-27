@@ -30,6 +30,13 @@ than the last visible record, including on pages with a next cursor, so the olde
 visible change has an accurate signed affinity delta. It is `null` when absent.
 History records retain the imported state/change model, limits and mood enum.
 
+The chat header shows connection or execution status without a historical mood.
+The current relationship shows closeness and its stage plus signature (or its
+empty hint). The history drawer presents actual recorded changes, including mood
+and reason when present, newest first. Its next-page button follows the loaded
+entries and appends older records; it disappears at the end. Diary pagination
+retains its existing action and behavior.
+
 Diary adapters list/read only date-named Markdown files under native `memory`.
 They must confine paths there, exclude other workspace files and enforce the
 128 KiB UTF-8 byte limit before returning `found`; `validatePanelResult` checks

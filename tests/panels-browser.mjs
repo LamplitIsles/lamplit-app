@@ -17,6 +17,13 @@ if (
   );
 const intervalExpectation = new RegExp(`每 ${intervalSeconds} 秒`);
 const fixture = fixtureBackend();
+if (!process.env.APP_ACCEPTANCE_URL) {
+  fixture.panels.records[1].changes.mood = {
+    value: "bright",
+    note: "一起看灯火",
+    reason: "一起看海",
+  };
+}
 let host = await createChatHost(fixture.backend, () => {});
 const channels = new Map();
 const imageRequests = [];
@@ -71,6 +78,7 @@ try {
     fixture.panels.empty.clear();
     const context = await browser.newContext({
       viewport: { width, height: 844 },
+      hasTouch: width === 390,
       locale: "zh-CN",
       acceptDownloads: true,
       permissions: ["microphone"],
@@ -106,16 +114,80 @@ try {
     await page.goto(url);
     const input = page.locator("#companion-textarea");
     await expect(input).toBeVisible();
+    await expect(page.locator(".companion-header")).not.toContainText("愉快");
     const drawer = page.getByTestId("companion-relationship-drawer");
     await page
       .getByRole("button", { name: "查看 Companion 关系资料", exact: true })
       .click();
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText("一起走过第 25 段路")).toBeVisible();
-    await drawer
-      .getByRole("button", { name: "加载更早的变化", exact: true })
-      .click();
-    await expect(drawer.locator(".companion-history-entry")).toHaveCount(25);
+    const current = drawer.locator(".companion-history-current-list");
+    await expect(current.locator("dt")).toHaveText(["亲近度", "签名"]);
+    await expect(current).toContainText("65");
+    await expect(current).toContainText("今晚也有光");
+    await expect(current).not.toContainText("一起看灯火");
+    const entries = drawer.locator(".companion-history-entry");
+    const nextPage = drawer.getByRole("button", {
+      name: "加载下一页",
+      exact: true,
+    });
+    await expect(entries).toHaveCount(20);
+    await expect(entries.first()).toContainText("一起走过第 25 段路");
+    await expect(entries.first()).not.toContainText("状态");
+    await expect(entries.nth(19)).toContainText("一起走过第 6 段路");
+    await expect(entries.nth(19)).toContainText("+1");
+    await expect
+      .poll(async () => (await drawer.boundingBox())?.x)
+      .toBeGreaterThanOrEqual(0);
+    await page.screenshot({
+      path: `${evidence}/relationship-first-${width}.png`,
+    });
+    expect(
+      await nextPage.evaluate((button) =>
+        Boolean(
+          button.previousElementSibling?.classList.contains(
+            "companion-history-entries",
+          ),
+        ),
+      ),
+    ).toBe(true);
+    if (!external) {
+      await expect(entries.nth(1)).toContainText("愉快 · 一起看灯火");
+      await expect(entries.nth(1)).toContainText("一起看海");
+      fixture.panels.failures.add("relationshipHistory");
+      if (width === 390) await nextPage.tap();
+      else await nextPage.click();
+      await expect(drawer.locator('[role="alert"]')).toBeVisible();
+      fixture.panels.failures.delete("relationshipHistory");
+      await drawer.locator('[role="alert"]').getByRole("button").click();
+      await expect(entries).toHaveCount(20);
+      let releasePage;
+      fixture.panels.delays.set(
+        "relationshipHistory",
+        new Promise((resolve) => {
+          releasePage = resolve;
+        }),
+      );
+      await nextPage.focus();
+      await page.keyboard.press("Enter");
+      const loadingPage = drawer.getByRole("button", {
+        name: "正在加载下一页…",
+      });
+      await expect(loadingPage).toBeDisabled();
+      releasePage();
+      fixture.panels.delays.delete("relationshipHistory");
+    } else {
+      await nextPage.click();
+    }
+    await expect(entries).toHaveCount(25);
+    await expect(nextPage).toHaveCount(0);
+    for (let index = 0; index < 25; index++) {
+      await expect(entries.nth(index)).toContainText(
+        `一起走过第 ${25 - index} 段路`,
+      );
+    }
+    await expect(entries.nth(19)).toContainText("+1");
+    await expect(entries.nth(20)).toContainText("+1");
     await expect(drawer.locator(".active-state")).toHaveCount(0);
     await page.screenshot({
       path: `${evidence}/relationship-${width}.png`,
@@ -367,6 +439,29 @@ try {
       host.close();
       host = await createChatHost(fixture.backend, () => {});
     }
+  }
+  if (!external) {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      locale: "en-US",
+    });
+    await context.addInitScript(denyNativeNotifications);
+    const page = await context.newPage();
+    await page.goto(url);
+    await page
+      .getByRole("button", { name: "View Companion relationship", exact: true })
+      .click();
+    const drawer = page.getByTestId("companion-relationship-drawer");
+    const entries = drawer.locator(".companion-history-entry");
+    const nextPage = drawer.getByRole("button", {
+      name: "Load next page",
+      exact: true,
+    });
+    await expect(entries).toHaveCount(20);
+    await nextPage.click();
+    await expect(entries).toHaveCount(25);
+    await expect(nextPage).toHaveCount(0);
+    await context.close();
   }
   console.log(
     `Panels acceptance passed at 390/1280 (${external ? "actual host" : "fixture host"}); evidence ${evidence}`,

@@ -4,6 +4,14 @@ Terms for the shared chat experience across agent engines.
 
 ## Language
 
+**Current relationship（当前关系）**:
+The companion's present closeness and signature, distinct from the emotions recorded at particular relationship moments.
+_Avoid_: A past emotion as a lasting relationship status
+
+**Relationship moment（关系瞬间）**:
+A recorded change in the relationship at a particular time. It may include an emotion and its reason, or changes in other dimensions without an emotion.
+_Avoid_: A guaranteed mood change, current relationship summary
+
 **Chat readiness（聊天就绪）**:
 A valid conversation snapshot is available and its update subscription is established.
 It is distinct from continuous network reachability, engine activity, and confirmation that a message was received.
