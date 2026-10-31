@@ -38,13 +38,19 @@ statement that no upstream copyright statement was found.
 The pipeline needs Woodpecker enabled for this repository and two secrets:
 `forgejo_packages_token` with access to write and read the LamplitIsles generic
 package, and `github_release_token` with GitHub repository contents write
-permission. The GitHub mirror must be public and receive the App commit before
-release creation. Token presence, permissions, activation and mirroring are not
-verified by this repository. Secrets are only exposed to the main-push publish
-step, not embedded in artifacts or download URLs. The build step uses Dagger
-0.21.7 and the existing runner relay, whose availability and access have not
-been verified for this repository. Its linux/amd64 Bun 1.3.14 build mounts the
-Orc-coordinated `lamplit-app-bun-1.3.14-linux-amd64-v1` cache at `/bun-cache`,
+permission. Both secrets can be configured at the LamplitIsles organization
+scope with their event access restricted to Push. Organization-scoped secrets
+are also available to other organization pipelines whose events meet that
+restriction; use repository-scoped secrets to limit access to this repository.
+This repository's workflow references the secrets only in its main-push publish
+step; they are not embedded in artifacts or download URLs. Pushes that occurred
+before the repository was enabled in Woodpecker are not replayed; a subsequent
+push to `main` starts the workflow. The GitHub mirror must be public and receive
+the App commit before release creation. Token presence, permissions, activation
+and mirroring are not verified by this repository. The build step uses Dagger
+0.21.7 and the existing runner relay, whose availability and
+access have not been verified for this repository. Its linux/amd64 Bun 1.3.14
+build mounts the `lamplit-app-bun-1.3.14-linux-amd64-v1` cache at `/bun-cache`,
 with `BUN_INSTALL_CACHE_DIR=/bun-cache` and locked sharing. Dagger scopes this
 cache to the App module; CFL uses a separate module cache even if its key is the
 same. The local and CI entry invokes the App module from `dagger/` under the Git
