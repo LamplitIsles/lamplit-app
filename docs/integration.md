@@ -17,6 +17,15 @@ authentication; other failures display a retry. CFL must enforce authentication
 server-side for its data, media and WebSocket routes independently of this UI.
 No chat controller is started before the CFL session is established.
 
+The compiled public contract `@lamplit/contracts/cfl-browser-host-auth` identifies
+this browser/host authentication protocol as `better-auth`. CFL requires the
+emitted `dist/cfl-browser-host-auth.js` marker and compares the full compiled
+contracts when selecting an App build. Change the marker value whenever an
+incompatible change to the CFL browser/host authentication protocol is made,
+and coordinate the new value with CFL in the same change. The marker identifies
+the protocol generation; it does not replace authentication enforcement or the
+exact compiled-contract comparison.
+
 Registration posts `{ code }` to `/api/auth/pairing` and then uses the Better
 Auth Passkey client with `createSession: true`. Sign-in uses the same client's
 Passkey sign-in action. A successful verification establishes a same-origin
