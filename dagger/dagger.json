@@ -1,0 +1,7 @@
+{
+  "name": "lamplit-app",
+  "engineVersion": "v0.21.7",
+  "sdk": "go",
+  "include": [],
+  "exclude": [".git", ".scratch", "**/node_modules", "**/dist", "**/build", "**/.env", "**/.env.*"]
+}
