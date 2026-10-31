@@ -12,6 +12,7 @@
     "check": "bun run --cwd packages/contracts build && tsc --noEmit && bun run --cwd apps/web check",
     "test": "bun run --cwd packages/contracts build && bun test tests",
     "test:browser": "bun tests/browser.mjs && bun tests/voice-browser.mjs",
+    "test:passkey-browser": "bun tests/passkey-browser.mjs",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

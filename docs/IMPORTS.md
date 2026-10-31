@@ -20,7 +20,9 @@ credentials, conversations or uncommitted source changes were imported.
 
 Framework7, Svelte, Capacitor, Noto Sans SC, KaTeX, lucide-svelte and other dependencies
 retain their respective upstream licenses in package distributions. Chord and
-TypeBox are dependencies, not vendored source.
+TypeBox are dependencies, not vendored source. Passkey ceremonies use the
+`@simplewebauthn/browser` package under its upstream MIT license; no library
+source was copied into this repository.
 
 The streaming `voice-input.ts` lifecycle and `voice-worklet.js` were adapted from
 `LamplitIsles/lamplit-chat`, commit

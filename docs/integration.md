@@ -8,6 +8,26 @@ The obsolete `/slice` entry has no alias or fallback. Native/domain consumers
 remain independent of frontend build removal. Platform owns hosted manifest,
 service worker, management and authentication separately.
 
+## CFL browser sign-in
+
+CFL supplies a same-origin Passkey authentication service. The app reads
+`GET /api/auth/status`, which returns `mode: "passkey"` and `state: "setup"`,
+`"signed_out"`, or `"signed_in"`. A 404 identifies a host that manages its own
+authentication; other failures display a retry. CFL must enforce authentication
+server-side for its data, media and WebSocket routes independently of this UI.
+No chat controller is started before the CFL session is established.
+
+Registration posts `{ code }` to `/api/auth/register/options`; authentication
+posts `{}` to `/api/auth/login/options`. Each returns WebAuthn JSON `options`
+and an opaque `ceremony`. The app invokes the browser authenticator, then posts
+`{ ceremony, response }` to the corresponding `/verify` endpoint. A successful
+verification establishes a same-origin browser session. A server error has an
+`error.code`; `invalid_pairing` asks the user for a new host-generated code.
+The app checks session status when returning to the page and periodically while
+visible. Successful recovery replaces the earlier credentials and sessions on
+the CFL server. Host operators configure a secure origin and generate pairing
+codes with CFL's documented command; codes and sessions never belong in URLs.
+
 ## Adjacent checkout build
 
 Use adjacent `lamplit-app`, `lamplit-chat` and `codex-for-love` checkouts. App uses

@@ -66,6 +66,10 @@ a fake official app-server.
 See [backend integration](docs/integration.md), [protocol](docs/protocol.md), and
 [source attribution](docs/IMPORTS.md).
 
+When hosted by CFL, the web app supports Passkey setup, sign-in and recovery
+using a pairing code generated on the CFL host. Other hosts retain their own
+authentication. See the [browser sign-in contract](docs/integration.md#cfl-browser-sign-in).
+
 ## Desktop companion notifications
 
 On desktop Safari/Chrome, the first trusted click on the open chat page requests

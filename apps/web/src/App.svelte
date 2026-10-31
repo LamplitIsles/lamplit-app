@@ -1,6 +1,7 @@
 <script lang="ts">
   import { App, View } from "framework7-svelte";
   import Partner from "./Partner.svelte";
+  import AuthGate from "./AuthGate.svelte";
   const colors = {
     primary: getComputedStyle(document.documentElement)
       .getPropertyValue("--companion-color-accent")
@@ -26,6 +27,6 @@
     iosSwipeBack={false}
     mdSwipeBack={false}
   >
-    <Partner />
+    <AuthGate><Partner /></AuthGate>
   </View>
 </App>
