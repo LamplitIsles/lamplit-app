@@ -17,16 +17,26 @@ authentication; other failures display a retry. CFL must enforce authentication
 server-side for its data, media and WebSocket routes independently of this UI.
 No chat controller is started before the CFL session is established.
 
-Registration posts `{ code }` to `/api/auth/register/options`; authentication
-posts `{}` to `/api/auth/login/options`. Each returns WebAuthn JSON `options`
-and an opaque `ceremony`. The app invokes the browser authenticator, then posts
-`{ ceremony, response }` to the corresponding `/verify` endpoint. A successful
-verification establishes a same-origin browser session. A server error has an
-`error.code`; `invalid_pairing` asks the user for a new host-generated code.
+Registration posts `{ code }` to `/api/auth/pairing` and then uses the Better
+Auth Passkey client with `createSession: true`. Sign-in uses the same client's
+Passkey sign-in action. A successful verification establishes a same-origin
+browser session. A pairing error has an `error.code`; `invalid_pairing` asks
+the user for a new host-generated code. The pairing code is never put in a URL.
 The app checks session status when returning to the page and periodically while
 visible. Successful recovery replaces the earlier credentials and sessions on
 the CFL server. Host operators configure a secure origin and generate pairing
 codes with CFL's documented command; codes and sessions never belong in URLs.
+
+For native OAuth sign-in, the signed provider query remains on the login page
+and is forwarded by the Better Auth OAuth client. The `/consent` entry obtains
+the validated client and requested scopes from `/api/auth/consent-details`, then
+submits the user's choice through the provider. A client name is displayed as
+part of the request; it is not proof of the identity of an installed application.
+After building App, `bun run test:cfl-auth-browser` exercises this flow against
+the adjacent CFL checkout using temporary state and a virtual authenticator.
+Set `CFL_SOURCE` to select a different existing CFL checkout and
+`APP_ACCEPTANCE_BROWSER` to select an installed Chromium executable. The test
+intercepts the native callback, so it does not open ETOS or test an iOS device.
 
 ## Adjacent checkout build
 

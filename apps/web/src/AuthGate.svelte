@@ -1,13 +1,8 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
-  import {
-    startAuthentication,
-    startRegistration,
-    type PublicKeyCredentialCreationOptionsJSON,
-    type PublicKeyCredentialRequestOptionsJSON,
-  } from "@simplewebauthn/browser";
+  import AuthConsent from "./AuthConsent.svelte";
+  import { auth } from "./auth-client.ts";
   import { initialPreferences } from "./lib/companion/client/preferences.ts";
-
   let { children }: { children: Snippet } = $props();
   let authState = $state<
     "loading" | "host" | "setup" | "signed_out" | "signed_in" | "error"
@@ -112,19 +107,18 @@
     busy = true;
     error = "";
     try {
-      const method = register ? "register" : "login";
-      const { options, ceremony } = await post(
-        `${method}/options`,
-        register ? { code: code.trim() } : {},
-      );
-      const response = register
-        ? await startRegistration({
-            optionsJSON: options as PublicKeyCredentialCreationOptionsJSON,
-          })
-        : await startAuthentication({
-            optionsJSON: options as PublicKeyCredentialRequestOptionsJSON,
-          });
-      await post(`${method}/verify`, { ceremony, response });
+      if (register) await post("pairing", { code: code.trim() });
+      const result = register
+        ? await auth.passkey.addPasskey({ createSession: true })
+        : await auth.signIn.passkey();
+      if (result.error)
+        throw new Error(
+          "code" in result.error && result.error.code === "INVALID_PAIRING"
+            ? "invalid_pairing"
+            : result.error.status >= 500
+              ? "unavailable"
+              : "authentication_failed",
+        );
       code = "";
       recovery = false;
       await refresh();
@@ -158,7 +152,9 @@
   });
 </script>
 
-{#if authState === "host" || authState === "signed_in"}
+{#if authState === "signed_in" && window.location.pathname === "/consent"}
+  <AuthConsent />
+{:else if authState === "host" || authState === "signed_in"}
   {@render children()}
 {:else}
   <main class="auth-page">
