@@ -114,6 +114,7 @@ test("native compact over Chord: ownership, single admission, completion, stale 
       new WebSocket(`ws://127.0.0.1:${server.port}`),
       () => {},
       () => {},
+      () => {},
     );
     try {
       await expect(
@@ -176,6 +177,7 @@ test("native compact over Chord: ownership, single admission, completion, stale 
       (view) => {
         initialUsage.tokens = view.contextUsage.tokens;
       },
+      () => {},
       () => {},
     );
     try {

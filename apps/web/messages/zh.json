@@ -134,6 +134,7 @@
   "image.generating": "正在画一张图…",
   "retry": "重试",
   "image.failed": "图片生成没有完成。",
+  "image.statusUnknown": "暂时无法确认图片状态。",
   "voice.player": "语音播放器",
   "voice.pause": "暂停语音",
   "voice.play": "播放语音",

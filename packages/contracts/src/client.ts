@@ -38,12 +38,14 @@ import {
   Chat,
   ViewSchema,
   PageSchema,
-  ReceiptSchema,
-  LookupSchema,
+  TimelineUpdateSchema,
+  validateReceipt,
+  validateLookup,
   validate,
   validateRecovery,
   validateSubmission,
   type ChatView,
+  type ChatTimelineEvent,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -66,6 +68,7 @@ export async function openChat(
   socket: WebSocket,
   changed: (view: ChatView) => void,
   offline: (error: ChatConnectionError) => void,
+  timeline: (event: ChatTimelineEvent) => void,
 ) {
   await new Promise<void>((resolve, reject) => {
     if (socket.readyState === 1) return resolve();
@@ -116,7 +119,17 @@ export async function openChat(
       if (closed) return reject(new Error("Offline"));
       const id = String(++sequence);
       const timer = setTimeout(() => {
-        fail(new ChatConnectionError("Request timed out"));
+        if (
+          call.serviceId === Chat.id &&
+          !call.instance &&
+          call.member === "history"
+        ) {
+          const request = pending.get(id);
+          if (!request) return;
+          pending.delete(id);
+          clearTimeout(request.timer);
+          request.reject(new ChatConnectionError("Request timed out"));
+        } else fail(new ChatConnectionError("Request timed out"));
       }, 30000);
       pending.set(id, { resolve, reject, timer });
       try {
@@ -150,10 +163,11 @@ export async function openChat(
           queue.push(raw);
           return;
         }
-        listener(
-          decoder.decodeUpdate(parseWireServiceProviderUpdate(raw)),
-          BACKGROUND_CONTEXT,
+        const update = decoder.decodeUpdate(
+          parseWireServiceProviderUpdate(raw),
         );
+        listener(update, BACKGROUND_CONTEXT);
+        if (update.type === "reset") timeline({ type: "reset" });
       };
       listeners.set(subscriptionId, accept);
       try {
@@ -230,6 +244,12 @@ export async function openChat(
         )
           throw new Error("Unknown subscription");
         listeners.get(frame.subscriptionId)!(frame.update);
+      } else if (frame.type === "timeline") {
+        const { type: _type, ...raw } = frame;
+        timeline({
+          type: "change",
+          update: validate(TimelineUpdateSchema, raw),
+        });
       } else if (
         (frame.type === "result" || frame.type === "error") &&
         typeof frame.id === "string"
@@ -309,8 +329,7 @@ export async function openChat(
         );
       },
       async submit(input: import("./index.ts").Submission) {
-        const receipt = validate(
-          ReceiptSchema,
+        const receipt = validateReceipt(
           await service.submit(validateSubmission(input), BACKGROUND_CONTEXT),
         );
         if (receipt.operationId !== input.operationId)
@@ -318,8 +337,7 @@ export async function openChat(
         return receipt;
       },
       async lookup(id: string) {
-        const receipt = validate(
-          LookupSchema,
+        const receipt = validateLookup(
           await service.lookup(id, BACKGROUND_CONTEXT),
         );
         if (receipt && receipt.operationId !== id)
@@ -331,8 +349,7 @@ export async function openChat(
         if ("submission" in value) validateSubmission(value.submission);
         else if (value.retry.sessionId !== value.sessionId)
           throw new Error("Wrong retry session");
-        const receipt = validate(
-          LookupSchema,
+        const receipt = validateLookup(
           await service.finalizeSubmission(value, BACKGROUND_CONTEXT),
         );
         if (
@@ -343,18 +360,30 @@ export async function openChat(
               : value.retry.attemptId)
         )
           throw new Error("Wrong operation receipt");
+        if (
+          receipt?.retryImages &&
+          (receipt.retryImages.sessionId !== value.sessionId ||
+            !("retry" in value) ||
+            receipt.retryImages.sourceOperationId !== value.retry.operationId)
+        )
+          throw new Error("Wrong retry mapping");
         return receipt;
       },
       async retryFailed(input: RetryFailed) {
         const value = validate(RetryFailedSchema, input);
         if (value.operationId === value.attemptId)
           throw new Error("Retry requires new attempt");
-        const receipt = validate(
-          ReceiptSchema,
+        const receipt = validateReceipt(
           await service.retryFailed(value, BACKGROUND_CONTEXT),
         );
         if (receipt.operationId !== value.attemptId)
           throw new Error("Wrong operation receipt");
+        if (
+          receipt.retryImages &&
+          (receipt.retryImages.sessionId !== value.sessionId ||
+            receipt.retryImages.sourceOperationId !== value.operationId)
+        )
+          throw new Error("Wrong retry mapping");
         return receipt;
       },
       async deleteFailed(input: DeleteFailed) {

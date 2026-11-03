@@ -15,6 +15,253 @@ export async function eventually(check: () => boolean, timeout = 3000) {
     await Bun.sleep(10);
   }
 }
+
+test("a timed-out history read leaves other calls and the connection usable", async () => {
+  const fixture = fixtureBackend();
+  let release!: () => void,
+    entered = false,
+    offline = false;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const host = await createChatHost({
+    ...fixture.backend,
+    async history(before) {
+      if (before === "old") {
+        entered = true;
+        await held;
+      }
+      return { messages: [], before: null };
+    },
+  });
+  const channels = new Map<object, ReturnType<typeof host.connect>>();
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req, s) {
+      return s.upgrade(req) ? undefined : new Response(null, { status: 404 });
+    },
+    websocket: {
+      open(ws) {
+        channels.set(
+          ws,
+          host.connect(ws, async () => true),
+        );
+      },
+      message(ws, raw) {
+        void channels.get(ws)!.receive(String(raw));
+      },
+      close(ws) {
+        channels.get(ws)?.close();
+        channels.delete(ws);
+      },
+    },
+  });
+  const client = await openChat(
+    new WebSocket(`ws://127.0.0.1:${server.port}`),
+    () => {},
+    () => {
+      offline = true;
+    },
+    () => {},
+  );
+  const originalTimer = globalThis.setTimeout;
+  try {
+    let expire: (() => void) | undefined;
+    globalThis.setTimeout = ((
+      callback: (...args: any[]) => void,
+      delay?: number,
+      ...args: any[]
+    ) => {
+      if (delay === 30000 && !expire) expire = () => callback(...args);
+      return originalTimer(callback, delay, ...args);
+    }) as typeof setTimeout;
+    const old = client.history("old");
+    globalThis.setTimeout = originalTimer;
+    await eventually(() => entered && !!expire);
+    expire!();
+    await expect(old).rejects.toThrow("timed out");
+    expect(offline).toBe(false);
+    expect(await client.history("new")).toEqual({ messages: [], before: null });
+    expect(offline).toBe(false);
+  } finally {
+    globalThis.setTimeout = originalTimer;
+    release();
+    client.close();
+    host.close();
+    void server.stop(true);
+  }
+});
+
+test("held history does not reorder mutations, and revoked access blocks reads and results", async () => {
+  const fixture = fixtureBackend(),
+    order: string[] = [],
+    frames: any[] = [],
+    closed: number[] = [];
+  let releaseHistory!: () => void, releaseSubmit!: () => void;
+  const heldHistory = new Promise<void>((resolve) => {
+    releaseHistory = resolve;
+  });
+  const heldSubmit = new Promise<void>((resolve) => {
+    releaseSubmit = resolve;
+  });
+  let authorized = true,
+    historyCalls = 0;
+  const source = crypto.randomUUID(),
+    attempt = crypto.randomUUID();
+  const host = await createChatHost({
+    ...fixture.backend,
+    async history() {
+      historyCalls++;
+      await heldHistory;
+      return { messages: [], before: null };
+    },
+    async submit(input) {
+      order.push("submit-start");
+      await heldSubmit;
+      order.push("submit-end");
+      return {
+        operationId: input.operationId,
+        state: "submitted",
+        messageId: null,
+        turnId: null,
+        error: null,
+      };
+    },
+    async retryFailed(input) {
+      order.push("retry");
+      return {
+        operationId: input.attemptId,
+        state: "submitted",
+        messageId: null,
+        turnId: null,
+        error: null,
+      };
+    },
+  });
+  const connection = host.connect(
+    {
+      send(raw) {
+        frames.push(JSON.parse(raw));
+      },
+      close(code) {
+        closed.push(code!);
+      },
+    },
+    async () => authorized,
+  );
+  const call = (id: string, member: string, arg: unknown) =>
+    JSON.stringify({
+      type: "call",
+      version: 1,
+      id,
+      call: { serviceId: "lamplit.chat.v2", member, args: [arg] },
+    });
+  try {
+    await connection.receive(call("h1", "history", "old"));
+    await eventually(() => historyCalls === 1);
+    const first = connection.receive(
+      call("s", "submit", { operationId: source, text: "hello" }),
+    );
+    const second = connection.receive(
+      call("r", "retryFailed", {
+        sessionId: "fixture-session",
+        operationId: source,
+        attemptId: attempt,
+      }),
+    );
+    await eventually(() => order.includes("submit-start"));
+    await Bun.sleep(20);
+    expect(order).toEqual(["submit-start"]);
+    releaseSubmit();
+    await first;
+    await second;
+    expect(order).toEqual(["submit-start", "submit-end", "retry"]);
+    await eventually(() => frames.some((frame) => frame.id === "r"));
+    authorized = false;
+    await connection.receive(call("h2", "history", "new"));
+    await eventually(() => closed.includes(1008));
+    releaseHistory();
+    await Bun.sleep(20);
+    expect(historyCalls).toBe(1);
+    expect(frames.some((frame) => frame.id === "h1" || frame.id === "h2")).toBe(
+      false,
+    );
+  } finally {
+    releaseSubmit();
+    releaseHistory();
+    connection.close();
+    host.close();
+  }
+});
+
+test("concurrent history reads are bounded and excess requests fail in isolation", async () => {
+  const fixture = fixtureBackend(),
+    frames: any[] = [];
+  let release!: () => void,
+    calls = 0;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const host = await createChatHost({
+    ...fixture.backend,
+    async history() {
+      calls++;
+      await held;
+      return { messages: [], before: null };
+    },
+  });
+  const connection = host.connect(
+    {
+      send(raw) {
+        frames.push(JSON.parse(raw));
+      },
+      close() {},
+    },
+    async () => true,
+  );
+  try {
+    for (let i = 0; i < 9; i++)
+      await connection.receive(
+        JSON.stringify({
+          type: "call",
+          version: 1,
+          id: String(i),
+          call: {
+            serviceId: "lamplit.chat.v2",
+            member: "history",
+            args: ["cursor"],
+          },
+        }),
+      );
+    await eventually(() => frames.some((frame) => frame.id === "8"));
+    expect(calls).toBe(8);
+    expect(frames.find((frame) => frame.id === "8")?.type).toBe("error");
+    release();
+    await eventually(
+      () => frames.filter((frame) => frame.type === "result").length === 8,
+    );
+    await connection.receive(
+      JSON.stringify({
+        type: "call",
+        version: 1,
+        id: "again",
+        call: {
+          serviceId: "lamplit.chat.v2",
+          member: "history",
+          args: ["cursor"],
+        },
+      }),
+    );
+    await eventually(() =>
+      frames.some((frame) => frame.id === "again" && frame.type === "result"),
+    );
+  } finally {
+    release();
+    connection.close();
+    host.close();
+  }
+});
 test("runtime schema rejects invalid submissions", () => {
   expect(() =>
     validate(SubmissionSchema, { operationId: "bad", text: "hello" }),
@@ -66,6 +313,7 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
     () => {
       offline = true;
     },
+    () => {},
   );
   try {
     const input = { operationId: crypto.randomUUID(), text: "first" };
@@ -94,6 +342,7 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
       () => {
         offline = true;
       },
+      () => {},
     );
     await eventually(
       () => view?.messages.filter((m) => m.role === "agent").length === 1,

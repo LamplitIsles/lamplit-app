@@ -66,10 +66,12 @@
           compactPending: controller.compactPending,
           older: controller.older,
           pending: controller.pending,
+          localPreviews: controller.localPreviews,
           recovery: controller.recovery,
           connected: controller.connected,
           before: controller.before,
           loadingOlder: controller.loadingOlder,
+          historySyncFailed: controller.historySyncFailed,
           error: controller.error,
           relationship: controller.relationship,
           history: controller.relationshipHistory,
@@ -82,15 +84,40 @@
   const readiness = $derived(
     chatState?.view ? "ready" : chatState?.error ? "error" : "loading",
   );
+  // Keep optimistic sends at their original point until the server supplies
+  // their authoritative position. Keys survive a retry's new operation ID.
+  const pendingAnchors = new Map<string, {
+    sessionId: string;
+    after: string | null;
+    predecessor?: { logicalId: string; operationId: string };
+  }>();
   const projection = $derived.by((): CompanionProjection => {
     const view = chatState?.view;
     const messages = [...(chatState?.older ?? []), ...(view?.messages ?? [])];
     const unique = [...new Map(messages.map((m) => [m.id, m])).values()];
-    const units: TimelineMessageUnit[] = unique.map(
-      (m) =>
-        ({
-          id: m.id,
+    const pending = chatState?.pending ?? [];
+    const previews = chatState?.localPreviews ?? [];
+    const active = new Set(pending.map((p) => p.logicalId ?? p.operationId));
+    for (const [key, anchor] of pendingAnchors) {
+      if (anchor.sessionId !== view?.sessionId || !active.has(key)) pendingAnchors.delete(key);
+    }
+    // A retried message can arrive before its verified image mapping. Keep the
+    // original preview visible until that mapping is available.
+    const visible = unique.filter((m) => !pending.some((p) =>
+      p.operationId === m.operationId && p.retrySource && previews.some((preview) =>
+        preview.sessionId === view?.sessionId && preview.operationId === p.retrySource,
+      ),
+    ));
+    const units: TimelineMessageUnit[] = visible.map((m) => {
+      const local = previews.filter((preview) =>
+        preview.sessionId === view?.sessionId && preview.operationId === m.operationId,
+      );
+      const unitId = local.length ? `local:${local[0]!.draftId}` : m.id;
+      const mediaId = m.imageState ? `${m.id}:image:` : undefined;
+      return {
+          id: unitId,
           answer: m.role === "agent" && !m.source,
+          streaming: m.textState === "streaming",
           thinking: m.role === "agent" ? m.thinking : undefined,
           alarm: m.source?.kind === "reminder",
           keet: m.source?.kind === "keet" ? m.source : undefined,
@@ -99,9 +126,20 @@
           side: m.role === "user" && !m.source ? "outgoing" : "incoming",
           time: m.createdAt,
           items: [
-            ...(m.images ?? []).map((image) => ({
-              id: `${m.id}:${image.attachmentId}`,
-              messageKey: m.id,
+            ...(m.imageState && m.imageState !== "ready" ? [{
+              id: mediaId!,
+              messageKey: unitId,
+              kind: "image" as const,
+              side: "incoming" as const,
+              state: m.imageState === "preparing" ? "running" as const : "failed" as const,
+              alt: t("image.preview"),
+              ...(m.imageState === "unknown" ? { error: t("image.statusUnknown") } : {}),
+            }] : []),
+            ...(m.images ?? []).map((image) => {
+              const localImage = local.find((preview) => preview.attachmentId === image.attachmentId);
+              return {
+              id: mediaId ?? (localImage ? `${unitId}:${localImage.draftId}` : `${m.id}:${image.attachmentId}`),
+              messageKey: unitId,
               kind: "image" as const,
               side:
                 m.role === "user" && !m.source
@@ -112,13 +150,14 @@
                   ? ("ready" as const)
                   : ("failed" as const),
               attachment: image,
+              ...(localImage ? { previewUrl: localImage.previewUrl } : {}),
               alt: image.name,
-            })),
+            }; }),
             ...(m.text
               ? [
                   {
-                    id: m.id,
-                    messageKey: m.id,
+                    id: local.length ? `${unitId}:text:` : m.id,
+                    messageKey: unitId,
                     kind: m.role === "notice" ? "notice" : "text",
                     side:
                       m.role === "user" && !m.source ? "outgoing" : "incoming",
@@ -126,24 +165,42 @@
                   },
                 ]
               : []),
+            ...(m.voice
+              ? [{
+                  id: `${m.id}:voice:`,
+                  messageKey: m.id,
+                  kind: "voice" as const,
+                  side: "incoming" as const,
+                  url: `/api/audio/${m.voice.id}.mp3`,
+                  time: m.createdAt,
+                }]
+              : []),
           ],
-        }) as TimelineMessageUnit,
-    );
-    for (const p of chatState?.pending ?? [])
-      if (!unique.some((m) => m.operationId === p.operationId))
-        units.push({
-          id: p.logicalId ?? p.operationId,
+        } as TimelineMessageUnit;
+    });
+    const positions: Array<{ kind: "message" | "pending"; id: string; sourceId?: string }> =
+      visible.map((m) => ({ kind: "message", id: m.id, sourceId: m.id }));
+    const tails = new Map<string | null, string>();
+    for (const p of pending)
+      if (!visible.some((m) => m.operationId === p.operationId)) {
+        const logicalId = p.logicalId ?? p.operationId;
+        if (!pendingAnchors.has(logicalId) && view)
+          pendingAnchors.set(logicalId, { sessionId: view.sessionId, after: unique.at(-1)?.id ?? null });
+        const unitId = p.previews?.length ? `local:${p.previews[0]!.id}` : p.logicalId ?? p.operationId;
+        const unit: TimelineMessageUnit = {
+          id: unitId,
           side: "outgoing",
           time: p.createdAt,
           pending: p.state === "sending",
           failed: p.state === "failed",
+          actionId: p.logicalId ?? p.operationId,
           pendingLabel:
             p.state === "sending" ? t("delivery.sending") : undefined,
           items: [
             ...(p.previews
               ? p.previews.map((image) => ({
-                  id: `${p.operationId}:${image.id}`,
-                  messageKey: p.logicalId ?? p.operationId,
+                  id: `${unitId}:${image.id}`,
+                  messageKey: unitId,
                   kind: "image" as const,
                   side: "outgoing" as const,
                   state: "ready" as const,
@@ -172,8 +229,8 @@
             ...(p.text
               ? [
                   {
-                    id: p.operationId,
-                    messageKey: p.logicalId ?? p.operationId,
+                    id: p.previews?.length ? `${unitId}:text:` : p.operationId,
+                    messageKey: unitId,
                     kind: "text" as const,
                     side: "outgoing" as const,
                     text: p.text,
@@ -181,9 +238,38 @@
                 ]
               : []),
           ],
-        });
+        };
+        const observed = unique.findIndex((m) => m.operationId === p.operationId);
+        let at = units.length;
+        if (observed >= 0) {
+          for (const next of unique.slice(observed + 1)) {
+            const index = positions.findIndex((position) => position.sourceId === next.id);
+            if (index >= 0) { at = index; break; }
+          }
+        } else {
+          const anchor = pendingAnchors.get(logicalId);
+          const after = anchor?.after ?? null;
+          const predecessor = anchor?.predecessor;
+          const previousPending = pending.find((item) => (item.logicalId ?? item.operationId) === predecessor?.logicalId);
+          if (predecessor && previousPending) predecessor.operationId = previousPending.operationId;
+          const previousMessage = predecessor && unique.find((message) => message.operationId === predecessor.operationId);
+          const previousIndex = predecessor ? positions.findIndex((position) =>
+            (position.kind === "pending" && position.id === predecessor.logicalId) ||
+              (previousMessage && position.sourceId === previousMessage.id),
+          ) : -1;
+          const tail = tails.get(after);
+          const index = tail
+            ? positions.findIndex((position) => position.kind === "pending" && position.id === tail)
+            : positions.findIndex((position) => position.sourceId === after);
+          const latestIndex = Math.max(previousIndex, index);
+          at = latestIndex >= 0 ? latestIndex + 1 : after === null && !tail ? 0 : units.length;
+          tails.set(after, logicalId);
+        }
+        units.splice(at, 0, unit);
+        positions.splice(at, 0, { kind: "pending", id: logicalId, ...(observed >= 0 ? { sourceId: unique[observed]!.id } : {}) });
+      }
     const preview = chatState?.connected ? view?.streamingReply : undefined;
-    if (preview?.text) {
+    if (preview?.text && !unique.some((message) => message.id === preview.id)) {
       const key = `preview:${preview.id}`;
       const position = units.findIndex(
         (unit) => (unit.time ?? 0) > preview.createdAt,
@@ -223,8 +309,21 @@
       openState: view ? "open" : readiness === "error" ? "error" : "loading",
       hasMore: !!chatState?.before,
       loadingOlder: !!chatState?.loadingOlder,
+      historySyncFailed: !!chatState?.historySyncFailed,
       promptError: chatState?.error,
     };
+  });
+  $effect(() => {
+    const state = chatState;
+    if (!state?.view) return;
+    const retained = new Set([
+      ...state.older.map((message) => message.operationId),
+      ...state.view.messages.map((message) => message.operationId),
+      ...state.pending.flatMap((item) => [item.operationId, item.retrySource]),
+    ]);
+    for (const operationId of new Set(state.localPreviews.map((item) => item.operationId))) {
+      if (!retained.has(operationId)) controller.releasePreviews(state.view.sessionId, operationId);
+    }
   });
   const recovered = $derived.by(() => {
     const native = chatState?.recovery[0];
@@ -246,7 +345,18 @@
         throw new CompanionPreControllerError("请先核对尚未确认的消息。");
       const originSession = controller.view?.sessionId;
       try {
-        await controller.send(text, retire, images, sources);
+        const previous = new Set(controller.pending.map((p) => p.logicalId ?? p.operationId));
+        const predecessor = controller.pending.at(-1);
+        const after = [...controller.older, ...(controller.view?.messages ?? [])].at(-1)?.id ?? null;
+        const send = controller.send(text, retire, images, sources);
+        for (const p of controller.pending) {
+          const key = p.logicalId ?? p.operationId;
+          if (!previous.has(key) && originSession) pendingAnchors.set(key, {
+            sessionId: originSession, after,
+            ...(predecessor ? { predecessor: { logicalId: predecessor.logicalId ?? predecessor.operationId, operationId: predecessor.operationId } } : {}),
+          });
+        }
+        await send;
       } catch (error) {
         if (controller.view?.sessionId !== originSession)
           throw new CompanionPreControllerError("会话已改变");
@@ -271,6 +381,7 @@
     readPanel: (method, input) => controller.readPanel(method, input),
     refreshRelationship: (history) => controller.refreshRelationship(history),
     retryHistory: () => void controller.refreshRelationship(true),
+    retryChatHistory: () => controller.retryHistory(),
     loadEarlierHistory: () => controller.loadRelationshipHistory(),
     stop: () => controller.stop(),
     loadOlder: () => controller.loadOlder(),

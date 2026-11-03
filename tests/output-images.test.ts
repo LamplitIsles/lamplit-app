@@ -61,6 +61,7 @@ for (const count of [6, 7, 11])
         () => {
           offline = true;
         },
+        () => {},
       );
       try {
         expect(view!.messages).toEqual(historyOnly ? [] : [message]);

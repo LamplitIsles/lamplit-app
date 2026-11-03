@@ -113,6 +113,7 @@ test("original openChat socket accepts gap reset, future deltas and lookup witho
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     (view) => views.push(structuredClone(view)),
     () => {},
+    () => {},
   );
   try {
     expect(views.at(-1)?.name).toBe("before");

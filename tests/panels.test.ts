@@ -165,6 +165,7 @@ test("public panel reads use authorized shared WebSocket, scoped cursors and rec
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     () => {},
     () => {},
+    () => {},
   );
   const input = { sessionId: "fixture-session", cursor: null };
   try {

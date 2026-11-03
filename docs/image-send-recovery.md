@@ -28,7 +28,8 @@ usable. Browser preparation preserves original bytes and creates JPEG preview
   }>;
 }
 // Result
-{ sessionId: string; operationId: UUID; images: ImageRef[] }
+{ sessionId: string; operationId: UUID;
+  images: Array<{ id: string; order: number; ref: ImageRef }> }
 // ImageRef (all fields required)
 { attachmentId: string; name: string; mediaType: ImageMediaType;
   availability: "available" | "missing" }
@@ -41,6 +42,18 @@ decoded byte bounds and PNG/JPEG/WebP/GIF signatures are checked by the common
 validator. Native adapters retain their existing storage checks, including CFL's
 160-character filename bound; no additional decoder or image-processing dependency
 is required.
+Each result echoes the corresponding request draft ID and order. Validate session,
+operation, count, order, unique draft IDs, unique returned attachment IDs and
+each reference before associating a local preview. Equal names or media types
+are never identity evidence. The controller keeps validated preview associations
+in memory until the UI explicitly releases them or the session/client closes;
+pending local previews remain available before upload completes.
+`ChatController.localPreviews` exposes `sessionId`, `operationId`, `draftId`,
+`order`, `attachmentId` and `previewUrl`; after the pending record is retired,
+the UI calls `releasePreviews(sessionId, operationId)` when it no longer needs
+those previews. A session switch or controller close releases retained ownership.
+For a retry, the mapping moves to the new operation and attachment IDs only after
+the server's source-to-target receipt is verified.
 Use `validateUpload`, `validateSubmission` and `validateRecovery`, not schemas alone. The host can enforce smaller native
 request bounds, provided its advertised supported images can fit.
 

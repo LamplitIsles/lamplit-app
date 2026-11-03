@@ -156,7 +156,7 @@ test("HTTP upload authorization, session/order/identity, no admission, media own
     )?.status,
   ).toBe(400);
   const get = new Request(
-    `http://fixture${mediaUrl(result.images[0]!.attachmentId)}`,
+    `http://fixture${mediaUrl(result.images[0]!.ref.attachmentId)}`,
   );
   expect(
     (await imageHttp(get, fixture.imageBackend, async () => null))?.status,
@@ -186,7 +186,7 @@ test("image admission, immutable ordered references, steering, native recovery, 
   const input = {
     operationId: value.operationId,
     text: "",
-    images: result.images,
+    images: result.images.map((item) => item.ref),
   };
   expect((await fixture.backend.submit(input)).state).toBe("submitted");
   await fixture.backend.submit(input);

@@ -79,6 +79,7 @@ async function harness(windowChange = false, throwOnError = false) {
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     (view) => views.push(structuredClone(view)),
     () => {},
+    () => {},
   );
   return {
     host,

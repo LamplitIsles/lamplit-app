@@ -52,7 +52,11 @@ export function imagesFixture() {
         return {
           sessionId: input.sessionId,
           operationId: input.operationId,
-          images: old.refs,
+          images: old.refs.map((ref, order) => ({
+            id: input.images[order]!.id,
+            order,
+            ref,
+          })),
         };
       const refs = input.images.map((image) => {
         const attachmentId = crypto.randomUUID();
@@ -68,7 +72,11 @@ export function imagesFixture() {
       return {
         sessionId: input.sessionId,
         operationId: input.operationId,
-        images: refs,
+        images: refs.map((ref, order) => ({
+          id: input.images[order]!.id,
+          order,
+          ref,
+        })),
       };
     },
     async media(id, variant) {
@@ -318,11 +326,25 @@ export function imagesFixture() {
       }
       retries.set(attemptId, operationId);
       recovery = recovery.filter((r) => r.operationId !== operationId);
-      const receipt = await backend.submit({
+      let receipt = await backend.submit({
         ...source,
         operationId: attemptId,
         ...(images ? { images } : {}),
       });
+      if (images) {
+        receipt = {
+          ...receipt,
+          retryImages: {
+            sessionId,
+            sourceOperationId: operationId,
+            images: images.map((ref, index) => ({
+              sourceAttachmentId: source.images![index]!.attachmentId,
+              ref,
+            })),
+          },
+        };
+        receipts.set(attemptId, receipt);
+      }
       changed();
       return receipt;
     },

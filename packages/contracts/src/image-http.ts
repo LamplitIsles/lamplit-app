@@ -3,7 +3,7 @@ import {
   MEDIA_PATH,
   MediaIdSchema,
   MAX_UPLOAD_BODY_BYTES,
-  UploadResultSchema,
+  validateUploadResult,
   validateUpload,
   type ImageLimits,
   type ImageUpload,
@@ -83,21 +83,7 @@ export async function imageHttp(
         return new Response(null, { status: 403 });
       if (!current.limits) return new Response(null, { status: 503 });
       validateUpload(input, current.limits);
-      const result = validate(UploadResultSchema, await backend.upload(input));
-      if (
-        result.sessionId !== input.sessionId ||
-        result.operationId !== input.operationId ||
-        result.images.length !== input.images.length ||
-        new Set(result.images.map((r) => r.attachmentId)).size !==
-          result.images.length ||
-        result.images.some(
-          (r, i) =>
-            r.mediaType !== input.images[i]!.mediaType ||
-            r.name !== input.images[i]!.name ||
-            r.availability !== "available",
-        )
-      )
-        throw new Error("Invalid upload result");
+      const result = validateUploadResult(await backend.upload(input), input);
       const final = await authorize();
       if (!final || final.sessionId !== owner.sessionId)
         return new Response(null, { status: 403 });

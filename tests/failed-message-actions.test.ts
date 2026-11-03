@@ -39,6 +39,7 @@ test("actual socket contract fences delayed admission, preserves rejection after
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     () => {},
     () => {},
+    () => {},
   );
   const sessionId = "fixture-session";
   const originalClient = client;
@@ -52,6 +53,7 @@ test("actual socket contract fences delayed admission, preserves rejection after
     // Receive is serialized per carrier; reconcile while submit is held.
     client = await openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
+      () => {},
       () => {},
       () => {},
     );
@@ -107,6 +109,7 @@ test("actual socket contract fences delayed admission, preserves rejection after
     host = await createChatHost(fixture.backend, () => {});
     client = await openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
+      () => {},
       () => {},
       () => {},
     );
@@ -166,7 +169,7 @@ test("actual socket contract fences delayed admission, preserves rejection after
         await client.submit({
           operationId: imageOperation,
           text: "图片原文",
-          images: uploaded.images,
+          images: uploaded.images.map((item) => item.ref),
         })
       ).state,
     ).toBe("failed");
@@ -176,15 +179,36 @@ test("actual socket contract fences delayed admission, preserves rejection after
       operationId: imageOperation,
       attemptId: crypto.randomUUID(),
     };
-    expect((await client.retryFailed(imageRetry)).state).toBe("submitted");
+    const retryReceipt = await client.retryFailed(imageRetry);
+    expect(retryReceipt.state).toBe("submitted");
     const state = await fixture.control({ action: "state" });
     const retried = state.submissions.find(
       (input) => input.operationId === imageRetry.attemptId,
     )!;
     expect(retried.text).toBe("图片原文");
     expect(retried.images![0]!.attachmentId).not.toBe(
-      uploaded.images[0]!.attachmentId,
+      uploaded.images[0]!.ref.attachmentId,
     );
+    expect(retryReceipt.retryImages).toEqual({
+      sessionId,
+      sourceOperationId: imageOperation,
+      images: [
+        {
+          sourceAttachmentId: uploaded.images[0]!.ref.attachmentId,
+          ref: retried.images![0],
+        },
+      ],
+    });
+    expect((await client.lookup(imageRetry.attemptId))?.retryImages).toEqual(
+      retryReceipt.retryImages,
+    );
+    expect(
+      (await client.finalizeSubmission({ sessionId, retry: imageRetry }))
+        ?.retryImages,
+    ).toEqual(retryReceipt.retryImages);
+    await expect(
+      client.retryFailed({ ...imageRetry, operationId: crypto.randomUUID() }),
+    ).rejects.toThrow();
     expect(
       (await fixture.imageBackend.media(
         retried.images![0]!.attachmentId,

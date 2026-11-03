@@ -4,6 +4,10 @@ Terms for the shared chat experience across agent engines.
 
 ## Language
 
+**Chat timeline（聊天时间线）**:
+The ordered conversation shown to the Human, including both participants' messages and in-progress content. The same conversation content retains its order when read later in history.
+_Avoid_: Tool transcript, messages grouped by media type
+
 **Current relationship（当前关系）**:
 The companion's present closeness and signature, distinct from the emotions recorded at particular relationship moments.
 _Avoid_: A past emotion as a lasting relationship status

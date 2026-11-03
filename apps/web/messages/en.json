@@ -134,6 +134,7 @@
   "image.generating": "Creating an image…",
   "retry": "Retry",
   "image.failed": "Image generation didn’t finish.",
+  "image.statusUnknown": "Image status is unavailable.",
   "voice.player": "Audio player",
   "voice.pause": "Pause audio",
   "voice.play": "Play audio",

@@ -18,6 +18,8 @@ import {
   ImageRefSchema,
   ImageLimitsSchema,
   RecoverySchema,
+  MediaIdSchema,
+  type ImageRef,
 } from "./images.ts";
 import { Type, type Static } from "typebox";
 import { Format } from "typebox/format";
@@ -75,6 +77,49 @@ export type FinalizeSubmission = Static<typeof FinalizeSubmissionSchema>;
 export type RetryFailed = Static<typeof RetryFailedSchema>;
 export type DeleteFailed = Static<typeof DeleteFailedSchema>;
 export type DeleteFailedResult = Static<typeof DeleteFailedResultSchema>;
+export const RetryImageMappingSchema = Type.Object(
+  {
+    sessionId: Id,
+    sourceOperationId: OperationIdSchema,
+    images: Type.Array(
+      Type.Object(
+        { sourceAttachmentId: MediaIdSchema, ref: ImageRefSchema },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 6 },
+    ),
+  },
+  { additionalProperties: false },
+);
+export type RetryImageMapping = Static<typeof RetryImageMappingSchema>;
+export function validateRetryImageMapping(
+  value: unknown,
+  sessionId: string,
+  sourceOperationId: string,
+  originals: readonly ImageRef[],
+): RetryImageMapping {
+  const mapping = validate(RetryImageMappingSchema, value);
+  const sourceIds = new Set(originals.map((image) => image.attachmentId));
+  const mappedIds = new Set(
+    mapping.images.map((image) => image.sourceAttachmentId),
+  );
+  if (
+    mapping.sessionId !== sessionId ||
+    mapping.sourceOperationId !== sourceOperationId ||
+    sourceIds.size !== originals.length ||
+    mapping.images.length !== originals.length ||
+    mappedIds.size !== originals.length ||
+    mapping.images.some(
+      (image) =>
+        !sourceIds.has(image.sourceAttachmentId) ||
+        image.ref.availability !== "available",
+    ) ||
+    new Set(mapping.images.map((image) => image.ref.attachmentId)).size !==
+      originals.length
+  )
+    throw new Error("Invalid retry image mapping");
+  return mapping;
+}
 export const ReceiptSchema = Type.Object(
   {
     operationId: Id,
@@ -82,9 +127,30 @@ export const ReceiptSchema = Type.Object(
     messageId: NullableId,
     turnId: NullableId,
     error: Type.Union([Type.String(), Type.Null()]),
+    retryImages: Type.Optional(RetryImageMappingSchema),
   },
   { additionalProperties: false },
 );
+export function validateReceipt(value: unknown): Static<typeof ReceiptSchema> {
+  const receipt = validate(ReceiptSchema, value);
+  const mapping = receipt.retryImages;
+  if (
+    mapping &&
+    (mapping.sourceOperationId === receipt.operationId ||
+      new Set(mapping.images.map((image) => image.sourceAttachmentId)).size !==
+        mapping.images.length ||
+      new Set(mapping.images.map((image) => image.ref.attachmentId)).size !==
+        mapping.images.length ||
+      mapping.images.some((image) => image.ref.availability !== "available"))
+  )
+    throw new Error("Invalid retry receipt");
+  return receipt;
+}
+export function validateLookup(
+  value: unknown,
+): Static<typeof ReceiptSchema> | null {
+  return value === null ? null : validateReceipt(value);
+}
 // Native Keet labels are single-line names bounded to 512 Unicode code points.
 const KeetLabelSchema = Type.String({
   minLength: 1,
@@ -154,9 +220,33 @@ export const MessageSourceSchema = Type.Union([
 export type KeetSource = Static<typeof KeetSourceSchema>;
 export type MessageSource = Static<typeof MessageSourceSchema>;
 
+export const VoiceRefSchema = Type.Object(
+  {
+    id: Type.String({
+      minLength: 64,
+      maxLength: 64,
+      pattern: "^[0-9a-f]{64}$",
+    }),
+  },
+  { additionalProperties: false },
+);
+export type VoiceRef = Static<typeof VoiceRefSchema>;
+
 export const MessageSchema = Type.Object(
   {
     images: Type.Optional(Type.Array(ImageRefSchema)),
+    imageState: Type.Optional(
+      Type.Union([
+        Type.Literal("preparing"),
+        Type.Literal("ready"),
+        Type.Literal("failed"),
+        Type.Literal("unknown"),
+      ]),
+    ),
+    textState: Type.Optional(
+      Type.Union([Type.Literal("streaming"), Type.Literal("complete")]),
+    ),
+    voice: Type.Optional(VoiceRefSchema),
     source: Type.Optional(MessageSourceSchema),
     id: Id,
     role: Type.Union([
@@ -170,8 +260,55 @@ export const MessageSchema = Type.Object(
     operationId: NullableId,
     turnId: NullableId,
   },
+  {
+    additionalProperties: false,
+    allOf: [
+      {
+        if: { required: ["imageState"] },
+        then: {
+          properties: { role: { const: "agent" } },
+          allOf: [
+            {
+              if: { properties: { imageState: { const: "ready" } } },
+              then: {
+                required: ["images"],
+                properties: {
+                  images: {
+                    minItems: 1,
+                    maxItems: 1,
+                    items: {
+                      properties: { availability: { const: "available" } },
+                    },
+                  },
+                },
+              },
+              else: { not: { required: ["images"] } },
+            },
+          ],
+        },
+      },
+    ],
+  },
+);
+export const TimelineChangeSchema = Type.Union([
+  Type.Object(
+    { type: Type.Literal("item"), message: MessageSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { type: Type.Literal("structure") },
+    { additionalProperties: false },
+  ),
+]);
+export const TimelineUpdateSchema = Type.Object(
+  { sessionId: Id, change: TimelineChangeSchema },
   { additionalProperties: false },
 );
+export type TimelineChange = Static<typeof TimelineChangeSchema>;
+export type TimelineUpdate = Static<typeof TimelineUpdateSchema>;
+export type ChatTimelineEvent =
+  | { type: "change"; update: TimelineUpdate }
+  | { type: "reset" };
 export const PageSchema = Type.Object(
   {
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),

@@ -31,9 +31,10 @@ import {
   Chat,
   ViewSchema,
   PageSchema,
+  TimelineUpdateSchema,
   validateSubmission,
-  ReceiptSchema,
-  LookupSchema,
+  validateReceipt,
+  validateLookup,
   validate,
   validateId,
   validateRecovery,
@@ -41,6 +42,7 @@ import {
   type HistoryPage,
   type Receipt,
   type Submission,
+  type TimelineUpdate,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -61,7 +63,7 @@ export interface ChatBackend extends PanelBackend, SearchBackend {
   retryFailed(input: RetryFailed): Promise<Receipt>;
   deleteFailed(input: DeleteFailed): Promise<DeleteFailedResult>;
   stop(turnId: string): Promise<{ stopped: boolean }>;
-  subscribe(changed: () => void): () => void;
+  subscribe(changed: (update?: TimelineUpdate) => void): () => void;
 }
 /** Bounded identity only; never contains state, calls, or codec dictionaries. */
 export interface ChatSubscription {
@@ -232,19 +234,24 @@ export async function createChatHost(
     },
     async submit(input: Submission) {
       const value = validateSubmission(input);
-      const receipt = validate(ReceiptSchema, await backend.submit(value));
+      const receipt = validateReceipt(await backend.submit(value));
       if (receipt.operationId !== value.operationId)
         throw new Error("Wrong operation receipt");
       await refresh();
       return receipt;
     },
     async lookup(id: string) {
-      const receipt = validate(
-        LookupSchema,
-        await backend.lookup(validateId(id)),
-      );
+      await refresh();
+      const sessionId = view.value.sessionId;
+      const receipt = validateLookup(await backend.lookup(validateId(id)));
       if (receipt && receipt.operationId !== id)
         throw new Error("Wrong operation receipt");
+      await refresh();
+      if (
+        view.value.sessionId !== sessionId ||
+        (receipt?.retryImages && receipt.retryImages.sessionId !== sessionId)
+      )
+        throw new Error("Wrong receipt session");
       return receipt;
     },
     async finalizeSubmission(input) {
@@ -255,10 +262,7 @@ export async function createChatHost(
       await refresh();
       if (value.sessionId !== view.value.sessionId)
         throw new Error("Wrong session");
-      const receipt = validate(
-        LookupSchema,
-        await backend.finalizeSubmission(value),
-      );
+      const receipt = validateLookup(await backend.finalizeSubmission(value));
       if (
         receipt &&
         receipt.operationId !==
@@ -267,7 +271,16 @@ export async function createChatHost(
             : value.retry.attemptId)
       )
         throw new Error("Wrong operation receipt");
+      if (
+        receipt?.retryImages &&
+        (receipt.retryImages.sessionId !== value.sessionId ||
+          !("retry" in value) ||
+          receipt.retryImages.sourceOperationId !== value.retry.operationId)
+      )
+        throw new Error("Wrong retry mapping");
       await refresh();
+      if (view.value.sessionId !== value.sessionId)
+        throw new Error("Wrong session");
       return receipt;
     },
     async retryFailed(input) {
@@ -277,10 +290,18 @@ export async function createChatHost(
       await refresh();
       if (value.sessionId !== view.value.sessionId)
         throw new Error("Wrong session");
-      const receipt = validate(ReceiptSchema, await backend.retryFailed(value));
+      const receipt = validateReceipt(await backend.retryFailed(value));
       if (receipt.operationId !== value.attemptId)
         throw new Error("Wrong operation receipt");
+      if (
+        receipt.retryImages &&
+        (receipt.retryImages.sessionId !== value.sessionId ||
+          receipt.retryImages.sourceOperationId !== value.operationId)
+      )
+        throw new Error("Wrong retry mapping");
       await refresh();
+      if (view.value.sessionId !== value.sessionId)
+        throw new Error("Wrong session");
       return receipt;
     },
     async deleteFailed(input) {
@@ -307,14 +328,88 @@ export async function createChatHost(
     },
   });
   let off: () => void;
+  const connections = new Set<ReturnType<typeof connect>>();
+  let timelinePending:
+    | {
+        sessionId: string;
+        structure: boolean;
+        items: Map<string, TimelineUpdate>;
+        bytes: number;
+      }
+    | undefined;
+  let timelineRunning = false;
+  const drainTimeline = async () => {
+    timelineRunning = true;
+    try {
+      while (timelinePending && !closed) {
+        const batch = timelinePending;
+        timelinePending = undefined;
+        await refresh();
+        if (batch.sessionId !== view.value.sessionId) continue;
+        const updates: TimelineUpdate[] = batch.structure
+          ? [{ sessionId: batch.sessionId, change: { type: "structure" } }]
+          : [...batch.items.values()];
+        for (const update of updates)
+          for (const connection of connections) connection.timeline(update);
+      }
+    } catch (error) {
+      try {
+        onError(error);
+      } catch {
+        /* Delivery errors must still disconnect. */
+      }
+      for (const connection of connections) connection.disconnect();
+    } finally {
+      timelineRunning = false;
+      if (timelinePending && !closed) void drainTimeline();
+    }
+  };
   try {
-    off = backend.subscribe(invalidate);
+    off = backend.subscribe((raw) => {
+      invalidate();
+      if (!raw) return;
+      try {
+        const update = structuredClone(validate(TimelineUpdateSchema, raw));
+        if (!timelinePending || timelinePending.sessionId !== update.sessionId)
+          timelinePending = {
+            sessionId: update.sessionId,
+            structure: false,
+            items: new Map(),
+            bytes: 0,
+          };
+        const batch = timelinePending;
+        if (update.change.type === "structure") {
+          batch.structure = true;
+          batch.items.clear();
+          batch.bytes = 0;
+        } else if (!batch.structure) {
+          const bytes = new TextEncoder().encode(
+            JSON.stringify(update),
+          ).byteLength;
+          if (batch.items.size >= 100 || batch.bytes + bytes > 1024 * 1024) {
+            batch.structure = true;
+            batch.items.clear();
+            batch.bytes = 0;
+          } else {
+            batch.items.set(update.change.message.id, update);
+            batch.bytes += bytes;
+          }
+        }
+        if (!timelineRunning) void drainTimeline();
+      } catch (error) {
+        try {
+          onError(error);
+        } catch {
+          /* Do not leave invalid subscribers connected. */
+        }
+        for (const connection of connections) connection.disconnect();
+      }
+    });
   } catch (error) {
     closed = true;
     provider.dispose();
     throw error;
   }
-  const connections = new Set<ReturnType<typeof connect>>();
   function connect(
     socket: WireSocket,
     authorize: () => Promise<boolean>,
@@ -323,7 +418,9 @@ export async function createChatHost(
     let disposed = false;
     const subscriptions = new Map<string, ServiceSubscription>();
     let subscription: ChatSubscription | null = null;
+    let timelineDirty = false;
     let incoming: Promise<void> = Promise.resolve();
+    let activeHistory = 0;
     const enqueue = (work: () => Promise<void>) => {
       const next = incoming.then(work);
       incoming = next.catch(() => {});
@@ -397,7 +494,7 @@ export async function createChatHost(
       subscription = null;
       connections.delete(connection);
     }
-    async function process(raw: string) {
+    async function process(raw: string, historyOverloaded = false) {
       if (disposed) return;
       if (!(await authorize())) {
         socket.close(1008, "Session expired");
@@ -434,6 +531,14 @@ export async function createChatHost(
           if (disposed) return;
           deliver({ type: "result", id, result });
           sub.activate();
+          if (timelineDirty) {
+            timelineDirty = false;
+            deliver({
+              type: "timeline",
+              sessionId: view.value.sessionId,
+              change: { type: "structure" },
+            });
+          }
           return;
         } else if (control?.type === "unsubscribe") {
           subscriptions.get(control.subscriptionId)?.close();
@@ -462,6 +567,7 @@ export async function createChatHost(
             call.args.length !== 1
           )
             throw new Error("Invalid method");
+          if (historyOverloaded) throw new Error("Too many history reads");
           result = (await provider.invoke(
             call,
             BACKGROUND_CONTEXT,
@@ -489,8 +595,41 @@ export async function createChatHost(
       }
     }
     const connection = {
+      timeline(update: TimelineUpdate) {
+        if (!subscriptions.size) return;
+        if (!subscription) {
+          timelineDirty = true;
+          return;
+        }
+        deliver({ type: "timeline", ...update });
+      },
       receive(raw: string) {
-        return enqueue(() => process(raw)).catch(onError);
+        return enqueue(async () => {
+          let history = false;
+          try {
+            const frame = decodeFrame(raw);
+            const call = readCall(frame.call);
+            history =
+              frame.type === "call" &&
+              frame.version === 1 &&
+              typeof frame.id === "string" &&
+              frame.id.length <= 100 &&
+              call.serviceId === Chat.id &&
+              !call.instance &&
+              call.member === "history" &&
+              call.args.length === 1;
+          } catch {
+            /* Invalid frames follow the ordinary validation path. */
+          }
+          if (!history) return process(raw);
+          const accepted = activeHistory < 8;
+          if (accepted) activeHistory++;
+          void process(raw, !accepted)
+            .catch(onError)
+            .finally(() => {
+              if (accepted) activeHistory--;
+            });
+        }).catch(onError);
       },
       getSubscription(): ChatSubscription | null {
         return subscription && { ...subscription };

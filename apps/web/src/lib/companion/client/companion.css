@@ -337,6 +337,14 @@
   font-size: 12px;
   background: var(--f7-bars-bg-color);
 }
+.companion-media-pending {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  background: var(--f7-bars-bg-color);
+  --f7-preloader-size: 24px;
+}
 .companion-media-spinner {
   margin: 20px;
 }

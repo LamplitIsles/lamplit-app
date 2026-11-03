@@ -14,7 +14,7 @@ Reloading the page reads updated configuration.
 | Member                                                                 | Meaning                                                                                 |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `view`                                                                 | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
-| `history(before)`                                                      | Previous page of completed messages and user submissions                                |
+| `history(before)`                                                      | Previous page of ordered timeline entries, including in-progress image slots           |
 | `submit({ operationId, text, images?, replacementSourceIds? })`        | New input; the engine adapter starts or steers its native conversation                  |
 | `lookup(operationId)`                                                  | Reconcile admission after lost acknowledgement                                          |
 | `finalizeSubmission({ sessionId, submission } / { sessionId, retry })` | Fenced terminal admission decision for an expired immutable attempt                     |
@@ -26,6 +26,16 @@ Reloading the page reads updated configuration.
 Chord method contracts include an invocation context as their last parameter.
 The browser helper supplies it. Socket cancellation is not passed into execution;
 the native execution owner handles explicit stop.
+
+## Assistant voice messages
+
+`ChatMessage.voice?: { id: string }` identifies a standalone incoming voice
+message. The ID is exactly 64 lowercase hexadecimal characters; it is an
+opaque reference, not a transcript. The corresponding authenticated,
+same-origin MP3 is read from `/api/audio/<id>.mp3`. A voice message has the
+same stable message identity and history behavior as other chat messages.
+The reference carries no duration or waveform samples. The UI's decorative
+bars show playback progress without claiming to represent the audio waveform.
 
 ## Optional assistant thinking
 
@@ -39,8 +49,10 @@ and tool-call-only entries successful answers. See [UI and acceptance](collapsed
 
 ## Delivery semantics
 
-A reply is one complete agent message with a stable native identity. A turn can
-produce multiple messages. No unfinished text/token deltas enter the public view.
+A turn can produce multiple independently identified entries. Text, images,
+voice and user messages share one authoritative order in live and history pages.
+An in-progress text entry uses `textState: "streaming"`; its completed form uses
+the same message ID and may use `textState: "complete"`.
 A later failure or stop does not turn unfinished text into a successful message.
 Completed messages are retained independently of a turn's final outcome.
 Successful completion clears the active turn without adding a chat notice.
@@ -56,7 +68,9 @@ stopping do not change submission success and never produce input recovery.
 
 ```ts
 Receipt = { operationId: string; state: "submitted" | "failed";
-  messageId: string | null; turnId: string | null; error: string | null }
+  messageId: string | null; turnId: string | null; error: string | null;
+  retryImages?: { sessionId: string; sourceOperationId: string;
+    images: Array<{ sourceAttachmentId: string; ref: ImageRef }> } }
 submit(input: Submission): Promise<Receipt>
 lookup(operationId: string): Promise<Receipt | null>
 ```
@@ -85,6 +99,12 @@ never infers failure. Reconnect/publication rechecks unresolved results without
 automatic resubmission or polling. Native admission serialization must fence late
 original requests before returning failed; submitted always wins. Retry finalization
 uses the exact source/attempt association because reassociated media is native-owned.
+For a bound retry with images, `retryFailed`, `lookup(attemptId)` and
+`finalizeSubmission({sessionId,retry})` expose the same `retryImages` mapping.
+The host verifies the original staged bytes and source IDs before binding the new
+refs. Both source and target IDs are unique, and the source set must equal the
+original operation's image set. An unbound attempt remains null/unknown. A lost
+receipt is reconciled through lookup/finalization, never by resending the attempt.
 See [required methods and native proof](native-durable-submissions.md#failed-message-actions--spec-3936).
 
 The browser persists bounded reference-only pending inputs per origin/session.
@@ -93,10 +113,10 @@ by message identity. Local old pending records are normalized once to the three
 UI states without dropping text, images or operation IDs; unknown outcomes remain
 sending and recorded admission remains sent. No old wire DTOs are accepted.
 
-The view is version 2 and the Chord service is `lamplit.chat.v2`. This is the PWA
-cutover boundary: an old page cannot subscribe to the new service or silently
-accept the new view. Reload/update to the matching built frontend is required;
-there is no negotiation or old-wire fallback. The transport envelope remains v1.
+The view remains version 2 and the Chord service remains `lamplit.chat.v2`.
+Deploy matching clients and host together: there is no negotiation or old-wire
+fallback, and an older client may not understand timeline events. The transport
+envelope remains v1.
 
 ## Final reply body evidence
 
@@ -270,15 +290,41 @@ See [Matrix presentation and native acceptance](matrix-source-ui.md).
 bounded nonempty ID, nullable turn ID, number time and string text conventions as
 messages. It contains only available answer text, never thinking, signatures,
 tool arguments or output. Omission means there is no current preview. The shared
-host refresh copies or deletes this field alongside completed messages atomically.
-No protocol/service identity changes are needed; unchanged CFL may omit it.
+host refresh copies or deletes this field alongside timeline messages atomically.
 
-The ID is stable per observed generation attempt and may differ from the final
-native entry ID. Reconnect snapshots can replace preview identity and text. On
-completion, remove the preview and include the final native message in the same
-view. Retry/stop/error/session reset must reconcile to native truth. Previews are
-excluded from completed messages, history, search, receipts and notifications;
-they create no durable record. See [sentence replies](sentence-replies.md).
+When an in-progress answer is also a timeline entry, its ID is the same as the
+preview and its completed entry; render it once. Retry/stop/error/session reset
+must reconcile to native truth. A preview does not establish final-body evidence
+or admission. See [sentence replies](sentence-replies.md).
+
+## Timeline updates and recovery
+
+An agent image slot carries `imageState: "preparing" | "ready" | "failed" |
+"unknown"`. Its ID and position stay stable. `ready` requires exactly one
+available `ImageRef`; other states contain no images. Unknown means the host
+cannot verify the result, not that generation is still running.
+
+The authenticated chat socket may publish `{ type: "timeline", sessionId,
+change }`, where `change` is `{ type: "item", message: ChatMessage }` for an
+existing entry or `{ type: "structure" }` for insertion, removal or reordering.
+Backend notifications are emitted only after the changed projection can be read.
+The host sends them only to subscribed connections for the current session,
+rechecks authorization for each send, coalesces item updates, and converts
+oversized pending batches to structural invalidation. Socket congestion or send
+failure closes the channel. `openChat` receives these through its required fourth
+callback as `{type:"change",update:{sessionId,change}}`; Chord resets produce
+`{type:"reset"}`. Clients update known IDs in place and never append an unknown
+item merely because it was pushed.
+
+On structural invalidation, reconnect or reset, clients with loaded history read
+back from the current view cursor to their previously loaded boundary. If all
+history had been loaded, they read to the new null cursor. A single coordinator
+serializes history work and merges concurrent item updates; session changes
+discard stale results. Failed coordination retains the old entries and can be
+retried via `ChatController.retryHistory()`; `historySyncFailed` exposes failure.
+A scan is bounded by the loaded span plus newly displaced entries, not a
+fixed page count. No persistent synchronization revision or event replay is
+implied; continuity after a disconnect depends on this authoritative reread.
 
 ## Output image references
 

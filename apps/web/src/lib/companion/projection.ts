@@ -83,6 +83,8 @@ export interface TimelineMessageUnit {
   pending?: boolean;
   pendingLabel?: string;
   failed?: boolean;
+  /** Submission identity used by retry/delete when render identity differs. */
+  actionId?: string;
   origin?: "user" | "steering";
   time?: number;
   thinking?: string;
@@ -109,6 +111,7 @@ export interface CompanionProjection {
   openState: "cold" | "loading" | "open" | "error";
   hasMore: boolean;
   loadingOlder: boolean;
+  historySyncFailed?: boolean;
   promptError?: string;
   /** Stable identity for a prompt result, used to distinguish a new rejection. */
   promptErrorKey?: string;

@@ -46,6 +46,7 @@ export interface CompanionActions {
   attachmentUrl?: (attachment: unknown) => Promise<string>;
   loadEarlierHistory?: () => Promise<void>;
   retryHistory?: () => void;
+  retryChatHistory?: () => void;
 }
 export interface CompanionSessionView {
   id: string;

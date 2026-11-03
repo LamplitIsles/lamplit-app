@@ -249,6 +249,7 @@ async function controllerHarness(
 ) {
   const host = await createChatHost(backend, () => {});
   const channels = new Map<object, ReturnType<typeof host.connect>>();
+  const received: unknown[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -264,6 +265,7 @@ async function controllerHarness(
         );
       },
       message(ws, raw) {
+        received.push(JSON.parse(String(raw)));
         void channels.get(ws)!.receive(String(raw));
       },
       close(ws) {
@@ -298,6 +300,7 @@ async function controllerHarness(
   };
   return {
     host,
+    received,
     saved,
     get disconnections() {
       return disconnections;
@@ -316,6 +319,822 @@ async function controllerHarness(
     },
   };
 }
+
+test("history updates preserve image position and discover insertions beyond multiple consumed pages", async () => {
+  const message = (i: number): ChatMessage => ({
+    id: `m${i}`,
+    role: "agent",
+    text: `message ${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: "turn",
+  });
+  let all = Array.from({ length: 96 }, (_, i) => message(i));
+  all[4] = { ...all[4]!, text: "", imageState: "preparing" };
+  let notify: (
+    update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+  ) => void = () => {};
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        messages: all.slice(-30),
+        before: all.length > 30 ? all.at(-30)!.id : null,
+      };
+    },
+    async history(before) {
+      const end = all.findIndex((message) => message.id === before);
+      if (end < 0) throw new Error("unknown cursor");
+      const start = Math.max(0, end - 30);
+      return {
+        messages: all.slice(start, end),
+        before: start ? all[start]!.id : null,
+      };
+    },
+    subscribe(changed) {
+      notify = changed;
+      return () => {};
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    while (c.before) await c.loadOlder();
+    expect(c.older.find((m) => m.id === "m4")?.imageState).toBe("preparing");
+    all[4] = {
+      ...all[4]!,
+      imageState: "ready",
+      images: [
+        {
+          attachmentId: "photo",
+          name: "photo.png",
+          mediaType: "image/png",
+          availability: "available",
+        },
+      ],
+    };
+    notify({
+      sessionId: "fixture-session",
+      change: { type: "item", message: all[4]! },
+    });
+    await eventually(
+      () => c.older.find((m) => m.id === "m4")?.imageState === "ready",
+    );
+    const inserted = { ...message(1000), id: "inserted" };
+    all = [inserted, ...all];
+    notify({ sessionId: "fixture-session", change: { type: "structure" } });
+    await eventually(() => c.older.some((m) => m.id === "inserted"));
+    expect([...c.older, ...c.view!.messages].map((m) => m.id)).toEqual(
+      all.map((m) => m.id),
+    );
+    expect(c.before).toBeNull();
+  } finally {
+    h.close();
+  }
+});
+
+test("local image previews survive failed-send retry and a lost retry receipt without resending", async () => {
+  const { imagesFixture } = await import("./images-fixture.ts");
+  const { fixtureImage } = await import("./panels-fixture.ts");
+  const f = imagesFixture();
+  let retries = 0;
+  const backend: ChatBackend = {
+    ...f.backend,
+    async retryFailed(input) {
+      retries++;
+      await f.backend.retryFailed(input);
+      throw new Error("lost retry response");
+    },
+  };
+  const h = await controllerHarness(backend);
+  const descriptors = new Map(
+    ["fetch", "document", "createImageBitmap"].map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (_: unknown, init: RequestInit) =>
+      Response.json(await f.imageBackend.upload(JSON.parse(String(init.body)))),
+  });
+  Object.defineProperty(globalThis, "createImageBitmap", {
+    configurable: true,
+    value: async () => ({ width: 1, height: 1, close() {} }),
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      createElement: () => ({
+        getContext: () => ({ drawImage() {} }),
+        toBlob: (done: (blob: Blob) => void) =>
+          done(
+            new Blob([new Uint8Array([255, 216, 255, 217])], {
+              type: "image/jpeg",
+            }),
+          ),
+      }),
+    },
+  });
+  try {
+    const c = await h.create();
+    await f.control({ action: "mode", state: "failed" });
+    const drafts = ["first", "second"].map((id) => ({
+      id,
+      file: new File([fixtureImage], "same.png", { type: "image/png" }),
+      previewUrl: `blob:${id}`,
+    }));
+    let released = 0;
+    const sending = c.send("with images", () => released++, drafts);
+    expect(c.pending[0]?.previews?.map((item) => item.previewUrl)).toEqual([
+      "blob:first",
+      "blob:second",
+    ]);
+    await sending;
+    const source = c.pending[0]!.operationId;
+    expect(c.pending[0]?.state).toBe("failed");
+    const originalIds = c.localPreviews.map((item) => item.attachmentId);
+    expect(originalIds).toHaveLength(2);
+    await f.control({ action: "mode", state: "submitted" });
+    await c.retryFailed(source);
+    await eventually(
+      () =>
+        c.pending.length === 0 &&
+        c.localPreviews.every((item) => item.operationId !== source),
+    );
+    expect(retries).toBe(1);
+    expect(c.localPreviews.map((item) => item.previewUrl)).toEqual([
+      "blob:first",
+      "blob:second",
+    ]);
+    expect(c.localPreviews.map((item) => item.attachmentId)).not.toEqual(
+      originalIds,
+    );
+    expect(released).toBe(0);
+    const attempt = c.localPreviews[0]!.operationId;
+    expect(c.releasePreviews("wrong-session", attempt)).toBe(false);
+    expect(c.releasePreviews("fixture-session", attempt)).toBe(true);
+    expect(released).toBe(1);
+  } finally {
+    h.close();
+    for (const [key, descriptor] of descriptors)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("changes during history reads and while disconnected are reconciled without losing the loaded range", async () => {
+  const message = (i: number): ChatMessage => ({
+    id: `m${i}`,
+    role: "agent",
+    text: `message ${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: "turn",
+  });
+  let all = Array.from({ length: 65 }, (_, i) => message(i));
+  let notify: (
+    update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+  ) => void = () => {};
+  let hold = false,
+    entered = gate(),
+    release = gate();
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        messages: all.slice(-30),
+        before: all.at(-30)!.id,
+      };
+    },
+    async history(before) {
+      const snapshot = [...all];
+      const end = snapshot.findIndex((item) => item.id === before),
+        start = Math.max(0, end - 30);
+      if (end < 0) throw new Error("unknown cursor");
+      if (hold) {
+        hold = false;
+        entered.release();
+        await release.promise;
+      }
+      return {
+        messages: snapshot.slice(start, end),
+        before: start ? snapshot[start]!.id : null,
+      };
+    },
+    subscribe(changed) {
+      notify = changed;
+      return () => {};
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    while (c.before) await c.loadOlder();
+    hold = true;
+    notify({ sessionId: "fixture-session", change: { type: "structure" } });
+    await entered.promise;
+    all[0] = { ...all[0]!, text: "changed during history" };
+    notify({
+      sessionId: "fixture-session",
+      change: { type: "item", message: all[0]! },
+    });
+    await eventually(
+      () =>
+        c.older.find((item) => item.id === "m0")?.text ===
+        "changed during history",
+    );
+    release.release();
+    await c.loadOlder();
+    await eventually(
+      () =>
+        c.older.find((item) => item.id === "m0")?.text ===
+        "changed during history",
+    );
+    h.disconnect();
+    all = [{ ...message(1000), id: "offline-insertion" }, ...all];
+    await eventually(() => h.disconnections > 0);
+    await eventually(() => c.connected);
+    await eventually(() =>
+      c.older.some((item) => item.id === "offline-insertion"),
+    );
+    expect([...c.older, ...c.view!.messages].map((item) => item.id)).toEqual(
+      all.map((item) => item.id),
+    );
+    expect(c.before).toBeNull();
+  } finally {
+    release.release();
+    h.close();
+  }
+});
+
+test("completion supersedes a buffered streaming item while later item updates survive history reconciliation", async () => {
+  const message = (i: number): ChatMessage => ({
+    id: `m${i}`,
+    role: "agent",
+    text: `text ${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: "turn",
+    textState: "complete",
+  });
+  const all = Array.from({ length: 65 }, (_, i) => message(i));
+  let notify: (
+    update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+  ) => void = () => {};
+  const entered = gate(),
+    release = gate();
+  let hold = false,
+    reads = 0;
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        messages: all.slice(-30),
+        before: "m35",
+      };
+    },
+    async history(before) {
+      reads++;
+      const snapshot = [...all],
+        end = snapshot.findIndex((item) => item.id === before),
+        start = Math.max(0, end - 30);
+      if (end < 0) throw new Error("unknown cursor");
+      if (hold) {
+        hold = false;
+        entered.release();
+        await release.promise;
+      }
+      return {
+        messages: snapshot.slice(start, end),
+        before: start ? snapshot[start]!.id : null,
+      };
+    },
+    subscribe(changed) {
+      notify = changed;
+      return () => {};
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    while (c.before) await c.loadOlder();
+    const baseline = reads;
+    hold = true;
+    notify({ sessionId: "fixture-session", change: { type: "structure" } });
+    await entered.promise;
+    notify({
+      sessionId: "fixture-session",
+      change: {
+        type: "item",
+        message: { ...all[0]!, text: "partial", textState: "streaming" },
+      },
+    });
+    await eventually(
+      () => c.older.find((item) => item.id === "m0")?.text === "partial",
+    );
+    all[0] = { ...all[0]!, text: "completed full text", textState: "complete" };
+    notify({ sessionId: "fixture-session", change: { type: "structure" } });
+    await Bun.sleep(30);
+    notify({
+      sessionId: "fixture-session",
+      change: {
+        type: "item",
+        message: {
+          ...all[1]!,
+          text: "later streaming",
+          textState: "streaming",
+        },
+      },
+    });
+    await eventually(
+      () =>
+        c.older.find((item) => item.id === "m1")?.text === "later streaming",
+    );
+    release.release();
+    await c.loadOlder();
+    expect(reads).toBeGreaterThan(baseline + 2);
+    expect(c.older.find((item) => item.id === "m0")).toMatchObject({
+      text: "completed full text",
+      textState: "complete",
+    });
+    expect(c.older.find((item) => item.id === "m1")).toMatchObject({
+      text: "later streaming",
+      textState: "streaming",
+    });
+    expect([...c.older, ...c.view!.messages]).toHaveLength(65);
+  } finally {
+    release.release();
+    h.close();
+  }
+});
+
+test("a failed history reconciliation preserves existing messages and can be retried", async () => {
+  const message = (i: number): ChatMessage => ({
+    id: `m${i}`,
+    role: "agent",
+    text: `${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: "turn",
+  });
+  let all = Array.from({ length: 35 }, (_, i) => message(i)),
+    fail = false;
+  let notify: (
+    update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+  ) => void = () => {};
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        messages: all.slice(-30),
+        before: all.at(-30)!.id,
+      };
+    },
+    async history(before) {
+      if (fail) throw new Error("unavailable");
+      const end = all.findIndex((item) => item.id === before),
+        start = Math.max(0, end - 30);
+      return {
+        messages: all.slice(start, end),
+        before: start ? all[start]!.id : null,
+      };
+    },
+    subscribe(changed) {
+      notify = changed;
+      return () => {};
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    await c.loadOlder();
+    const original = [...c.older, ...c.view!.messages].map((item) => item.id);
+    all = [{ ...message(100), id: "inserted" }, ...all];
+    fail = true;
+    notify({ sessionId: "fixture-session", change: { type: "structure" } });
+    await eventually(() => c.historySyncFailed);
+    expect([...c.older, ...c.view!.messages].map((item) => item.id)).toEqual(
+      original,
+    );
+    fail = false;
+    c.retryHistory();
+    await eventually(
+      () =>
+        !c.historySyncFailed && c.older.some((item) => item.id === "inserted"),
+    );
+    expect([...c.older, ...c.view!.messages].map((item) => item.id)).toEqual(
+      all.map((item) => item.id),
+    );
+  } finally {
+    h.close();
+  }
+});
+
+test("an item changed during the first manual history page replaces the stale page result", async () => {
+  const message = (i: number): ChatMessage => ({
+    id: `m${i}`,
+    role: "agent",
+    text: `${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: "turn",
+  });
+  const all = Array.from({ length: 35 }, (_, i) => message(i));
+  const entered = gate(),
+    release = gate();
+  let notify: (
+    update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+  ) => void = () => {};
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        messages: all.slice(-30),
+        before: "m5",
+      };
+    },
+    async history() {
+      const snapshot = all.slice(0, 5);
+      entered.release();
+      await release.promise;
+      return { messages: snapshot, before: null };
+    },
+    subscribe(changed) {
+      notify = changed;
+      return () => {};
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    const loading = c.loadOlder();
+    await entered.promise;
+    all[0] = { ...all[0]!, text: "new value" };
+    notify({
+      sessionId: "fixture-session",
+      change: { type: "item", message: all[0]! },
+    });
+    await Bun.sleep(20);
+    release.release();
+    await loading;
+    expect(c.older.find((item) => item.id === "m0")?.text).toBe("new value");
+  } finally {
+    release.release();
+    h.close();
+  }
+});
+
+test("a history reply from a previous session cannot enter the new session", async () => {
+  const message = (i: number): ChatMessage => ({
+    id: `old-${i}`,
+    role: "agent",
+    text: `${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: "turn",
+  });
+  const entered = gate(),
+    release = gate();
+  let sessionId = "fixture-session";
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        sessionId,
+        messages:
+          sessionId === "fixture-session"
+            ? Array.from({ length: 30 }, (_, i) => message(i + 5))
+            : [message(100)],
+        before: sessionId === "fixture-session" ? "old-5" : null,
+      };
+    },
+    async history() {
+      entered.release();
+      await release.promise;
+      return {
+        messages: Array.from({ length: 5 }, (_, i) => message(i)),
+        before: null,
+      };
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    const oldPage = c.loadOlder();
+    await entered.promise;
+    sessionId = "new-session";
+    await h.host.refresh();
+    await eventually(() => c.view?.sessionId === "new-session");
+    release.release();
+    await oldPage;
+    expect(c.older).toEqual([]);
+    expect(c.view?.messages.map((item) => item.id)).toEqual(["old-100"]);
+    expect(c.before).toBeNull();
+  } finally {
+    release.release();
+    h.close();
+  }
+});
+
+for (const mode of ["reconciliation", "manual page"] as const) {
+  test(`session switch lets new history proceed while old ${mode} is pending`, async () => {
+    const message = (id: string, text = id): ChatMessage => ({
+      id,
+      role: "agent",
+      text,
+      createdAt: 1,
+      operationId: null,
+      turnId: "turn",
+    });
+    const aEntered = gate(),
+      aRelease = gate(),
+      bEntered = gate(),
+      bRelease = gate();
+    let sessionId = "A",
+      holdA = mode === "manual page";
+    let notify: (
+      update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+    ) => void = () => {};
+    const backend: ChatBackend = {
+      ...fixtureBackend().backend,
+      async read() {
+        return {
+          ...(await fixtureBackend().backend.read()),
+          sessionId,
+          messages: [message(`${sessionId}-live`)],
+          before: `${sessionId}-live`,
+        };
+      },
+      async history(before) {
+        if (before === "A-live") {
+          if (holdA) {
+            aEntered.release();
+            await aRelease.promise;
+          }
+          return { messages: [message("A-old")], before: null };
+        }
+        if (before === "B-live") {
+          bEntered.release();
+          await bRelease.promise;
+          return {
+            messages: [
+              message("B-only", "new session"),
+              message("B-old", "stale"),
+            ],
+            before: null,
+          };
+        }
+        throw new Error("unexpected cursor");
+      },
+      subscribe(changed) {
+        notify = changed;
+        return () => {};
+      },
+    };
+    const h = await controllerHarness(backend);
+    try {
+      const c = await h.create();
+      let oldPage: Promise<void> | undefined;
+      if (mode === "reconciliation") {
+        await c.loadOlder();
+        holdA = true;
+        notify({ sessionId: "A", change: { type: "structure" } });
+      } else oldPage = c.loadOlder();
+      await aEntered.promise;
+      notify({
+        sessionId: "A",
+        change: {
+          type: "item",
+          message: message("B-only", "old session patch"),
+        },
+      });
+      await Bun.sleep(20);
+      notify({ sessionId: "A", change: { type: "structure" } });
+      await Bun.sleep(20);
+      sessionId = "B";
+      await h.host.refresh();
+      await eventually(() => c.view?.sessionId === "B");
+      const newPage = c.loadOlder();
+      await eventually(
+        () =>
+          h.received.some((frame) => {
+            const call = (
+              frame as { call?: { member?: string; args?: unknown[] } }
+            ).call;
+            return call?.member === "history" && call.args?.[0] === "B-live";
+          }),
+        300,
+      );
+      expect(c.loadingOlder).toBe(true);
+      notify({
+        sessionId: "B",
+        change: { type: "item", message: message("B-old", "fresh") },
+      });
+      await Bun.sleep(20);
+      aRelease.release();
+      if (oldPage) await oldPage;
+      await bEntered.promise;
+      await Bun.sleep(20);
+      expect(c.loadingOlder).toBe(true);
+      expect(c.older).toEqual([]);
+      bRelease.release();
+      await newPage;
+      expect(c.loadingOlder).toBe(false);
+      expect(c.older.map((item) => [item.id, item.text])).toEqual([
+        ["B-only", "new session"],
+        ["B-old", "fresh"],
+      ]);
+      expect(c.view?.sessionId).toBe("B");
+      expect(c.before).toBeNull();
+    } finally {
+      aRelease.release();
+      bRelease.release();
+      h.close();
+    }
+  });
+}
+
+test("reconnection releases stale history ownership and preserves new page patches", async () => {
+  const message = (id: string, text = id): ChatMessage => ({
+    id,
+    role: "agent",
+    text,
+    createdAt: 1,
+    operationId: null,
+    turnId: "turn",
+  });
+  const oldEntered = gate(),
+    oldRelease = gate(),
+    newEntered = gate(),
+    newRelease = gate();
+  let calls = 0;
+  let notify: (
+    update?: import("../packages/contracts/src/index.ts").TimelineUpdate,
+  ) => void = () => {};
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        messages: [message("live")],
+        before: "live",
+      };
+    },
+    async history() {
+      if (++calls === 1) {
+        oldEntered.release();
+        await oldRelease.promise;
+        return { messages: [message("old")], before: null };
+      }
+      newEntered.release();
+      await newRelease.promise;
+      return { messages: [message("new", "stale")], before: null };
+    },
+    subscribe(changed) {
+      notify = changed;
+      return () => {};
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    const oldPage = c.loadOlder();
+    await oldEntered.promise;
+    h.disconnect();
+    await eventually(() => h.disconnections > 0);
+    await eventually(() => c.connected);
+    const newPage = c.loadOlder();
+    await newEntered.promise;
+    notify({
+      sessionId: "fixture-session",
+      change: { type: "item", message: message("new", "fresh") },
+    });
+    await Bun.sleep(20);
+    oldRelease.release();
+    await oldPage;
+    expect(c.loadingOlder).toBe(true);
+    expect(c.older).toEqual([]);
+    newRelease.release();
+    await newPage;
+    expect(c.loadingOlder).toBe(false);
+    expect(c.older.map((item) => [item.id, item.text])).toEqual([
+      ["new", "fresh"],
+    ]);
+  } finally {
+    oldRelease.release();
+    newRelease.release();
+    h.close();
+  }
+});
+
+test("new session receives history while the old session read is still held", async () => {
+  const message = (id: string): ChatMessage => ({
+    id,
+    role: "agent",
+    text: id,
+    createdAt: 1,
+    operationId: null,
+    turnId: "turn",
+  });
+  const entered = gate(),
+    release = gate();
+  let sessionId = "A";
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        sessionId,
+        messages: [message(`${sessionId}-live`)],
+        before: `${sessionId}-live`,
+      };
+    },
+    async history(cursor) {
+      if (cursor === "A-live") {
+        entered.release();
+        await release.promise;
+        return { messages: [message("A-old")], before: null };
+      }
+      return { messages: [message("B-old")], before: null };
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    const oldPage = c.loadOlder();
+    await entered.promise;
+    sessionId = "B";
+    await h.host.refresh();
+    await eventually(() => c.view?.sessionId === "B");
+    const newPage = c.loadOlder();
+    await eventually(() => c.older.some((item) => item.id === "B-old"), 300);
+    await newPage;
+    expect(c.before).toBeNull();
+    release.release();
+    await oldPage;
+    expect(c.older.map((item) => item.id)).toEqual(["B-old"]);
+  } finally {
+    release.release();
+    h.close();
+  }
+});
+
+test("returning to the same session does not accept its earlier history request", async () => {
+  const message = (id: string): ChatMessage => ({
+    id,
+    role: "agent",
+    text: id,
+    createdAt: 1,
+    operationId: null,
+    turnId: "turn",
+  });
+  const entered = gate(),
+    release = gate();
+  let sessionId = "A";
+  const backend: ChatBackend = {
+    ...fixtureBackend().backend,
+    async read() {
+      return {
+        ...(await fixtureBackend().backend.read()),
+        sessionId,
+        messages: [message(`${sessionId}-live`)],
+        before: `${sessionId}-live`,
+      };
+    },
+    async history() {
+      entered.release();
+      await release.promise;
+      return { messages: [message("obsolete")], before: null };
+    },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    const oldPage = c.loadOlder();
+    await entered.promise;
+    sessionId = "B";
+    await h.host.refresh();
+    await eventually(() => c.view?.sessionId === "B");
+    sessionId = "A";
+    await h.host.refresh();
+    await eventually(() => c.view?.sessionId === "A");
+    release.release();
+    await oldPage;
+    expect(c.older).toEqual([]);
+    expect(c.before).toBe("A-live");
+    expect(c.loadingOlder).toBe(false);
+  } finally {
+    release.release();
+    h.close();
+  }
+});
 
 test("slow acknowledgement, publish ordering, null lookup, reload and reconnect never imply failure", async () => {
   const { fixtureBackend } = await import("./fixture.ts");
@@ -702,6 +1521,7 @@ test("unknown sticker admission survives reopen and reconnect without automatic 
     );
     const client = await openChat(
       socket,
+      () => {},
       () => {},
       () => {},
     );

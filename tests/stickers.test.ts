@@ -447,6 +447,7 @@ test("sticker references survive Chord submission, refresh and history without a
       view = v;
     },
     () => {},
+    () => {},
   );
   try {
     const input = { operationId: stage.operationId, text: "", images: [image] };
@@ -617,6 +618,7 @@ test("failed sticker retry and reimport keep the sent version in real socket his
   const connect = () =>
     openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
+      () => {},
       () => {},
       () => {},
     );

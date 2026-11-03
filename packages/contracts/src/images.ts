@@ -85,7 +85,17 @@ export const UploadResultSchema = Type.Object(
   {
     sessionId: Type.String({ minLength: 1, maxLength: 300 }),
     operationId: OperationIdSchema,
-    images: Type.Array(ImageRefSchema, { minItems: 1, maxItems: 6 }),
+    images: Type.Array(
+      Type.Object(
+        {
+          id: MediaIdSchema,
+          order: Type.Integer({ minimum: 0, maximum: 5 }),
+          ref: ImageRefSchema,
+        },
+        object,
+      ),
+      { minItems: 1, maxItems: 6 },
+    ),
   },
   object,
 );
@@ -102,6 +112,44 @@ export const RecoverySchema = Type.Object(
 export type ImageLimits = Static<typeof ImageLimitsSchema>;
 export type ImageRef = Static<typeof ImageRefSchema>;
 export type ImageUpload = Static<typeof UploadSchema>;
+export type ImageUploadResult = Static<typeof UploadResultSchema>;
+export function validateUploadResult(
+  value: unknown,
+  input: {
+    sessionId: string;
+    operationId: string;
+    images: readonly Pick<
+      ImageUpload["images"][number],
+      "id" | "order" | "name" | "mediaType"
+    >[];
+  },
+): ImageUploadResult {
+  const result = validate(UploadResultSchema, value);
+  if (
+    result.sessionId !== input.sessionId ||
+    result.operationId !== input.operationId ||
+    result.images.length !== input.images.length ||
+    new Set(input.images.map((item) => item.id)).size !== input.images.length ||
+    input.images.some((item, index) => item.order !== index) ||
+    new Set(result.images.map((item) => item.id)).size !==
+      result.images.length ||
+    new Set(result.images.map((item) => item.ref.attachmentId)).size !==
+      result.images.length ||
+    result.images.some((item, index) => {
+      const draft = input.images[index];
+      return (
+        !draft ||
+        item.id !== draft.id ||
+        item.order !== draft.order ||
+        item.ref.name !== draft.name ||
+        item.ref.mediaType !== draft.mediaType ||
+        item.ref.availability !== "available"
+      );
+    })
+  )
+    throw new Error("Invalid upload result");
+  return result;
+}
 export type InputRecovery = Static<typeof RecoverySchema>;
 export const MAX_UPLOAD_BODY_BYTES = 36_000_000;
 export function mediaUrl(

@@ -793,7 +793,7 @@
       : (value.lastAgentError ?? "");
     const wantedImages = new Map<string, TimelineImage>();
     for (const item of value.items)
-      if (item.kind === "image" && item.state === "ready" && item.attachment)
+      if (item.kind === "image" && item.state === "ready" && item.attachment && !item.previewUrl)
         wantedImages.set(item.id, item);
     for (const [id, url] of Object.entries(imageUrls)) {
       const item = wantedImages.get(id);
@@ -840,14 +840,14 @@
     imageDimensions = dimensions;
   }
   async function loadImage(item: TimelineImage, source: string): Promise<void> {
-    if (!actions.attachmentUrl || imageLoads[item.id] === source) return;
+    if (!actions.attachmentUrl || item.previewUrl || imageLoads[item.id] === source) return;
     imageLoads = { ...imageLoads, [item.id]: source };
     try {
       const url = await actions.attachmentUrl(item.attachment);
       const live = displayedProjection.items.find(
         (candidate) => candidate.kind === "image" && candidate.id === item.id,
       ) as TimelineImage | undefined;
-      if (live && imageSource(live) === source) {
+      if (live && !live.previewUrl && imageSource(live) === source) {
         if (imageUrls[item.id] && imageUrls[item.id] !== url)
           revokeImage(item.id);
         imageUrls = { ...imageUrls, [item.id]: url };
@@ -1000,6 +1000,11 @@
     item: TimelineVoice,
     control: Element,
   ): Promise<void> {
+    if (voiceErrors[item.id]) {
+      const nextErrors = { ...voiceErrors };
+      delete nextErrors[item.id];
+      voiceErrors = nextErrors;
+    }
     if (!voiceUrls[item.id]) {
       voiceUrls = { ...voiceUrls, [item.id]: item.url };
       await tick();
@@ -1676,7 +1681,7 @@
           : []),
         {
           text: t("messages.retryFailed"),
-          run: () => actions.retryFailed?.(key),
+          run: () => actions.retryFailed?.(unit.actionId ?? key),
         },
         {
           text: t("messages.deleteFailed"),
@@ -1686,7 +1691,7 @@
               [
                 {
                   text: t("messages.deleteFailed"),
-                  run: () => actions.deleteFailed?.(key),
+                  run: () => actions.deleteFailed?.(unit.actionId ?? key),
                 },
               ],
               t("actions.cancel"),
@@ -2507,6 +2512,12 @@
             >
               <div class="companion-timeline-content" use:connectTimeline>
                 <Messages bind:this={messagesComponent} scrollMessages={false}>
+                  {#if displayedProjection.historySyncFailed}
+                    <div class="companion-media-failure" role="alert">
+                      <span>{t("history.loadFailed")}</span>
+                      <button class="button button-tonal button-small" on:click={() => actions.retryChatHistory?.()}>{t("history.retry")}</button>
+                    </div>
+                  {/if}
                   {#if displayedProjection.hasMore}
                     <button
                       class="button button-tonal button-small"
@@ -2580,15 +2591,8 @@
                                       .length === 1}
                                   >
                                     {#if image.state === "running" || image.state === "loading"}
-                                      <div
-                                        class="skeleton-block companion-media-loading"
-                                        aria-hidden="true"
-                                      ></div>
-                                      <div
-                                        class="companion-media-status"
-                                        role="status"
-                                      >
-                                        {t("image.generating")}
+                                      <div class="companion-media-pending" role="status" aria-label={t("image.generating")}>
+                                        <Preloader class="preloader" aria-hidden="true" />
                                       </div>
                                     {:else if image.previewUrl || imageUrls[image.id]}
                                       <button
@@ -2645,7 +2649,7 @@
                                           part.items.length > 1,
                                         )}
                                       >
-                                        <span>{t("image.failed")}</span>
+                                        <span>{image.error ?? t("image.failed")}</span>
                                       </div>
                                     {:else}
                                       <Preloader
@@ -2711,6 +2715,7 @@
                                     tabindex="-1"
                                     use:trackVoiceAudio={item.id}
                                   ></audio>
+                                {/if}
                                   <button
                                     class="button button-tonal button-round companion-voice-control"
                                     aria-label={playback.playing
@@ -2760,19 +2765,18 @@
                                       />
                                     </div>
                                     <div class="companion-voice-meta">
-                                      {#if voiceTimestamp(playback)}<span
+                                      {#if voiceErrors[item.id]}<span
+                                          role="alert"
+                                          >{t("voice.playFailed")}</span
+                                        >{:else if voiceTimestamp(playback)}<span
                                           role="timer"
                                           aria-live="off"
                                           >{voiceTimestamp(playback)}</span
                                         >{:else}<span role="status"
                                           >{t("loading.progress")}</span
-                                        >{/if}{#if voiceErrors[item.id]}<span
-                                          role="alert"
-                                          >{t("voice.playFailed")}</span
                                         >{/if}
                                     </div>
                                   </div>
-                                {/if}
                               </div>
                             {/if}
                           {/if}{/snippet}

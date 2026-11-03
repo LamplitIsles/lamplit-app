@@ -9,11 +9,13 @@ import {
   OperationIdSchema,
   validateSubmission,
   UPLOAD_PATH,
-  UploadResultSchema,
+  validateUploadResult,
+  validateRetryImageMapping,
   type InputRecovery,
   validate,
   type ChatView,
   type ChatMessage,
+  type ChatTimelineEvent,
   type Receipt,
   type Submission,
 } from "@lamplit/contracts";
@@ -30,10 +32,19 @@ export type PendingSend = Submission & {
   createdAt: number;
   state: "sending" | "sent" | "failed";
 };
+export type LocalImagePreview = {
+  sessionId: string;
+  operationId: string;
+  draftId: string;
+  order: number;
+  attachmentId: string;
+  previewUrl: string;
+};
 export class ChatController {
   view?: ChatView;
   older: ChatMessage[] = [];
   pending: PendingSend[] = [];
+  localPreviews: readonly LocalImagePreview[] = [];
   connected = false;
   compactPending = false;
   private compactGeneration = 0;
@@ -51,6 +62,14 @@ export class ChatController {
   private retryFailures = 0;
   private retryable = true;
   private connectionGeneration = 0;
+  private historyLoaded = false;
+  private historyDirty = false;
+  private historyWork?: Promise<void>;
+  private historyEpoch = 0;
+  private historyLoadingToken?: symbol;
+  private historyPatches = new Map<string, ChatMessage>();
+  private historyPatchBytes = 0;
+  historySyncFailed = false;
   private storageKey = "";
   private deadlineTimer?: ReturnType<typeof setTimeout>;
   private checks = new Set<string>();
@@ -211,6 +230,7 @@ export class ChatController {
     for (const retire of this.retirements.values())
       retire({ reason: "observed" });
     this.retirements.clear();
+    this.localPreviews = [];
     this.originals.clear();
     this.inFlight.clear();
     this.failedActions.clear();
@@ -245,9 +265,19 @@ export class ChatController {
     this.pending = [];
     this.older = [];
     this.before = null;
+    this.historyLoaded = false;
+    this.historyDirty = false;
+    this.historyEpoch++;
+    this.historyWork = undefined;
+    this.historyLoadingToken = undefined;
+    this.loadingOlder = false;
+    this.historyPatches.clear();
+    this.historyPatchBytes = 0;
+    this.historySyncFailed = false;
     for (const retire of this.retirements.values())
       retire({ reason: "observed" });
     this.retirements.clear();
+    this.localPreviews = [];
     this.inFlight.clear();
     this.failedActions.clear();
     this.checks.clear();
@@ -364,6 +394,170 @@ export class ChatController {
         this.changed();
       });
   }
+  private timeline(event: ChatTimelineEvent) {
+    if (event.type === "reset") {
+      this.historyPatches.clear();
+      this.historyPatchBytes = 0;
+      this.requestHistorySync();
+      return;
+    }
+    const { sessionId, change } = event.update;
+    if (this.view?.sessionId !== sessionId) return;
+    if (change.type === "structure") {
+      // The next authoritative history scan supersedes earlier item deltas;
+      // preserve any item updates that arrive after this notification.
+      this.historyPatches.clear();
+      this.historyPatchBytes = 0;
+      this.requestHistorySync();
+      return;
+    }
+    const message = change.message;
+    if (this.historyWork || this.loadingOlder) {
+      const bytes = new TextEncoder().encode(
+        JSON.stringify(message),
+      ).byteLength;
+      if (
+        this.historyPatches.size >= 100 ||
+        this.historyPatchBytes + bytes > 1024 * 1024
+      ) {
+        this.historyPatches.clear();
+        this.historyPatchBytes = 0;
+        this.historyDirty = true;
+      } else {
+        this.historyPatches.set(message.id, message);
+        this.historyPatchBytes += bytes;
+      }
+    }
+    const index = this.older.findIndex((item) => item.id === message.id);
+    if (index >= 0) {
+      this.older = this.older.map((item, i) => (i === index ? message : item));
+      this.changed();
+    } else if (this.view.messages.some((item) => item.id === message.id)) {
+      this.view = {
+        ...this.view,
+        messages: this.view.messages.map((item) =>
+          item.id === message.id ? message : item,
+        ),
+      };
+      this.changed();
+    }
+  }
+  private requestHistorySync() {
+    if (!this.historyLoaded && !this.older.length && !this.loadingOlder) return;
+    this.historyDirty = true;
+    if (!this.client || this.loadingOlder || this.historyWork) return;
+    const client = this.client,
+      sessionId = this.view?.sessionId,
+      epoch = this.historyEpoch;
+    const work = (async () => {
+      while (
+        this.historyDirty &&
+        this.client === client &&
+        this.historyEpoch === epoch &&
+        this.view?.sessionId === sessionId &&
+        !this.closed
+      ) {
+        this.historyDirty = false;
+        const view = this.view!;
+        const initialIds = view.messages
+          .map((message) => message.id)
+          .join("\0");
+        const boundary = this.older[0]?.id;
+        const throughEnd = this.before === null;
+        let cursor = view.before,
+          nextBefore = cursor,
+          found = !boundary;
+        let collected: ChatMessage[] = [];
+        const visited = new Set<string>();
+        try {
+          while (cursor) {
+            if (visited.has(cursor)) throw new Error("History cursor cycle");
+            visited.add(cursor);
+            const page = await client.history(cursor);
+            if (
+              this.client !== client ||
+              this.historyEpoch !== epoch ||
+              this.view?.sessionId !== sessionId ||
+              this.closed
+            )
+              return;
+            collected = [...page.messages, ...collected];
+            nextBefore = page.before;
+            if (
+              boundary &&
+              page.messages.some((message) => message.id === boundary)
+            )
+              found = true;
+            cursor = page.before;
+            if (!throughEnd && found) break;
+          }
+          if (
+            boundary &&
+            !found &&
+            !view.messages.some((message) => message.id === boundary)
+          )
+            throw new Error("History boundary unavailable");
+          if (
+            this.view!.before !== view.before ||
+            this.view!.messages.map((message) => message.id).join("\0") !==
+              initialIds
+          )
+            this.historyDirty = true;
+          if (this.historyDirty) continue;
+          const latest = new Set(
+            this.view!.messages.map((message) => message.id),
+          );
+          this.older = [
+            ...new Map(
+              collected
+                .filter((message) => !latest.has(message.id))
+                .map((message) => [
+                  message.id,
+                  this.historyPatches.get(message.id) ?? message,
+                ]),
+            ).values(),
+          ];
+          this.historyPatches.clear();
+          this.historyPatchBytes = 0;
+          this.before = nextBefore;
+          if (this.historySyncFailed && this.error === "加载历史失败，请重试。")
+            this.error = "";
+          this.historySyncFailed = false;
+          this.retireObserved();
+          this.updateRecovery();
+          this.save();
+          this.changed();
+        } catch {
+          if (
+            this.client === client &&
+            this.historyEpoch === epoch &&
+            this.view?.sessionId === sessionId &&
+            !this.closed
+          ) {
+            this.historyDirty = true;
+            this.historySyncFailed = true;
+            this.error = "加载历史失败，请重试。";
+            this.changed();
+          }
+          return;
+        }
+      }
+    })();
+    this.historyWork = work;
+    void work.finally(() => {
+      if (this.historyWork !== work || this.historyEpoch !== epoch) return;
+      this.historyWork = undefined;
+      if (
+        this.historyDirty &&
+        this.client &&
+        (!this.historySyncFailed || this.client !== client)
+      )
+        this.requestHistorySync();
+    });
+  }
+  retryHistory() {
+    this.requestHistorySync();
+  }
   private retireObserved() {
     const observed = new Set(
       [...this.older, ...(this.view?.messages ?? [])]
@@ -372,11 +566,48 @@ export class ChatController {
     );
     this.pending = this.pending.filter((p) => {
       if (!observed.has(p.operationId)) return true;
-      this.retirements.get(p.operationId)?.({ reason: "observed" });
-      this.retirements.delete(p.operationId);
+      if (
+        p.retrySource &&
+        this.localPreviews.some(
+          (preview) =>
+            preview.operationId === p.retrySource &&
+            preview.sessionId === this.view?.sessionId,
+        )
+      )
+        return true;
+      if (
+        !this.localPreviews.some(
+          (preview) =>
+            preview.sessionId === this.view?.sessionId &&
+            preview.operationId === p.operationId,
+        )
+      ) {
+        this.retirements.get(p.operationId)?.({ reason: "observed" });
+        this.retirements.delete(p.operationId);
+      }
       this.originals.delete(p.operationId);
       return false;
     });
+  }
+  releasePreviews(sessionId: string, operationId: string): boolean {
+    if (
+      this.view?.sessionId !== sessionId ||
+      this.pending.some((item) => item.operationId === operationId)
+    )
+      return false;
+    const retained = this.localPreviews.filter(
+      (item) =>
+        item.sessionId === sessionId && item.operationId === operationId,
+    );
+    if (!retained.length) return false;
+    this.localPreviews = this.localPreviews.filter(
+      (item) =>
+        item.sessionId !== sessionId || item.operationId !== operationId,
+    );
+    this.retirements.get(operationId)?.({ reason: "observed" });
+    this.retirements.delete(operationId);
+    this.changed();
+    return true;
   }
   recheckPending() {
     for (const id of this.finalized)
@@ -525,6 +756,14 @@ export class ChatController {
       }
     } finally {
       this.inFlight.delete(pending.operationId);
+      if (
+        this.client &&
+        this.view?.sessionId === sessionId &&
+        this.pending.some(
+          (p) => p.operationId === pending.operationId && p.state === "sending",
+        )
+      )
+        void this.reconcile().catch(() => {});
     }
   }
   async deleteFailed(id: string) {
@@ -569,6 +808,11 @@ export class ChatController {
       this.retirements.get(input.operationId)?.({ reason: "observed" });
       this.retirements.delete(input.operationId);
       this.originals.delete(input.operationId);
+      this.localPreviews = this.localPreviews.filter(
+        (item) =>
+          item.sessionId !== sessionId ||
+          item.operationId !== input.operationId,
+      );
       this.updateRecovery();
       this.save();
       this.changed();
@@ -604,6 +848,12 @@ export class ChatController {
     }
     this.relationshipGeneration++;
     this.client = undefined;
+    this.historyEpoch++;
+    this.historyWork = undefined;
+    this.historyLoadingToken = undefined;
+    this.loadingOlder = false;
+    this.historyPatches.clear();
+    this.historyPatchBytes = 0;
     this.changed();
     clearTimeout(this.timer);
     if (wasConnected && this.retryable && this.visible) void this.connect();
@@ -629,6 +879,10 @@ export class ChatController {
           if (generation === this.connectionGeneration)
             this.disconnected(error);
         },
+        (event) => {
+          if (!this.closed && generation === this.connectionGeneration)
+            this.timeline(event);
+        },
       );
       if (
         this.closed ||
@@ -640,6 +894,7 @@ export class ChatController {
       }
       this.client = client;
       this.connected = true;
+      this.requestHistorySync();
       this.retryFailures = 0;
       this.connecting = false;
       this.finalized.clear();
@@ -665,6 +920,48 @@ export class ChatController {
       (p) => p.operationId === receipt.operationId,
     );
     if (!pending) return; // Native observation or a session change already retired it.
+    let retryImages: Submission["images"];
+    if (pending.retrySource && pending.images?.length && this.view?.sessionId) {
+      const sourcePreviews = this.localPreviews.filter(
+        (item) =>
+          item.sessionId === this.view!.sessionId &&
+          item.operationId === pending.retrySource,
+      );
+      try {
+        const mapping = validateRetryImageMapping(
+          receipt.retryImages,
+          this.view.sessionId,
+          pending.retrySource,
+          pending.images ?? [],
+        );
+        const refs = new Map(
+          mapping.images.map((item) => [item.sourceAttachmentId, item.ref]),
+        );
+        if (
+          sourcePreviews.length &&
+          (sourcePreviews.length !== refs.size ||
+            sourcePreviews.some((item) => !refs.has(item.attachmentId)))
+        )
+          throw new Error("Unmatched local preview");
+        retryImages = pending.images.map((image) =>
+          refs.get(image.attachmentId)!,
+        );
+        this.localPreviews = this.localPreviews.map((item) =>
+          item.sessionId === this.view!.sessionId &&
+          item.operationId === pending.retrySource
+            ? {
+                ...item,
+                operationId: pending.operationId,
+                attachmentId: refs.get(item.attachmentId)!.attachmentId,
+              }
+            : item,
+        );
+      } catch {
+        this.error = "重试图片关联尚未确认，请等待连接恢复后检查。";
+        this.changed();
+        return;
+      }
+    }
     // Durable submission/observation cannot be revoked by a later result.
     if (
       pending.state === "sent" ||
@@ -673,12 +970,17 @@ export class ChatController {
       return;
     this.pending = this.pending.map((p) =>
       p === pending
-        ? { ...p, state: receipt.state === "submitted" ? "sent" : "failed" }
+        ? {
+            ...p,
+            ...(retryImages ? { images: retryImages } : {}),
+            state: receipt.state === "submitted" ? "sent" : "failed",
+          }
         : p,
     );
     if (receipt.state === "failed")
       this.error = receipt.error || "发送失败，请重试或删除这条消息。";
     this.updateRecovery();
+    this.retireObserved();
     this.save();
     this.changed();
   }
@@ -700,6 +1002,11 @@ export class ChatController {
     if (local) {
       this.retirements.get(sourceId)?.({ reason: "observed" });
       this.retirements.delete(sourceId);
+      this.localPreviews = this.localPreviews.filter(
+        (item) =>
+          item.sessionId !== this.view?.sessionId ||
+          item.operationId !== sourceId,
+      );
     }
     this.pending = this.pending.filter(
       (p) => !(p.operationId === sourceId && p.state === "failed"),
@@ -815,6 +1122,11 @@ export class ChatController {
     if (previous) {
       this.originals.delete(previous.operationId);
       this.retirements.delete(previous.operationId);
+      this.localPreviews = this.localPreviews.filter(
+        (item) =>
+          item.sessionId !== sessionId ||
+          item.operationId !== previous.operationId,
+      );
     }
     if (images.length) this.originals.set(operationId, images);
     if (retired) this.retirements.set(operationId, retired);
@@ -845,15 +1157,20 @@ export class ChatController {
           body: JSON.stringify(upload),
         });
         if (!response.ok) throw new Error("图片上传失败，请重试。");
-        const result = validate(UploadResultSchema, await response.json());
-        if (
-          result.sessionId !== sessionId ||
-          result.operationId !== operationId ||
-          result.images.length !== images.length ||
-          result.images.some((r) => r.availability !== "available")
-        )
-          throw new Error("图片上传结果无效");
-        refs = result.images;
+        const result = validateUploadResult(await response.json(), upload);
+        if (!current()) throw new Error("连接已改变，请重新发送");
+        this.localPreviews = [
+          ...this.localPreviews,
+          ...result.images.map((item, order) => ({
+            sessionId,
+            operationId,
+            draftId: item.id,
+            order,
+            attachmentId: item.ref.attachmentId,
+            previewUrl: images[order]!.previewUrl,
+          })),
+        ];
+        refs = result.images.map((item) => item.ref);
       }
       if (!current()) throw new Error("连接已改变，请重新发送");
       checkReplacement();
@@ -922,28 +1239,56 @@ export class ChatController {
     }
   }
   async loadOlder() {
+    const epoch = this.historyEpoch;
+    if (this.historyWork) await this.historyWork;
+    if (this.historyEpoch !== epoch) return;
+    if (this.historyDirty) {
+      this.requestHistorySync();
+      if (this.historyWork) await this.historyWork;
+    }
+    if (this.historyEpoch !== epoch) return;
+    if (this.historyDirty) return;
     if (!this.client || !this.before || this.loadingOlder) return;
     const client = this.client,
-      sessionId = this.view?.sessionId;
+      sessionId = this.view?.sessionId,
+      token = Symbol();
+    this.historyLoadingToken = token;
     this.loadingOlder = true;
     this.changed();
     try {
       const page = await client.history(this.before);
-      if (this.client !== client || this.view?.sessionId !== sessionId) return;
+      if (
+        this.client !== client ||
+        this.view?.sessionId !== sessionId ||
+        this.historyEpoch !== epoch
+      )
+        return;
       this.older = [
         ...new Map(
-          [...page.messages, ...this.older].map((m) => [m.id, m]),
+          [
+            ...page.messages.map(
+              (message) => this.historyPatches.get(message.id) ?? message,
+            ),
+            ...this.older,
+          ].map((m) => [m.id, m]),
         ).values(),
       ];
+      this.historyPatches.clear();
+      this.historyPatchBytes = 0;
       this.retireObserved();
       this.save();
       this.updateRecovery();
       this.before = page.before;
+      this.historyLoaded = true;
     } catch {
-      this.error = "加载历史失败，请重试。";
+      if (this.historyEpoch === epoch) this.error = "加载历史失败，请重试。";
     } finally {
-      this.loadingOlder = false;
-      this.changed();
+      if (this.historyLoadingToken === token) {
+        this.historyLoadingToken = undefined;
+        this.loadingOlder = false;
+        this.changed();
+        if (this.historyDirty) this.requestHistorySync();
+      }
     }
   }
 }
