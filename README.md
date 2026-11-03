@@ -142,7 +142,7 @@ dispatched inputs request authoritative fenced finalization while connected; nul
 unreachable results remain sending. Failed deletion persists after acknowledgement
 and has no undo. Unsent drafts and pre-upload originals are not saved across reload. The v2 service requires a matching frontend after update.
 
-See [image protocol](docs/image-send-recovery.md) and [v2 submission handoff](docs/native-durable-submissions.md).
+See [image protocol](docs/image-send-recovery.md), [v2 submission handoff](docs/native-durable-submissions.md), and the [sticker backend contract](docs/sticker-contract.md). The sticker contract does not yet provide a picker or other sticker UI.
 
 ## Context and compaction
 

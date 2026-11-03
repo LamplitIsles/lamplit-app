@@ -552,3 +552,4 @@ export async function createChatHost(
 }
 
 export { imageHttp, type ImageBackend } from "./image-http.ts";
+export { stickerHttp } from "./sticker-http.ts";

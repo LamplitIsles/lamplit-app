@@ -27,9 +27,23 @@ export const ImageLimitsSchema = Type.Object(
   },
   object,
 );
+export const StickerIdSchema = Type.String({
+  pattern: "^[A-Za-z0-9_-]{1,100}$",
+});
+export const StickerVersionSchema = Type.String({ pattern: "^[a-f0-9]{64}$" });
+/** Immutable sticker identity on a staged or historical image reference. */
+export const StickerIdentitySchema = Type.Object(
+  {
+    id: StickerIdSchema,
+    version: StickerVersionSchema,
+  },
+  object,
+);
+export type StickerIdentity = Static<typeof StickerIdentitySchema>;
 export const ImageRefSchema = Type.Object(
   {
     attachmentId: MediaIdSchema,
+    sticker: Type.Optional(StickerIdentitySchema),
     mediaType: ImageTypeSchema,
     name: Type.String({ minLength: 1, maxLength: 200 }),
     availability: Type.Union([

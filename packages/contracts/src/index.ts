@@ -4,6 +4,7 @@ import type { SearchBackend } from "./search.ts";
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
 export * from "./images.ts";
+export * from "./stickers.ts";
 export * from "./workspace-images.ts";
 export * from "./compact.ts";
 import {

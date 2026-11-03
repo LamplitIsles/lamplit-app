@@ -645,3 +645,102 @@ for (const original of ["submit", "retry"])
         h.close();
       }
     });
+
+test("unknown sticker admission survives reopen and reconnect without automatic replay", async () => {
+  const { imagesFixture } = await import("./images-fixture.ts");
+  const { fixtureImage } = await import("./panels-fixture.ts");
+  const { openChat } = await import("../packages/contracts/src/client.ts");
+  const f = imagesFixture();
+  const operationId = crypto.randomUUID();
+  const sticker = { id: "cat", version: "a".repeat(64) };
+  const encoded = btoa(String.fromCharCode(...fixtureImage));
+  const staged = await f.stageSticker(
+    {
+      sessionId: "fixture-session",
+      operationId,
+      images: [
+        {
+          id: "cat",
+          order: 0,
+          name: "cat.png",
+          mediaType: "image/png",
+          original: encoded,
+          preview: encoded,
+          model: encoded,
+        },
+      ],
+    },
+    sticker,
+  );
+  const submission = { operationId, text: "", images: [staged.image] };
+  let calls = 0,
+    lookups = 0,
+    hidden = true;
+  const backend: ChatBackend = {
+    ...f.backend,
+    async read() {
+      const view = await f.backend.read();
+      return { ...view, messages: hidden ? [] : view.messages };
+    },
+    async submit(input) {
+      calls++;
+      await f.backend.submit(input);
+      throw new Error("test-owned acknowledgement lost");
+    },
+    async lookup(id) {
+      lookups++;
+      return hidden ? null : f.backend.lookup(id);
+    },
+  };
+  const saved = new Map<string, string>();
+  const h = await controllerHarness(backend, saved);
+  try {
+    // The future picker is not implemented. Dispatch the real contract first,
+    // then persist the exact immutable attempt as a future client would.
+    const socket = new WebSocket(
+      location.href.replace("http:", "ws:").replace(/\/$/, ""),
+    );
+    const client = await openChat(
+      socket,
+      () => {},
+      () => {},
+    );
+    await expect(client.submit(submission)).rejects.toThrow();
+    client.close();
+    expect(calls).toBe(1);
+    saved.set(
+      "lamplit.pending:fixture-session",
+      JSON.stringify([
+        {
+          ...submission,
+          createdAt: Date.now(),
+          state: "sending",
+          dispatched: true,
+        },
+      ]),
+    );
+    let c = await h.create();
+    await eventually(() => lookups > 0);
+    expect(c.pending[0]?.images?.[0]?.sticker).toEqual(sticker);
+    expect(c.pending[0]?.state).toBe("sending");
+    c.close();
+    c = await h.create();
+    expect(c.pending[0]?.images?.[0]?.sticker).toEqual(sticker);
+    const before = h.disconnections;
+    h.disconnect();
+    await eventually(() => h.disconnections > before);
+    await eventually(() => c.connected, 5000);
+    expect(c.pending[0]?.state).toBe("sending");
+    expect(calls).toBe(1);
+    hidden = false;
+    await h.host.refresh();
+    await eventually(() => !c.pending.length);
+    expect(
+      c.view?.messages.find((message) => message.operationId === operationId)
+        ?.images?.[0]?.sticker,
+    ).toEqual(sticker);
+    expect(calls).toBe(1);
+  } finally {
+    h.close();
+  }
+});

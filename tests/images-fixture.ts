@@ -8,6 +8,7 @@ import {
   type ImageRef,
   type ImageLimits,
   type InputRecovery,
+  type StickerIdentity,
   type Receipt,
   type Submission,
 } from "../packages/contracts/src/index.ts";
@@ -300,7 +301,7 @@ export function imagesFixture() {
           operationId: attemptId,
           images: structuredClone(originals) as ImageUpload["images"],
         };
-        images = originals.map((image) => {
+        images = originals.map((image, index) => {
           const attachmentId = crypto.randomUUID();
           media.set(attachmentId, structuredClone(image!));
           return {
@@ -308,6 +309,9 @@ export function imagesFixture() {
             name: image!.name,
             mediaType: image!.mediaType,
             availability: "available" as const,
+            ...(source.images?.[index]?.sticker
+              ? { sticker: structuredClone(source.images[index]!.sticker) }
+              : {}),
           };
         });
         uploads.set(attemptId, { input, refs: images });
@@ -492,6 +496,23 @@ export function imagesFixture() {
   return {
     backend,
     imageBackend,
+    async stageSticker(input: ImageUpload, sticker: StickerIdentity) {
+      if (input.images.length !== 1) throw new Error("One sticker per stage");
+      await imageBackend.upload(input);
+      const staged = uploads.get(input.operationId)!;
+      const previous = staged.refs[0]!.sticker;
+      if (previous && JSON.stringify(previous) !== JSON.stringify(sticker))
+        throw new Error("Stage identity conflict");
+      staged.refs = staged.refs.map((ref) => ({
+        ...ref,
+        sticker: structuredClone(sticker),
+      }));
+      return {
+        sessionId: input.sessionId,
+        operationId: input.operationId,
+        image: structuredClone(staged.refs[0]!),
+      };
+    },
     panels,
     control,
     get limits() {
