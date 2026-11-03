@@ -39,9 +39,10 @@ export async function publishForgejo(
   artifact,
   token,
   fetcher = fetch,
+  name = `lamplit-app-${revision}.tar.gz`,
 ) {
   if (!token) throw new Error("Forgejo package secret missing");
-  const url = `${forgejo}/${revision}/lamplit-app-${revision}.tar.gz`;
+  const url = `${forgejo}/${revision}/${name}`;
   const get = () => request(fetcher, url, token);
   let response = await checked(await get(), "Forgejo lookup", [404]);
   if (response.status === 404) {
@@ -64,10 +65,10 @@ export async function publishGithub(
   token,
   fetcher = fetch,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  name = `lamplit-app-${revision}.tar.gz`,
 ) {
   if (!token) throw new Error("GitHub release secret missing");
   const tag = `app-${revision}`;
-  const name = `lamplit-app-${revision}.tar.gz`;
   const api = (path, options = {}) =>
     request(fetcher, `${github}${path}`, token, {
       ...options,
@@ -197,9 +198,34 @@ if (
   if (!/^[0-9a-f]{40}$/.test(revision))
     throw new Error("Expected a full lowercase commit SHA");
   const artifact = await readFile(process.argv[3]);
+  const contracts = await readFile(process.argv[4]);
+  const name = `lamplit-contracts-${revision}.tar.gz`;
   const results = await Promise.allSettled([
-    publishForgejo(revision, artifact, process.env.FORGEJO_PACKAGES_TOKEN),
-    publishGithub(revision, artifact, process.env.GITHUB_RELEASE_TOKEN),
+    (async () => {
+      await publishForgejo(
+        revision,
+        artifact,
+        process.env.FORGEJO_PACKAGES_TOKEN,
+      );
+      await publishForgejo(
+        revision,
+        contracts,
+        process.env.FORGEJO_PACKAGES_TOKEN,
+        fetch,
+        name,
+      );
+    })(),
+    (async () => {
+      await publishGithub(revision, artifact, process.env.GITHUB_RELEASE_TOKEN);
+      await publishGithub(
+        revision,
+        contracts,
+        process.env.GITHUB_RELEASE_TOKEN,
+        fetch,
+        undefined,
+        name,
+      );
+    })(),
   ]);
   for (const [index, result] of results.entries()) {
     const destination = ["Forgejo", "GitHub"][index];

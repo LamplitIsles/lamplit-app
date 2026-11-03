@@ -86,12 +86,35 @@ async function hashes(directory, relative = "") {
   return result;
 }
 
+function archive(stage, output, entries) {
+  execFileSync(
+    "tar",
+    [
+      "--format=ustar",
+      "--sort=name",
+      "--mtime=@0",
+      "--owner=0",
+      "--group=0",
+      "--numeric-owner",
+      "--mode=u=rwX,go=rX",
+      "--use-compress-program=gzip -n",
+      "-cf",
+      resolve(output),
+      "-C",
+      stage,
+      ...entries,
+    ],
+    { stdio: "inherit" },
+  );
+}
+
 export async function packageFrontend(
   root,
   revision,
   output,
   fontLicense,
   dependencyStore,
+  contractOutput,
 ) {
   if (!/^[0-9a-f]{40}$/.test(revision))
     throw new Error("Expected a full lowercase commit SHA");
@@ -156,28 +179,37 @@ export async function packageFrontend(
       join(stage, "manifest.json"),
       JSON.stringify(manifest, null, 2) + "\n",
     );
-    execFileSync(
-      "tar",
-      [
-        "--format=ustar",
-        "--sort=name",
-        "--mtime=@0",
-        "--owner=0",
-        "--group=0",
-        "--numeric-owner",
-        "--mode=u=rwX,go=rX",
-        "--use-compress-program=gzip -n",
-        "-cf",
-        resolve(output),
-        "-C",
-        stage,
-        "browser",
-        "contracts",
-        "licenses",
-        "manifest.json",
-      ],
-      { stdio: "inherit" },
-    );
+    if (contractOutput) {
+      // Copy from the staged frontend, not a second compilation or source tree.
+      const packageDir = join(stage, "package");
+      await cp(join(stage, "contracts/dist"), join(packageDir, "dist"), {
+        recursive: true,
+      });
+      await cp(
+        join(root, "packages/contracts/package.json"),
+        join(packageDir, "package.json"),
+      );
+      await cp(
+        join(root, "packages/contracts/LICENSE"),
+        join(packageDir, "LICENSE"),
+      );
+      await mkdir(join(packageDir, "licenses"));
+      await cp(
+        join(stage, "licenses/chord-1.0.0-MIT.txt"),
+        join(packageDir, "licenses/chord-1.0.0-MIT.txt"),
+      );
+      await writeFile(
+        join(packageDir, "lamplit-source.json"),
+        JSON.stringify({ revision }, null, 2) + "\n",
+      );
+      archive(stage, contractOutput, ["package"]);
+    }
+    archive(stage, output, [
+      "browser",
+      "contracts",
+      "licenses",
+      "manifest.json",
+    ]);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -199,5 +231,6 @@ if (
     process.argv[3],
     fontLicense,
     join(root, "node_modules/.bun"),
+    process.argv[4],
   );
 }

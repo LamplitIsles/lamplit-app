@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "bun run --cwd apps/web dev",
     "build": "bun run --cwd packages/contracts build && bun run --cwd apps/web build",
-    "check": "bun run --cwd packages/contracts build && tsc --noEmit && bun run --cwd apps/web check",
+    "check": "bun run --cwd apps/web paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --emit-ts-declarations --strategy globalVariable preferredLanguage baseLocale && bun run --cwd packages/contracts build && tsc --noEmit && bun run --cwd apps/web check",
     "test": "bun run --cwd packages/contracts build && bun test tests",
     "test:browser": "bun tests/browser.mjs && bun tests/voice-browser.mjs",
     "test:passkey-browser": "bun tests/passkey-browser.mjs",

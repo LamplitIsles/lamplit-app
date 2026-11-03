@@ -22,7 +22,7 @@ fi
 # module explicitly excludes.
 check_ignored_sources() {
   ignored_sources=$(git ls-files --others --ignored --exclude-standard -- \
-  apps/web packages/contracts docs/licenses \
+  apps/web packages/contracts scripts tests docs/licenses \
   ':(exclude)**/node_modules/**' ':(exclude)**/build/**' \
   ':(exclude)**/dist/**' ':(exclude)apps/web/src/lib/paraglide/**' \
   ':(exclude)apps/web/project.inlang/**')
@@ -35,25 +35,38 @@ check_ignored_sources
 : "${_EXPERIMENTAL_DAGGER_RUNNER_HOST:?Set an approved existing Dagger engine connection}"
 dagger_bin=${DAGGER_BIN:-dagger}
 archive="lamplit-app-$revision.tar.gz"
-if [ -e "$archive" ]; then
-  echo "Refusing to overwrite $archive" >&2
-  exit 1
-fi
+contracts="lamplit-contracts-$revision.tar.gz"
+for file in "$archive" "$contracts"; do
+  if [ -e "$file" ]; then
+    echo "Refusing to overwrite $file" >&2
+    exit 1
+  fi
+done
+mkdir -p "$root/.scratch"
+output=$(mktemp -d "$root/.scratch/lamplit-build.XXXXXX")
+trap 'rm -rf "$output"' EXIT HUP INT TERM
 (
   cd dagger
-  "$dagger_bin" call build --source=.. --revision="$revision" export --path="../$archive"
+  "$dagger_bin" call build --source=.. --revision="$revision" export --path="$output"
 )
 after_revision=$(git rev-parse HEAD)
-after_status=$(git status --porcelain --untracked-files=all -- . ":(exclude)$archive")
+after_status=$(git status --porcelain --untracked-files=all)
 if [ "$after_revision" != "$revision" ] || [ -n "$after_status" ]; then
-  echo 'Source changed during the build; do not publish the archive' >&2
+  echo 'Source changed during the build; do not publish the archives' >&2
   exit 1
 fi
 check_ignored_sources
-test -f "$archive"
+test -f "$output/$archive"
+test -f "$output/$contracts"
 node -e '
   const { execFileSync } = require("node:child_process");
-  const manifest = JSON.parse(execFileSync("tar", ["-xOzf", process.argv[1], "manifest.json"], { encoding: "utf8" }));
-  if (manifest.revision !== process.argv[2]) throw new Error("Archive revision does not match Git HEAD");
-' "$archive" "$revision"
-printf '%s\n' "$root/$archive"
+  for (const [file, path] of [[process.argv[1], "manifest.json"], [process.argv[2], "package/lamplit-source.json"]]) {
+    const manifest = JSON.parse(execFileSync("tar", ["-xOzf", file, path], { encoding: "utf8" }));
+    if (manifest.revision !== process.argv[3]) throw new Error("Archive revision does not match Git HEAD");
+  }
+' "$output/$archive" "$output/$contracts" "$revision"
+# Hard links fail if a destination appeared concurrently; never overwrite it.
+ln "$output/$archive" "$archive"
+ln "$output/$contracts" "$contracts"
+sha256sum "$archive" "$contracts"
+printf '%s\n' "$root/$archive" "$root/$contracts"

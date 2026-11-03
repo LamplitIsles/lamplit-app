@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,9 +29,21 @@ async function fixture() {
     "apps/web/build/assets/app.js": "hello",
     "packages/contracts/dist/cfl-browser-host-auth.js": marker,
     "packages/contracts/dist/client.js": "client",
+    "packages/contracts/dist/index.js":
+      'import { fixture } from "typebox"; export { fixture };',
+    "packages/contracts/dist/index.d.ts":
+      "export declare const fixture: string;",
+    "packages/contracts/package.json": await readFile(
+      new URL("../packages/contracts/package.json", import.meta.url),
+      "utf8",
+    ),
+    "packages/contracts/LICENSE": "contract license fixture",
     LICENSE: "license",
     "docs/IMPORTS.md": "imports",
-    "docs/licenses/chord-1.0.0-MIT.txt": "chord notice fixture",
+    "docs/licenses/chord-1.0.0-MIT.txt": await readFile(
+      new URL("../docs/licenses/chord-1.0.0-MIT.txt", import.meta.url),
+      "utf8",
+    ),
     "docs/licenses/skeleton-elements-4.0.1-MIT.txt": "skeleton notice fixture",
     "docs/licenses/capacitor-community-media-9.1.0-MIT.txt": await readFile(
       new URL(
@@ -67,6 +79,8 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
   expect(Object.keys(manifest.contracts).sort()).toEqual([
     "dist/cfl-browser-host-auth.js",
     "dist/client.js",
+    "dist/index.d.ts",
+    "dist/index.js",
   ]);
   expect(Object.keys(manifest.licenses).sort()).toEqual([
     "NotoSansSC-OFL-1.1.txt",
@@ -95,7 +109,9 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
   );
   expect(
     await readFile(join(extracted, "licenses/chord-1.0.0-MIT.txt"), "utf8"),
-  ).toBe("chord notice fixture");
+  ).toBe(
+    await readFile(join(root, "docs/licenses/chord-1.0.0-MIT.txt"), "utf8"),
+  );
   expect(
     await readFile(
       join(extracted, "licenses/capacitor-community-media-9.1.0-MIT.txt"),
@@ -113,6 +129,136 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
       "utf8",
     ),
   ).toBe("skeleton notice fixture");
+});
+
+test("independent npm package is reproducible, installable and matches every frontend contract byte", async () => {
+  const root = await fixture();
+  const frontend = join(root, "frontend.tar.gz");
+  const archive = join(root, "contracts.tar.gz");
+  const second = join(root, "contracts2.tar.gz");
+  await packageFrontend(
+    root,
+    sha,
+    frontend,
+    join(root, "font"),
+    undefined,
+    archive,
+  );
+  await packageFrontend(
+    root,
+    sha,
+    join(root, "frontend2.tar.gz"),
+    join(root, "font"),
+    undefined,
+    second,
+  );
+  expect(await readFile(archive)).toEqual(await readFile(second));
+  const { createHash } = await import("node:crypto");
+  const digest = createHash("sha256")
+    .update(await readFile(archive))
+    .digest("hex");
+  const checksum = join(root, "trusted.sha256");
+  await writeFile(checksum, `${digest}  ${archive}\n`);
+  expect(spawnSync("sha256sum", ["-c", checksum]).status).toBe(0);
+  await writeFile(archive, Buffer.from("tampered archive"));
+  expect(spawnSync("sha256sum", ["-c", checksum]).status).not.toBe(0);
+  await writeFile(archive, await readFile(second));
+  const front = join(root, "front");
+  const unpacked = join(root, "unpacked-contract");
+  await mkdir(front);
+  await mkdir(unpacked);
+  execFileSync("tar", ["-xzf", frontend, "-C", front]);
+  execFileSync("tar", ["-xzf", archive, "-C", unpacked]);
+  const manifest = JSON.parse(
+    await readFile(join(front, "manifest.json"), "utf8"),
+  );
+  const pkg = JSON.parse(
+    await readFile(join(unpacked, "package/package.json"), "utf8"),
+  );
+  expect(pkg.name).toBe("@lamplit/contracts");
+  expect(pkg.exports["."].import).toBe("./dist/index.js");
+  expect(pkg.dependencies).toEqual({
+    "@earendil-works/chord": "1.0.0",
+    typebox: "1.3.34",
+  });
+  expect(pkg.license).toBe("Apache-2.0");
+  const chordNotice = await readFile(
+    join(root, "docs/licenses/chord-1.0.0-MIT.txt"),
+  );
+  expect(
+    await readFile(join(unpacked, "package/licenses/chord-1.0.0-MIT.txt")),
+  ).toEqual(chordNotice);
+  expect(await readFile(join(unpacked, "package/LICENSE"), "utf8")).toBe(
+    "contract license fixture",
+  );
+  expect(
+    JSON.parse(
+      await readFile(join(unpacked, "package/lamplit-source.json"), "utf8"),
+    ).revision,
+  ).toBe(sha);
+  for (const path of Object.keys(manifest.contracts))
+    expect(await readFile(join(unpacked, "package", path))).toEqual(
+      await readFile(join(front, "contracts", path)),
+    );
+
+  // npm resolves the real declared versions using local, test-owned fixtures only.
+  const consumer = join(root, "consumer");
+  const chord = join(root, "chord");
+  const typebox = join(root, "typebox");
+  for (const dir of [consumer, chord, typebox]) await mkdir(dir);
+  await writeFile(
+    join(consumer, "package.json"),
+    '{"private":true,"type":"module"}',
+  );
+  await writeFile(
+    join(chord, "package.json"),
+    '{"name":"@earendil-works/chord","version":"1.0.0"}',
+  );
+  await writeFile(
+    join(typebox, "package.json"),
+    '{"name":"typebox","version":"1.3.34","type":"module","exports":"./index.js"}',
+  );
+  await writeFile(
+    join(typebox, "index.js"),
+    'export const fixture = "installed";',
+  );
+  execFileSync(
+    "npm",
+    [
+      "install",
+      "--offline",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--no-package-lock",
+      archive,
+      chord,
+      typebox,
+    ],
+    {
+      cwd: consumer,
+      stdio: "pipe",
+      env: { ...process.env, npm_config_cache: join(root, "npm-cache") },
+    },
+  );
+  expect(
+    await readFile(
+      join(
+        consumer,
+        "node_modules/@lamplit/contracts/licenses/chord-1.0.0-MIT.txt",
+      ),
+    ),
+  ).toEqual(chordNotice);
+  const result = execFileSync(
+    "node",
+    [
+      "--input-type=module",
+      "-e",
+      'import { fixture } from "@lamplit/contracts"; if (fixture !== "installed") process.exit(1);',
+    ],
+    { cwd: consumer, encoding: "utf8" },
+  );
+  expect(result).toBe("");
 });
 
 test("packaging rejects incompatible marker", async () => {
@@ -183,6 +329,49 @@ describe("publication", () => {
     await expect(
       publishGithub(sha, Buffer.from("other"), "fake", fetcher),
     ).rejects.toThrow("differs");
+  });
+  test("both destinations reject conflicting independent contract assets and inspect uncertain uploads", async () => {
+    const name = `lamplit-contracts-${sha}.tar.gz`;
+    const calls = [];
+    const forge = async (url, options) => {
+      calls.push([url, options.method ?? "GET"]);
+      return new Response(Buffer.from("tampered"));
+    };
+    await expect(
+      publishForgejo(sha, bytes, "fake", forge, name),
+    ).rejects.toThrow("differs");
+    expect(calls).toEqual([[expect.stringContaining(name), "GET"]]);
+    let uploaded = false;
+    const githubCalls = [];
+    const github = async (url, options) => {
+      const method = options.method ?? "GET";
+      githubCalls.push([url, method]);
+      if (url.includes("/git/commits/")) return Response.json({ sha });
+      if (url.includes("/git/ref/tags/"))
+        return Response.json({ object: { type: "commit", sha } });
+      if (url.includes("/releases/tags/"))
+        return Response.json({ id: 42, tag_name: `app-${sha}`, draft: false });
+      if (method === "POST") {
+        uploaded = true;
+        throw new Error("connection lost");
+      }
+      if (url.includes("/releases/42/assets?"))
+        return Response.json(
+          uploaded ? [{ id: 8, state: "uploaded", name }] : [],
+        );
+      return new Response(Buffer.from("tampered"));
+    };
+    await expect(
+      publishGithub(sha, bytes, "fake", github, async () => {}, name),
+    ).rejects.toThrow("inspect destination");
+    expect(githubCalls.filter(([, method]) => method === "POST")).toHaveLength(
+      1,
+    );
+    githubCalls.length = 0;
+    await expect(
+      publishGithub(sha, bytes, "fake", github, async () => {}, name),
+    ).rejects.toThrow("differs");
+    expect(githubCalls.every(([, method]) => method === "GET")).toBe(true);
   });
   test("GitHub waits for mirror and rejects conflicting tag before publishing", async () => {
     let calls = 0;

@@ -29,7 +29,7 @@ case "$1 $2" in
   'rev-parse --show-toplevel') printf '%s\\n' "$FAKE_ROOT" ;;
   'rev-parse HEAD') printf '%s\\n' "$FAKE_SHA" ;;
   'status --porcelain')
-    if [ -n "$FAKE_CHANGED" ] && [ -f "$FAKE_ROOT/lamplit-app-$FAKE_SHA.tar.gz" ]; then echo changed; else printf '%s' "$FAKE_DIRTY"; fi ;;
+    if [ -n "$FAKE_CHANGED" ] && [ -f "$FAKE_ROOT/call" ]; then echo changed; else printf '%s' "$FAKE_DIRTY"; fi ;;
   'ls-files --others') printf '%s' "$FAKE_IGNORED" ;;
   *) exit 1 ;;
 esac
@@ -41,12 +41,16 @@ esac
       `#!/bin/sh
 printf '%s\\n' "$@" > "$FAKE_ROOT/call"
 printf '{"revision":"%s"}\\n' "\${FAKE_ARTIFACT_SHA:-$FAKE_SHA}" > "$FAKE_ROOT/manifest.json"
-tar -czf "$FAKE_ROOT/lamplit-app-$FAKE_SHA.tar.gz" -C "$FAKE_ROOT" manifest.json
+out="\${6#--path=}"
+mkdir -p "$FAKE_ROOT/package"
+printf '{"revision":"%s"}\\n' "\${FAKE_CONTRACT_SHA:-\${FAKE_ARTIFACT_SHA:-$FAKE_SHA}}" > "$FAKE_ROOT/package/lamplit-source.json"
+tar -czf "$out/lamplit-app-$FAKE_SHA.tar.gz" -C "$FAKE_ROOT" manifest.json
+tar -czf "$out/lamplit-contracts-$FAKE_SHA.tar.gz" -C "$FAKE_ROOT" package
 `,
       { mode: 0o755 },
     );
     const env = {
-      PATH: `${join(root, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      PATH: `${join(root, "bin")}:${dirname(process.execPath)}:${process.env.PATH}`,
       FAKE_ROOT: root,
       FAKE_SHA: sha,
       CI_COMMIT_SHA: sha,
@@ -62,25 +66,29 @@ tar -czf "$FAKE_ROOT/lamplit-app-$FAKE_SHA.tar.gz" -C "$FAKE_ROOT" manifest.json
     assert.notEqual(run({ FAKE_DIRTY: " M file" }).status, 0);
     assert.notEqual(run({ FAKE_IGNORED: "apps/web/secret" }).status, 0);
     assert.equal(run().status, 0);
-    assert.deepEqual(
-      readFileSync(join(root, "call"), "utf8").trim().split("\n"),
-      [
-        "call",
-        "build",
-        "--source=..",
-        `--revision=${sha}`,
-        "export",
-        `--path=../lamplit-app-${sha}.tar.gz`,
-      ],
-    );
+    const args = readFileSync(join(root, "call"), "utf8").trim().split("\n");
+    assert.deepEqual(args.slice(0, 5), [
+      "call",
+      "build",
+      "--source=..",
+      `--revision=${sha}`,
+      "export",
+    ]);
+    assert.match(args[5], /^--path=.*\/\.scratch\/lamplit-build\./);
     assert.notEqual(run().status, 0, "existing output must not be overwritten");
     rmSync(join(root, `lamplit-app-${sha}.tar.gz`));
+    rmSync(join(root, `lamplit-contracts-${sha}.tar.gz`));
     assert.notEqual(
       run({ FAKE_ARTIFACT_SHA: "b".repeat(40) }).status,
       0,
       "archive revision must match Git HEAD",
     );
-    rmSync(join(root, `lamplit-app-${sha}.tar.gz`));
+    assert.notEqual(
+      run({ FAKE_CONTRACT_SHA: "b".repeat(40) }).status,
+      0,
+      "contract archive revision must match Git HEAD",
+    );
+    rmSync(join(root, "call"));
     assert.notEqual(
       run({ FAKE_CHANGED: "1" }).status,
       0,

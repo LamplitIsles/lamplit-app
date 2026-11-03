@@ -1,7 +1,7 @@
 # Prebuilt frontend
 
-Woodpecker is intended to build once on each push to `main` and publish the same
-archive to Forgejo and the public GitHub mirror. This workflow does not deploy
+Woodpecker checks pull requests and builds once on each push to `main`, then publishes the same
+archives to Forgejo and the public GitHub mirror on main pushes. This workflow does not deploy
 CFL or Shio. Publication is not established until the repository is activated,
 secrets configured, and a real pipeline and both downloads are verified.
 
@@ -24,6 +24,38 @@ The browser contains `index.html`; contracts include the original compiled
 verify every hash, revision and the auth marker, then compare the complete
 compiled contracts hash map with their own compatible runtime before serving
 `browser/`. The archive is separate from the CFL npm package.
+
+The same build also produces the independent npm-compatible
+`lamplit-contracts-SHA.tar.gz`, published alongside the frontend archive:
+
+- GitHub: `https://github.com/LamplitIsles/lamplit-app/releases/download/app-SHA/lamplit-contracts-SHA.tar.gz`
+- Forgejo: `https://forgejo.n5.guion.io/api/packages/LamplitIsles/generic/lamplit-app/SHA/lamplit-contracts-SHA.tar.gz`
+
+It uses the same deterministic ustar/gzip settings and contains `package/` with
+`package.json`, `LICENSE`, `dist/`, `lamplit-source.json`, and the maintained
+Chord 1.0.0 MIT notice at `licenses/chord-1.0.0-MIT.txt`. The package
+metadata retains the upstream exports and exact dependency versions. The source
+file's `revision` is the full App commit, not a content digest. Every file in
+`package/dist/` is copied from the frontend staging directory and is identical
+to the corresponding `contracts/dist/` file; the frontend manifest is unchanged.
+The package's dependencies are installed separately by the consumer and retain
+their own licenses. The App package is Apache-2.0.
+
+The build entry prints SHA-256 of each **complete compressed archive**. Record
+the contract archive's digest from a trusted build log or other independently
+verified channel alongside the full App commit in the consumer's source
+configuration. Verify the downloaded bytes against that independently recorded
+digest before extraction or installation; a digest or revision delivered only
+inside the downloaded archive is not an independent trust anchor. For example,
+with a trusted `CONTRACT_SHA256` and `SHA`:
+
+```sh
+printf '%s  %s\n' "$CONTRACT_SHA256" "lamplit-contracts-$SHA.tar.gz" | sha256sum -c -
+npm install "./lamplit-contracts-$SHA.tar.gz"
+```
+
+A lockfile should also pin the package and its dependencies for frozen installs.
+A matching compiled-contract hash proves byte equality, not application behavior.
 The license directory includes App attribution and the license and notice files
 found in the installed Bun package store, organized by dependency and version.
 The pinned Chord and Skeleton Elements packages omit their license files, so
@@ -57,7 +89,10 @@ same. The local and CI entry invokes the App module from `dagger/` under the Git
 root, so both are expected to resolve the same local module identity. Reuse also
 requires the same Engine and has not been verified.
 The cache holds downloads; the build graph still uses the App lockfile and
-`bun install --frozen-lockfile`.
+`bun install --frozen-lockfile`. The message-format plugin is pinned in the
+lockfile and loaded from the web workspace's installed `node_modules`, so
+Paraglide compilation and Vite builds do not fetch it from a CDN. Tools opening
+the Inlang project must have the App dependencies installed locally.
 Dagger may reuse a previously evaluated graph for identical inputs. Engine
 persistence, available disk, cold and warm cache behavior, and resource use
 are not verified. Production publication credentials never enter Dagger.
@@ -72,16 +107,17 @@ _EXPERIMENTAL_DAGGER_RUNNER_HOST="$YOUR_APPROVED_DAGGER_ADDRESS" sh scripts/buil
 Use this entry for both local and CI builds. It verifies Git HEAD, the clean working tree and, in CI, that
 HEAD equals `CI_COMMIT_SHA`. It rejects unexpected ignored files in projected
 source directories; the Dagger input excludes Git metadata, dependencies,
-generated output and local state. It runs the focused artifact tests, frozen
-install, normal build and packaging in order, then exports one archive named
-for that revision. It checks the exported manifest revision and the source
-again before success and refuses to
-overwrite an existing archive. This does not share the host's `node_modules`
-or `~/.bun` with the Engine. The exported archive is untracked; move it out of
-the checkout before running the entry again.
+generated output and local state. It runs a frozen install, App `check`, App
+`test` (including the Dagger entry test), normal build and packaging, then
+exports both archives named for that revision. The check generates Paraglide
+messages before type checking. It checks both exported source revisions and the source again before
+success and refuses to overwrite either existing archive. The container uses
+the pinned Node 24 image for Node and npm alongside pinned Bun. This does not share the host's `node_modules`
+or `~/.bun` with the Engine. The exported archives are untracked; move both out of the checkout before
+running the entry again.
 
 Each destination is attempted independently and the pipeline fails if either
-fails. Before uploading, the publisher checks any existing asset against the
+fails. Before uploading, the publisher checks each existing asset against its
 new archive; matching bytes are accepted and different bytes cause failure.
 The GitHub commit is polled for a bounded period and the release tag must point
 directly to that commit. Upload responses and subsequent downloads are checked;
