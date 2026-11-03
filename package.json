@@ -18,6 +18,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test:panels-browser": "bun tests/panels-browser.mjs",
+    "test:models-browser": "bun tests/models-browser.mjs",
     "test:images-browser": "bun tests/images-browser.mjs",
     "test:compact-browser": "bun tests/compact-browser.mjs",
     "test:search-browser": "bun tests/search-browser.mjs",

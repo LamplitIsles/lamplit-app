@@ -30,6 +30,7 @@ import "framework7/components/virtual-list/css";
 import "framework7/components/preloader/css";
 import "framework7/components/skeleton/css";
 import "framework7/components/radio/css";
+import "framework7/components/toggle/css";
 import "framework7/components/card/css";
 Framework7.use([
   Accordion,

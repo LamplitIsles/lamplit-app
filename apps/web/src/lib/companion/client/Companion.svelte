@@ -47,6 +47,7 @@
   import { syncSystemBars } from "./native-navigation.ts";
   import Menu from "lucide-svelte/icons/menu";
   import Settings from "lucide-svelte/icons/settings";
+  import ModelSettings from "./ModelSettings.svelte";
   import Search from "lucide-svelte/icons/search";
   import Pause from "lucide-svelte/icons/pause";
   import Play from "lucide-svelte/icons/play";
@@ -2065,6 +2066,17 @@
           aria-label={t("preferences.open")}
         >
           <List>
+            {#if sessionId}
+              {#key sessionId}
+                <ModelSettings
+                  {t}
+                  {sessionId}
+                  open={preferencesOpen}
+                  busy={projection.running ||
+                    continuity.lifecycle?.status === "running"}
+                />
+              {/key}
+            {/if}
             <ListItem groupTitle title={t("preferences.theme")} />
             {#each [["light", "preferences.light"], ["dark", "preferences.dark"], ["system", "preferences.system"]] as option}
               <ListItem

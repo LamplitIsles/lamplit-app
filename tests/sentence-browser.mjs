@@ -420,9 +420,7 @@ try {
     await page.screenshot({ path: `${evidence}/held-${width}.png` });
     const choose = async (value) => {
       const prompts = await userBubbles.allTextContents();
-      await page
-        .getByRole("button", { name: "外观与语言", exact: true })
-        .click();
+      await page.getByRole("button", { name: "设置", exact: true }).click();
       await page
         .locator("#companion-preferences-panel")
         .locator(`input[name=companion-reply-display][value="${value}"]`)

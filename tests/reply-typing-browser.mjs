@@ -183,7 +183,7 @@ try {
     await expect(stop).toHaveCount(0);
     await expect(typing).toHaveCount(0);
     // Whole mode uses the same final-body decision, without source-line buffering.
-    await page.getByRole("button", { name: "外观与语言", exact: true }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
     await page
       .locator(
         '#companion-preferences-panel input[name=companion-reply-display][value="false"]',

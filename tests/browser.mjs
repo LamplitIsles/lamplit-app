@@ -371,7 +371,7 @@ try {
     await page.keyboard.press("Escape");
     await expect(page.locator(".companion-action-menu")).toHaveCount(0);
     await expect(bubble).toBeFocused();
-    await page.getByRole("button", { name: "外观与语言" }).click();
+    await page.getByRole("button", { name: "设置" }).click();
     const settings = page.locator("#companion-preferences-panel");
     await expect(settings).toBeVisible();
     await settings
@@ -387,7 +387,7 @@ try {
     await page.reload();
     await expect(input).toBeVisible();
     await expect(page.locator("html")).toHaveClass(/dark/);
-    await page.getByRole("button", { name: "外观与语言" }).click();
+    await page.getByRole("button", { name: "设置" }).click();
     await expect(settings).toBeVisible();
     await settings
       .locator('input[value="en"]')

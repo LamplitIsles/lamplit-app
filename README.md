@@ -2,6 +2,10 @@
 
 Unified Lamplit chat app and shared protocol contracts for Pi and Codex backends.
 
+Hosts with the optional model API expose a model picker and Fast switch in Settings. Saved
+choices apply to the next reply and preserve the conversation and draft.
+See the [model settings contract and verification](docs/model-settings.md).
+
 This repository owns the shared Framework7/Svelte frontend and the TypeScript
 contracts package. A deployment selects one engine; the frontend does not select
 or switch engines inside a conversation.

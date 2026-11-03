@@ -245,7 +245,7 @@
   "settings.expand": "展开：Companion 日常聊天",
   "settings.collapse": "收起：Companion 日常聊天",
   "image.countLimit": "一次最多 {count} 张图片。",
-  "preferences.open": "外观与语言",
+  "preferences.open": "设置",
   "preferences.theme": "外观",
   "preferences.light": "浅色",
   "preferences.dark": "深色",
@@ -291,5 +291,15 @@
   "messages.failedActions": "发送失败，重试或删除",
   "preferences.replyDisplay": "回复显示",
   "preferences.lines": "按换行分条",
-  "preferences.wholeReply": "整段显示"
+  "preferences.wholeReply": "整段显示",
+  "models.title": "模型",
+  "models.current": "当前：{model}",
+  "models.chooseSupported": "请先选择支持的模型，再修改 Fast。",
+  "models.loading": "正在加载设置…",
+  "models.saving": "正在切换…",
+  "models.reload": "刷新",
+  "models.busy": "正在处理对话，请结束后刷新再切换。",
+  "models.loadFailed": "无法加载设置，请刷新重试。",
+  "models.saveFailed": "尚未确认设置，请刷新查看。",
+  "models.stale": "设置已更新，请刷新后重新选择。"
 }

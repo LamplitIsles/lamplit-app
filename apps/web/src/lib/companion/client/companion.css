@@ -449,6 +449,11 @@
 .companion-context-popover {
   max-width: calc(100vw - 24px);
 }
+.companion-preferences-panel .popover-inner {
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .companion-context-meter svg {
   width: 28px;
   height: 28px;

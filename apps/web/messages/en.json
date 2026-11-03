@@ -245,7 +245,7 @@
   "settings.expand": "Expand Companion chat settings",
   "settings.collapse": "Collapse Companion chat settings",
   "image.countLimit": "Up to {count} images per message.",
-  "preferences.open": "Appearance and language",
+  "preferences.open": "Settings",
   "preferences.theme": "Appearance",
   "preferences.light": "Light",
   "preferences.dark": "Dark",
@@ -291,5 +291,15 @@
   "messages.failedActions": "Failed message actions",
   "preferences.replyDisplay": "Reply display",
   "preferences.lines": "Source lines",
-  "preferences.wholeReply": "Whole reply"
+  "preferences.wholeReply": "Whole reply",
+  "models.title": "Model",
+  "models.current": "Current: {model}",
+  "models.chooseSupported": "Choose a supported model to change Fast.",
+  "models.loading": "Loading settings…",
+  "models.saving": "Switching…",
+  "models.reload": "Refresh",
+  "models.busy": "The conversation is busy. Refresh when it finishes to change settings.",
+  "models.loadFailed": "Settings could not be loaded. Refresh to try again.",
+  "models.saveFailed": "The change has not been confirmed. Refresh to check settings.",
+  "models.stale": "Settings have changed. Refresh and choose again."
 }
