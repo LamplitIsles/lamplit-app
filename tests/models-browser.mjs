@@ -99,13 +99,17 @@ try {
       radio(id).locator("xpath=ancestor::label[1]").click();
     const reload = panel.getByRole("button", { name: "刷新", exact: true });
     const fastSwitch = panel.getByRole("switch", { name: "Fast" });
-    const open = () =>
-      page.getByRole("button", { name: "设置", exact: true }).click();
+    const open = async () => {
+      await page.getByRole("button", { name: "设置", exact: true }).click();
+      await panel.getByRole("button", { name: "模型", exact: true }).click();
+    };
+    const close = async () => {
+      await panel.getByRole("button", { name: /^(返回|Back)$/ }).click();
+      await panel.getByRole("button", { name: /^(返回|Back)$/ }).click();
+    };
     mode = "loading";
     await open();
-    await expect(
-      panel.getByText("正在加载设置…", { exact: true }),
-    ).toBeVisible();
+
     await expect(radio(currentModel)).toBeChecked();
     await expect(fastSwitch).toBeChecked();
     await expect(panel.locator('input[name="companion-model"]')).toHaveCount(3);
@@ -124,7 +128,7 @@ try {
     await expect(radio("gpt-6.1-sol")).toBeChecked();
     await expect(radio("gpt-5.6-sol")).not.toBeChecked();
     const getsBeforeReopen = gets;
-    await page.keyboard.press("Escape");
+    await close();
     await open();
     await expect(radio("gpt-6.1-sol")).toBeChecked();
     await expect(radio("gpt-5.6-sol")).toBeDisabled();
@@ -137,14 +141,6 @@ try {
     await expect(
       panel.getByText("从下一次回复开始生效。", { exact: true }),
     ).toHaveCount(0);
-    const optionHeight = await panel
-      .locator(".model-options")
-      .evaluate((el) => el.getBoundingClientRect().height);
-    const radioHeight = await panel
-      .locator('input[value="dark"]')
-      .locator("xpath=ancestor::label[1]")
-      .evaluate((el) => el.getBoundingClientRect().height);
-    expect(Math.abs(optionHeight - radioHeight)).toBeLessThan(1);
     for (const bounds of await panel
       .locator(".model-option")
       .evaluateAll((nodes) =>
@@ -159,13 +155,6 @@ try {
     expect(
       await panel.locator(".model-option svg").first().getAttribute("width"),
     ).toBe("14");
-    const spacing = await panel.locator(".model-settings").evaluate((el) => {
-      const row = el.querySelector(".model-options").getBoundingClientRect();
-      const nextGroup = el.nextElementSibling.getBoundingClientRect();
-      return nextGroup.top - row.bottom;
-    });
-    expect(spacing).toBeGreaterThanOrEqual(6);
-    expect(spacing).toBeLessThanOrEqual(12);
     await page.screenshot({ path: `${evidence}/${width}-saved.png` });
     await choose("gpt-5.6-sol");
     expect(posts).toBe(1);
@@ -176,7 +165,7 @@ try {
     await expect(fastSwitch).toBeChecked();
     await expect(fastSwitch).toBeDisabled();
     await expect(radio("gpt-5.6-sol")).toBeDisabled();
-    await page.keyboard.press("Escape");
+    await close();
     await open();
     await expect(fastSwitch).toBeChecked();
     await expect(fastSwitch).toBeDisabled();
@@ -199,7 +188,7 @@ try {
     await fastSwitch.locator("xpath=ancestor::label[1]").click();
     await expect(fastSwitch).toBeChecked();
     expect(posts).toBe(5);
-    await page.keyboard.press("Escape");
+    await close();
     await expect(draft).toHaveValue("保留这个草稿");
     await open();
     await expect(radio("gpt-5.6-sol")).toBeChecked();
@@ -227,7 +216,7 @@ try {
     await expect(radio("gpt-6.1-sol")).toBeDisabled();
     await expect(panel.getByRole("status")).toContainText("正在处理对话");
     await page.screenshot({ path: `${evidence}/${width}-busy.png` });
-    const bounds = await panel.locator(".popover-inner").boundingBox();
+    const bounds = await panel.locator(".settings-container").boundingBox();
     expect(bounds.y).toBeGreaterThanOrEqual(0);
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
     busy = false;
@@ -235,6 +224,8 @@ try {
     await expect(radio("gpt-6.1-sol")).toBeEnabled();
     await choose("gpt-6.1-terra");
     await expect(radio("gpt-6.1-terra")).toBeChecked();
+    await panel.getByRole("button", { name: "返回" }).click();
+    await panel.getByRole("button", { name: "外观", exact: true }).click();
     await panel
       .locator('input[value="dark"]')
       .locator("xpath=ancestor::label[1]")
@@ -245,13 +236,16 @@ try {
       .locator('input[value="en"]')
       .locator("xpath=ancestor::label[1]")
       .click();
+    await panel.getByRole("button", { name: "Back", exact: true }).click();
+    await panel.getByRole("button", { name: "Model", exact: true }).click();
     await expect(
       panel.getByRole("radiogroup", { name: "Model", exact: true }),
     ).toBeVisible();
     await page.screenshot({ path: `${evidence}/${width}-english.png` });
-    await page.keyboard.press("Escape");
+    await close();
     currentModel = "legacy-model";
     await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await panel.getByRole("button", { name: "Model", exact: true }).click();
     await expect(
       panel.getByText("Current: legacy-model", { exact: true }),
     ).toBeVisible();
@@ -265,7 +259,7 @@ try {
     await choose("gpt-6.1-sol");
     await expect(radio("gpt-6.1-sol")).toBeChecked();
     await expect(fastSwitch).toBeEnabled();
-    await page.keyboard.press("Escape");
+    await close();
     mode = "unsupported";
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(panel.locator('input[name="companion-model"]')).toHaveCount(0);

@@ -185,12 +185,23 @@ try {
     // Whole mode uses the same final-body decision, without source-line buffering.
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await page
+      .locator("#companion-preferences-panel")
+      .getByRole("button", { name: "外观", exact: true })
+      .click();
+    await page
       .locator(
         '#companion-preferences-panel input[name=companion-reply-display][value="false"]',
       )
       .locator("xpath=ancestor::label[1]")
       .click();
-    await page.keyboard.press("Escape");
+    await page
+      .locator("#companion-preferences-panel")
+      .getByRole("button", { name: "返回" })
+      .click();
+    await page
+      .locator("#companion-preferences-panel")
+      .getByRole("button", { name: "返回" })
+      .click();
     await expect(page.locator("#companion-preferences-panel")).toBeHidden();
     await control("session");
     await expect(bubbles).toHaveCount(0);

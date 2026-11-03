@@ -28,8 +28,10 @@ locked across closing and reopening. GET 404/405/501 hides model controls. Other
 failures offer Refresh and disable controls until a successful read. Writes are
 never automatically replayed, including after a lost response. Preserve the
 confirmed radio and switch while saving; manually refresh to reconcile ambiguous results.
-Busy conversations disable both controls and offer Refresh. Existing settings remain
-usable. The popover scrolls within the viewport on small screens.
+Busy conversations disable both controls and offer Refresh. The settings landing
+page shows only supported host configuration cards. Each card opens its own page;
+the back button and browser history return to settings and then to chat without
+discarding the draft. On small screens the page scrolls within the viewport.
 
 CFL persists both preferences together for restart and requests them explicitly
 on future native turns. The defaults are **6.1 sol** and Fast on. Legacy
@@ -45,3 +47,22 @@ confirmed selection, loading/saving/busy/error/reload, preserved draft, keyboard
 unsupported hosts, and zh/en at mobile/desktop sizes. Test-owned fixtures and
 screenshots live under `.scratch/dashboard-model-selector/browser`. CFL owns
 fake-native persistence/next-turn acceptance; this runner does not call models.
+
+The optional `/api/voice/settings` GET and POST independently expose a host's
+voice configuration. GET returns `{region, configured}` without the key; POST
+accepts `{region, apiKey}`. The host stores the key; the browser never reads it
+back. Missing settings endpoints hide the corresponding card, independently of
+whether the host supports recording. `bun run test:settings-browser` exercises
+navigation, host availability, draft preservation, and pending voice saves.
+
+The Appearance page also supports optional host-provided background settings.
+`GET /api/background-settings` returns `{landscape, portrait}` booleans for
+the two configured slots. `POST /api/background-settings/{landscape|portrait}`
+sends one image body and returns the confirmed snapshot. An unsupported host
+hides this editor. The host validates and stores the image; settings refresh the
+appearance and reload background assets after a confirmed save or reconciliation.
+If the appearance refresh fails after a confirmed upload, the settings page offers
+an explicit refresh without repeating the upload.
+An ambiguous upload is never replayed automatically. The existing appearance
+response and authenticated background asset URLs retain their contract. A host
+may use one configured image for both orientations until the other is supplied.

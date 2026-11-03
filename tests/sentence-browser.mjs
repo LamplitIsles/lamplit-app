@@ -423,10 +423,21 @@ try {
       await page.getByRole("button", { name: "设置", exact: true }).click();
       await page
         .locator("#companion-preferences-panel")
+        .getByRole("button", { name: "外观", exact: true })
+        .click();
+      await page
+        .locator("#companion-preferences-panel")
         .locator(`input[name=companion-reply-display][value="${value}"]`)
         .locator("xpath=ancestor::label[1]")
         .click();
-      await page.keyboard.press("Escape");
+      await page
+        .locator("#companion-preferences-panel")
+        .getByRole("button", { name: "返回" })
+        .click();
+      await page
+        .locator("#companion-preferences-panel")
+        .getByRole("button", { name: "返回" })
+        .click();
       await expect(
         page.locator("#companion-preferences-panel"),
       ).not.toHaveClass(/modal-in/);

@@ -37,6 +37,8 @@
     "loading",
   );
   let revision = $state(0);
+  let backgroundVersion = $state(0);
+  let refreshBackgrounds = $state<() => Promise<boolean>>(async () => false);
   let profile = $state<ChatAppearance>();
   let controller: ChatController;
   const preferences = initialPreferences();
@@ -394,26 +396,48 @@
     updateScheme();
     media.addEventListener("change", updateScheme);
     const abort = new AbortController();
-    void fetch(APPEARANCE_PATH, { signal: abort.signal, cache: "no-store" })
-      .then(async (response) => {
+    let appearanceRequest = 0;
+    refreshBackgrounds = async () => {
+      const current = ++appearanceRequest;
+      try {
+        const response = await fetch(APPEARANCE_PATH, {
+          signal: abort.signal,
+          cache: "no-store",
+        });
         if (!response.ok) throw new Error("Appearance unavailable");
         const value = validateChatAppearance(await response.json());
-        if (!abort.signal.aborted) profile = value;
+        if (abort.signal.aborted || current !== appearanceRequest) return false;
+        profile = value;
+        backgroundVersion += 1;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    void refreshBackgrounds();
+    let voiceRequest = 0;
+    const refreshVoiceCapability = () => {
+      const current = ++voiceRequest;
+      void fetch(VOICE_CAPABILITY_PATH, {
+        signal: abort.signal,
+        cache: "no-store",
       })
-      .catch(() => {});
-    void fetch(VOICE_CAPABILITY_PATH, {
-      signal: abort.signal,
-      cache: "no-store",
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Voice unavailable");
-        const capability = validateVoiceCapability(await response.json());
-        if (!abort.signal.aborted)
-          voiceCapability = capability.available ? "available" : "unavailable";
-      })
-      .catch(() => {
-        if (!abort.signal.aborted) voiceCapability = "unavailable";
-      });
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Voice unavailable");
+          const capability = validateVoiceCapability(await response.json());
+          if (!abort.signal.aborted && current === voiceRequest)
+            voiceCapability = capability.available ? "available" : "unavailable";
+        })
+        .catch(() => {
+          if (!abort.signal.aborted && current === voiceRequest)
+            voiceCapability = "unavailable";
+        });
+    };
+    refreshVoiceCapability();
+    window.addEventListener(
+      "companion-voice-settings-changed",
+      refreshVoiceCapability,
+    );
     const notifications = new CompanionNotifications(window, document, () => ({
       title: profile?.companionName || controller.view?.name || "Lamplit",
       body: t("notifications.newMessage"),
@@ -440,6 +464,10 @@
       abort.abort();
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("online", recover);
+      window.removeEventListener(
+        "companion-voice-settings-changed",
+        refreshVoiceCapability,
+      );
       window.removeEventListener("pageshow", recover);
       document.removeEventListener("pointerdown", recover);
       document.removeEventListener("keydown", recover);
@@ -457,6 +485,8 @@
   on:recovery={() => controller.recover()}
   {projection}
   backgrounds={profile?.backgrounds}
+  {backgroundVersion}
+  {refreshBackgrounds}
   continuity={{
     contextPressure: chatState?.view?.contextUsage,
     lifecycle: chatState?.view?.compaction,

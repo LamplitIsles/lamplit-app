@@ -16,11 +16,13 @@
     busy = false,
     sessionId,
     open,
+    onSupportChange = () => {},
   }: {
     t: CompanionTranslate;
     busy?: boolean;
     sessionId: string;
     open: boolean;
+    onSupportChange?: (supported: boolean) => void;
   } = $props();
   let snapshot = $state<ModelSettings>();
   let phase = $state<"loading" | "ready" | "saving" | "error" | "unsupported">(
@@ -74,7 +76,10 @@
         cache: "no-store",
       });
       if ([404, 405, 501].includes(response.status)) {
-        if (!disposed && request === current) phase = "unsupported";
+        if (!disposed && request === current) {
+          phase = "unsupported";
+          onSupportChange(false);
+        }
         return;
       }
       if (!response.ok) throw new Error("Model settings unavailable");
@@ -82,10 +87,12 @@
       if (value.sessionId !== sessionId) throw new Error("Session changed");
       if (disposed || request !== current) return;
       snapshot = value;
+      onSupportChange(true);
       phase = "ready";
     } catch {
       if (disposed || request !== current || current.signal.aborted) return;
       phase = "error";
+      onSupportChange(true);
       message = "models.loadFailed";
     }
   }

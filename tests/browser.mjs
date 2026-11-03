@@ -374,6 +374,7 @@ try {
     await page.getByRole("button", { name: "设置" }).click();
     const settings = page.locator("#companion-preferences-panel");
     await expect(settings).toBeVisible();
+    await settings.getByRole("button", { name: "外观", exact: true }).click();
     await settings
       .locator('input[value="dark"]')
       .locator("xpath=ancestor::label[1]")
@@ -384,11 +385,14 @@ try {
       )
       .toBe("dark");
     await expect(page.locator("html")).toHaveClass(/dark/);
+    await settings.getByRole("button", { name: "返回" }).click();
+    await settings.getByRole("button", { name: "返回" }).click();
     await page.reload();
     await expect(input).toBeVisible();
     await expect(page.locator("html")).toHaveClass(/dark/);
     await page.getByRole("button", { name: "设置" }).click();
     await expect(settings).toBeVisible();
+    await settings.getByRole("button", { name: "外观", exact: true }).click();
     await settings
       .locator('input[value="en"]')
       .locator("xpath=ancestor::label[1]")
@@ -415,7 +419,8 @@ try {
       .locator('input[value="dark"]')
       .locator("xpath=ancestor::label[1]")
       .click();
-    await page.keyboard.press("Escape");
+    await settings.getByRole("button", { name: "返回" }).click();
+    await settings.getByRole("button", { name: "返回" }).click();
     await expect(settings).not.toBeVisible();
     if (!external) {
       await page.goto(new URL("/chat", url).href);

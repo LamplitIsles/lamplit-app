@@ -14,7 +14,9 @@
   export let locale = "en";
   export let backgrounds: { landscape: string; portrait: string } | undefined =
     undefined;
-  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  export let backgroundVersion = 0;
+  export let refreshBackgrounds: () => Promise<boolean> = async () => false;
+  import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import {
     captureNativePhoto,
     chooseNativePhotos,
@@ -25,6 +27,7 @@
   import type { AlarmView } from "./alarm-view.ts";
   import Plus from "lucide-svelte/icons/plus";
   import ChevronDown from "lucide-svelte/icons/chevron-down";
+  import ChevronRight from "lucide-svelte/icons/chevron-right";
   import ArrowUp from "lucide-svelte/icons/arrow-up";
   import {
     f7,
@@ -47,7 +50,12 @@
   import { syncSystemBars } from "./native-navigation.ts";
   import Menu from "lucide-svelte/icons/menu";
   import Settings from "lucide-svelte/icons/settings";
+  import ArrowLeft from "lucide-svelte/icons/arrow-left";
+  import Palette from "lucide-svelte/icons/palette";
+  import Cpu from "lucide-svelte/icons/cpu";
   import ModelSettings from "./ModelSettings.svelte";
+  import VoiceSettings from "./VoiceSettings.svelte";
+  import BackgroundSettings from "./BackgroundSettings.svelte";
   import Search from "lucide-svelte/icons/search";
   import Pause from "lucide-svelte/icons/pause";
   import Play from "lucide-svelte/icons/play";
@@ -235,8 +243,32 @@
   let timelineRevealFrame = 0;
   let timelineGeometry = { height: 0, viewport: 0 };
   let detailOpen = false;
-  let preferencesOpen = false;
+  type PreferencesTab = "home" | "appearance" | "models" | "voice";
+  function preferencesTabFromLocation(): PreferencesTab | undefined {
+    const routes: Record<string, PreferencesTab> = {
+      "#settings": "home", "#settings/appearance": "appearance",
+      "#settings/models": "models", "#settings/voice": "voice",
+    };
+    return routes[window.location.hash];
+  }
+  let preferencesTab: PreferencesTab = preferencesTabFromLocation() ?? "home";
+  let preferencesOpen = preferencesTabFromLocation() !== undefined;
   let preferencesButton: HTMLButtonElement;
+  let preferencesBack: HTMLButtonElement;
+  let modelSettingsSupported = false;
+  let voiceSettingsSupported = false;
+  onMount(() => {
+    const tab = preferencesTabFromLocation();
+    if (!tab || window.history.state?.companionSettings) return;
+    const state = { ...window.history.state };
+    window.history.replaceState(
+      { ...state, companionSettings: false }, "", location.pathname + location.search,
+    );
+    window.history.pushState({ ...state, companionSettings: true }, "", "#settings");
+    if (tab !== "home") {
+      window.history.pushState({ ...state, companionSettings: true }, "", `#settings/${tab}`);
+    }
+  });
   let drawerTab: "history" | "diary" | "images" | "alarms" = "history";
   let alarms: AlarmView[] = [];
   let alarmsLoading = false;
@@ -294,7 +326,6 @@
   let relationshipDrawer: HTMLElement;
   let photoBrowser: PhotoBrowser.PhotoBrowser | undefined;
   let imageSessionGeneration = 0;
-  let preferencesPanel: HTMLElement;
   let searchOpen = false;
 
   let statusText = "";
@@ -1508,8 +1539,45 @@
   }
   function openSearch(): void {
     if (detailOpen) closeDetail();
-    closePopover(preferencesPanel);
     searchOpen = true;
+  }
+  function openPreferences(): void {
+    if (preferencesOpen) return;
+    window.history.pushState({ ...window.history.state, companionSettings: true }, "", "#settings");
+    preferencesTab = "home";
+    preferencesOpen = true;
+    void tick().then(() => preferencesBack?.focus());
+  }
+  function openPreferencesTab(tab: Exclude<PreferencesTab, "home">): void {
+    window.history.pushState({ ...window.history.state, companionSettings: true }, "", `#settings/${tab}`);
+    preferencesTab = tab;
+    void tick().then(() => preferencesBack?.focus());
+  }
+  function closePreferences(): void {
+    if (window.history.state?.companionSettings && preferencesTabFromLocation()) {
+      window.history.back();
+    } else if (preferencesTab !== "home") {
+      window.history.replaceState(window.history.state, "", "#settings");
+      preferencesTab = "home";
+    } else {
+      window.history.replaceState(window.history.state, "", location.pathname + location.search);
+      preferencesOpen = false;
+      void tick().then(() => preferencesButton?.focus());
+    }
+  }
+  function syncPreferencesLocation(): void {
+    const tab = preferencesTabFromLocation();
+    preferencesOpen = tab !== undefined;
+    if (tab) preferencesTab = tab;
+    void tick().then(() => (tab ? preferencesBack : preferencesButton)?.focus());
+  }
+  function setPreferencesSupport(tab: "models" | "voice", supported: boolean): void {
+    if (tab === "models") modelSettingsSupported = supported;
+    else voiceSettingsSupported = supported;
+    if (!supported && preferencesOpen && preferencesTab === tab) {
+      window.history.replaceState(window.history.state, "", "#settings");
+      preferencesTab = "home";
+    }
   }
   function closeSearch(): void {
     searchOpen = false;
@@ -1872,7 +1940,6 @@
     photoBrowser?.destroy();
     for (const el of [
       relationshipDrawer,
-      preferencesPanel,
       contextMeterPopover,
     ])
       if (el) overlayDestroyed({ el });
@@ -1892,7 +1959,7 @@
   });
 </script>
 
-<svelte:window on:pagehide={() => void cancelVoiceInput()} />
+<svelte:window on:pagehide={() => void cancelVoiceInput()} on:popstate={syncPreferencesLocation} />
 <svelte:document
   on:visibilitychange={() => {
     if (document.hidden) void cancelVoiceInput();
@@ -1905,6 +1972,7 @@
   id="dsh-companion"
   class="companion-shell"
   data-testid="companion-root"
+  inert={preferencesOpen}
 >
   {#snippet fixedContent()}
     <Navbar class="companion-header">
@@ -2031,93 +2099,10 @@
         on:click={openSearch}
         ><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button
       >
-      <div class="companion-preferences">
-        <button
-          bind:this={preferencesButton}
-          type="button"
-          class="button button-tonal button-round companion-preferences-trigger"
-          aria-label={t("preferences.open")}
-          aria-controls="companion-preferences-panel"
-          aria-haspopup="dialog"
-          aria-expanded={preferencesOpen}
-          on:click={() => {
-            if (preferencesOpen) closePopover(preferencesPanel);
-            else preferencesOpen = true;
-          }}><Settings size={18} strokeWidth={1.8} aria-hidden="true" /></button
-        >
-        <Popover
-          opened={preferencesOpen}
-          targetEl={preferencesButton}
-          closeOnEscape
-          onPopoverOpen={(instance) => {
-            if (instance) {
-              preferencesPanel = instance.el;
-              overlayOpening(instance);
-            }
-          }}
-          onPopoverOpened={overlayOpened}
-          onPopoverClosed={(instance) => {
-            preferencesOpen = false;
-            overlayClosed(instance);
-          }}
-          id="companion-preferences-panel"
-          class="companion-preferences-panel"
-          role="dialog"
-          aria-label={t("preferences.open")}
-        >
-          <List>
-            {#if sessionId}
-              {#key sessionId}
-                <ModelSettings
-                  {t}
-                  {sessionId}
-                  open={preferencesOpen}
-                  busy={projection.running ||
-                    continuity.lifecycle?.status === "running"}
-                />
-              {/key}
-            {/if}
-            <ListItem groupTitle title={t("preferences.theme")} />
-            {#each [["light", "preferences.light"], ["dark", "preferences.dark"], ["system", "preferences.system"]] as option}
-              <ListItem
-                radio
-                radioIcon="end"
-                name="companion-appearance"
-                value={option[0]}
-                title={t(option[1] as CompanionLocaleKey)}
-                checked={appearance === option[0]}
-                onChange={() =>
-                  onAppearanceChange(option[0] as CompanionAppearance)}
-              />
-            {/each}
-            <ListItem groupTitle title={t("preferences.replyDisplay")} />
-            {#each [[true, "preferences.lines"], [false, "preferences.wholeReply"]] as option}
-              <ListItem
-                radio
-                radioIcon="end"
-                name="companion-reply-display"
-                value={String(option[0])}
-                title={t(option[1] as CompanionLocaleKey)}
-                checked={sentenceReplies === option[0]}
-                onChange={() => onSentenceRepliesChange(option[0] as boolean)}
-              />
-            {/each}
-            <ListItem groupTitle title={t("preferences.language")} />
-            {#each [["zh", "中文"], ["en", "English"]] as option}
-              <ListItem
-                radio
-                radioIcon="end"
-                name="companion-language"
-                value={option[0]}
-                title={option[1]}
-                checked={locale === option[0]}
-                onChange={() =>
-                  onLanguageChange(option[0] as CompanionLanguage)}
-              />
-            {/each}
-          </List>
-        </Popover>
-      </div>
+      <button bind:this={preferencesButton} type="button" class="button button-tonal button-round companion-preferences-trigger"
+        aria-label={t("preferences.open")} on:click={openPreferences}>
+        <Settings size={18} strokeWidth={1.8} aria-hidden="true" />
+      </button>
     </Navbar>
     {#if effectiveWorkspaceReadiness === "ready" && effectiveSessionReadiness === "ready" && projection.openState !== "error"}
       <Messagebar
@@ -2502,16 +2487,18 @@
           <div class="companion-timeline-region">
             {#if backgrounds}
               <div class="companion-chat-background" aria-hidden="true">
-                <img
-                  class="companion-background-landscape"
-                  src={backgrounds.landscape}
-                  alt=""
-                />
-                <img
-                  class="companion-background-portrait"
-                  src={backgrounds.portrait}
-                  alt=""
-                />
+                {#key backgroundVersion}
+                  <img
+                    class="companion-background-landscape"
+                    src={backgrounds.landscape}
+                    alt=""
+                  />
+                  <img
+                    class="companion-background-portrait"
+                    src={backgrounds.portrait}
+                    alt=""
+                  />
+                {/key}
               </div>
             {/if}
             <PageContent
@@ -3336,6 +3323,70 @@
       onClose={closeSearch}
     />{/if}
 </Page>
+
+<section id="companion-preferences-panel" class="settings-screen" hidden={!preferencesOpen} aria-label={t("preferences.open")}>
+  <div class="settings-container">
+    <button bind:this={preferencesBack} type="button" class="settings-back" aria-label={t("settings.back")} on:click={closePreferences}>
+      <ArrowLeft size={22} strokeWidth={1.8} aria-hidden="true" />
+    </button>
+    <h1>{preferencesTab === "home" ? t("preferences.open") : preferencesTab === "appearance" ? t("preferences.theme") : preferencesTab === "models" ? t("models.title") : t("settings.voiceTitle")}</h1>
+    <div class="settings-cards" hidden={preferencesTab !== "home"}>
+      <button type="button" class="settings-card settings-card-appearance" on:click={() => openPreferencesTab("appearance")}>
+        <Palette size={27} strokeWidth={1.8} aria-hidden="true" />
+        <span>{t("preferences.theme")}</span><ChevronRight size={21} aria-hidden="true" />
+      </button>
+      {#if modelSettingsSupported}
+        <button type="button" class="settings-card settings-card-models" on:click={() => openPreferencesTab("models")}>
+          <Cpu size={27} strokeWidth={1.8} aria-hidden="true" />
+          <span>{t("models.title")}</span><ChevronRight size={21} aria-hidden="true" />
+        </button>
+      {/if}
+      {#if voiceSettingsSupported}
+        <button type="button" class="settings-card settings-card-voice" on:click={() => openPreferencesTab("voice")}>
+          <Mic size={27} strokeWidth={1.8} aria-hidden="true" />
+          <span>{t("settings.voiceTitle")}</span><ChevronRight size={21} aria-hidden="true" />
+        </button>
+      {/if}
+    </div>
+    <div class="settings-detail" hidden={preferencesTab !== "appearance"}>
+      <List>
+        <ListItem groupTitle title={t("settings.theme")} />
+        {#each [["light", "preferences.light"], ["dark", "preferences.dark"], ["system", "preferences.system"]] as option}
+          <ListItem radio radioIcon="end" name="companion-appearance" value={option[0]}
+            title={t(option[1] as CompanionLocaleKey)} checked={appearance === option[0]}
+            onChange={() => onAppearanceChange(option[0] as CompanionAppearance)} />
+        {/each}
+        <ListItem groupTitle title={t("preferences.replyDisplay")} />
+        {#each [[true, "preferences.lines"], [false, "preferences.wholeReply"]] as option}
+          <ListItem radio radioIcon="end" name="companion-reply-display" value={String(option[0])}
+            title={t(option[1] as CompanionLocaleKey)} checked={sentenceReplies === option[0]}
+            onChange={() => onSentenceRepliesChange(option[0] as boolean)} />
+        {/each}
+        <ListItem groupTitle title={t("preferences.language")} />
+        {#each [["zh", "中文"], ["en", "English"]] as option}
+          <ListItem radio radioIcon="end" name="companion-language" value={option[0]}
+            title={option[1]} checked={locale === option[0]}
+            onChange={() => onLanguageChange(option[0] as CompanionLanguage)} />
+        {/each}
+      </List>
+      <BackgroundSettings {t} open={preferencesOpen} {refreshBackgrounds} />
+    </div>
+    <div class="settings-detail" hidden={preferencesTab !== "models"}>
+      <List>
+        {#if sessionId}
+          {#key sessionId}
+            <ModelSettings {t} {sessionId} open={preferencesOpen} busy={projection.running || continuity.lifecycle?.status === "running"}
+              onSupportChange={(supported) => setPreferencesSupport("models", supported)} />
+          {/key}
+        {/if}
+      </List>
+    </div>
+    <div class="settings-detail" hidden={preferencesTab !== "voice"}>
+      <VoiceSettings {t} open={preferencesOpen} onSupportChange={(supported) => setPreferencesSupport("voice", supported)} />
+    </div>
+  </div>
+</section>
+
 <div class="companion-sr-only" aria-live="assertive">
   {typeof liveAnnouncement === "string"
     ? liveAnnouncement
