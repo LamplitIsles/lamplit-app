@@ -86,6 +86,9 @@
 .settings-card-voice > svg:first-of-type {
   color: #398bdf;
 }
+.settings-card-voice-output > svg:first-of-type {
+  color: #2b9c7b;
+}
 .settings-card:focus-visible,
 .settings-back:focus-visible {
   outline: 3px solid var(--f7-theme-color);
@@ -179,12 +182,16 @@
   display: grid;
   gap: 12px;
 }
+.voice-output-settings {
+  display: grid;
+  gap: 20px;
+}
 .settings-voice label {
   font-weight: 600;
   margin-top: 12px;
 }
-.settings-voice input,
-.settings-voice select {
+.settings-voice form > input,
+.settings-voice form > select {
   width: 100%;
   box-sizing: border-box;
   min-height: 48px;
@@ -194,6 +201,9 @@
   background: var(--f7-list-bg-color);
   color: inherit;
   font: inherit;
+}
+.settings-voice .voice-output-list {
+  margin: 0;
 }
 .settings-voice p {
   color: var(--f7-list-item-footer-text-color);

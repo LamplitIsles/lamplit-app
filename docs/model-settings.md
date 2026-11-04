@@ -55,6 +55,18 @@ back. Missing settings endpoints hide the corresponding card, independently of
 whether the host supports recording. `bun run test:settings-browser` exercises
 navigation, host availability, draft preservation, and pending voice saves.
 
+Voice output has a separate optional host settings page for MiniMax, Alibaba,
+ByteDance, and ElevenLabs. Framework7 Smart Select opens the provider and
+ElevenLabs voice pickers; the ElevenLabs picker lists saved account voices and
+offers manual voice ID entry. Other providers use a voice ID field. Key saves
+and provider/voice activation are separate actions; keys are never returned to
+the browser. MiniMax authentication remains on the host. Unsupported hosts
+hide the card independently of voice input. The host contracts are
+`/api/tts/settings`, `/api/tts/settings/key`, and
+`/api/tts/elevenlabs/voices`; FlickNote #46 and #47 specify their fields.
+After `bun run build`, `bun tests/voice-output-settings-browser.mjs` exercises
+the controls with fake settings and voice responses on mobile and desktop.
+
 The Appearance page also supports optional host-provided background settings.
 `GET /api/background-settings` returns `{landscape, portrait}` booleans for
 the two configured slots. `POST /api/background-settings/{landscape|portrait}`

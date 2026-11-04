@@ -32,6 +32,7 @@
   import {
     f7,
     f7ready,
+    Button,
     Preloader,
     Panel,
     Popover,
@@ -55,12 +56,14 @@
   import Cpu from "lucide-svelte/icons/cpu";
   import ModelSettings from "./ModelSettings.svelte";
   import VoiceSettings from "./VoiceSettings.svelte";
+  import VoiceOutputSettings from "./VoiceOutputSettings.svelte";
   import BackgroundSettings from "./BackgroundSettings.svelte";
   import Search from "lucide-svelte/icons/search";
   import Pause from "lucide-svelte/icons/pause";
   import Play from "lucide-svelte/icons/play";
   import Square from "lucide-svelte/icons/square";
   import Mic from "lucide-svelte/icons/mic";
+  import Volume2 from "lucide-svelte/icons/volume-2";
   import X from "lucide-svelte/icons/x";
   import Images from "lucide-svelte/icons/images";
   import Heart from "lucide-svelte/icons/heart";
@@ -246,11 +249,12 @@
   let timelineRevealFrame = 0;
   let timelineGeometry = { height: 0, viewport: 0 };
   let detailOpen = false;
-  type PreferencesTab = "home" | "appearance" | "models" | "voice";
+  type PreferencesTab = "home" | "appearance" | "models" | "voice" | "voice-output";
   function preferencesTabFromLocation(): PreferencesTab | undefined {
     const routes: Record<string, PreferencesTab> = {
       "#settings": "home", "#settings/appearance": "appearance",
       "#settings/models": "models", "#settings/voice": "voice",
+      "#settings/voice-output": "voice-output",
     };
     return routes[window.location.hash];
   }
@@ -260,6 +264,7 @@
   let preferencesBack: HTMLButtonElement;
   let modelSettingsSupported = false;
   let voiceSettingsSupported = false;
+  let voiceOutputSettingsSupported = false;
   onMount(() => {
     const tab = preferencesTabFromLocation();
     if (!tab || window.history.state?.companionSettings) return;
@@ -1616,9 +1621,10 @@
     if (tab) preferencesTab = tab;
     void tick().then(() => (tab ? preferencesBack : preferencesButton)?.focus());
   }
-  function setPreferencesSupport(tab: "models" | "voice", supported: boolean): void {
+  function setPreferencesSupport(tab: "models" | "voice" | "voice-output", supported: boolean): void {
     if (tab === "models") modelSettingsSupported = supported;
-    else voiceSettingsSupported = supported;
+    else if (tab === "voice") voiceSettingsSupported = supported;
+    else voiceOutputSettingsSupported = supported;
     if (!supported && preferencesOpen && preferencesTab === tab) {
       window.history.replaceState(window.history.state, "", "#settings");
       preferencesTab = "home";
@@ -3385,7 +3391,7 @@
     <button bind:this={preferencesBack} type="button" class="settings-back" aria-label={t("settings.back")} on:click={closePreferences}>
       <ArrowLeft size={22} strokeWidth={1.8} aria-hidden="true" />
     </button>
-    <h1>{preferencesTab === "home" ? t("preferences.open") : preferencesTab === "appearance" ? t("preferences.theme") : preferencesTab === "models" ? t("models.title") : t("settings.voiceTitle")}</h1>
+    <h1>{preferencesTab === "home" ? t("preferences.open") : preferencesTab === "appearance" ? t("preferences.theme") : preferencesTab === "models" ? t("models.title") : preferencesTab === "voice-output" ? t("settings.outputTitle") : t("settings.voiceTitle")}</h1>
     <div class="settings-cards" hidden={preferencesTab !== "home"}>
       <button type="button" class="settings-card settings-card-appearance" on:click={() => openPreferencesTab("appearance")}>
         <Palette size={27} strokeWidth={1.8} aria-hidden="true" />
@@ -3402,6 +3408,12 @@
           <Mic size={27} strokeWidth={1.8} aria-hidden="true" />
           <span>{t("settings.voiceTitle")}</span><ChevronRight size={21} aria-hidden="true" />
         </button>
+      {/if}
+      {#if voiceOutputSettingsSupported}
+        <Button type="button" class="settings-card settings-card-voice-output" onClick={() => openPreferencesTab("voice-output")}>
+          <Volume2 size={27} strokeWidth={1.8} aria-hidden="true" />
+          <span>{t("settings.outputTitle")}</span><ChevronRight size={21} aria-hidden="true" />
+        </Button>
       {/if}
     </div>
     <div class="settings-detail" hidden={preferencesTab !== "appearance"}>
@@ -3439,6 +3451,10 @@
     </div>
     <div class="settings-detail" hidden={preferencesTab !== "voice"}>
       <VoiceSettings {t} open={preferencesOpen} onSupportChange={(supported) => setPreferencesSupport("voice", supported)} />
+    </div>
+    <div class="settings-detail" hidden={preferencesTab !== "voice-output"}>
+      <VoiceOutputSettings {t} open={preferencesOpen} active={preferencesTab === "voice-output"}
+        onSupportChange={(supported) => setPreferencesSupport("voice-output", supported)} />
     </div>
   </div>
 </section>
