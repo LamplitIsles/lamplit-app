@@ -163,8 +163,7 @@ try {
       page.on("pageerror", (e) => errors.push(String(e)));
       await page.goto(url);
       const input = page.locator("#companion-textarea");
-      const send = page.getByRole("button", { name: "发送消息", exact: true });
-      const sources = page.locator(".companion-keet-source");
+        const sources = page.locator(".companion-keet-source");
       const dm = page
         .locator(".companion-row")
         .filter({ has: sources.filter({ hasText: "Keet DM" }) });
@@ -192,7 +191,7 @@ try {
       );
       // A real composer send and complete reply retain their existing direction/style.
       await input.fill("普通网页消息");
-      await send.click();
+      await input.press("Enter");
       await expect(input).toHaveValue("");
       const web = page
         .locator(".companion-row")

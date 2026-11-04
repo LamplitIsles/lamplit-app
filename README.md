@@ -27,6 +27,13 @@ use the same native contract. Album browsing and saving originals work independe
 and native releases remain outside this app. The shared app is the direct default
 frontend: standalone `/`, hosted `/chat`, with root-relative assets and no `/slice` alias.
 
+The composer places voice, stickers and image selection to the right of the
+input. Enter sends the draft (Shift+Enter inserts a line break). The sticker
+panel supports name/tag search, pack browsing and Human favorites. Tapping a
+sticker sends it separately without consuming a draft; holding it previews the
+original animation and name. Sticker thumbnails are cached for the current
+connection and revalidated in the background.
+
 ## Development
 
 Use Bun 1.3.14 and TypeScript 6. The toolchain includes oxlint and oxfmt.

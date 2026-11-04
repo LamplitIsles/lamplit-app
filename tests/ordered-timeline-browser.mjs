@@ -132,7 +132,7 @@ try {
   const photo = { name: "photo.png", mimeType: "image/png", buffer: Buffer.from(fixtureImage) };
   await choose.setInputFiles([photo, photo]);
   await page.locator("#companion-textarea").fill("发给你");
-  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator("#companion-textarea").press("Enter");
   const sent = page.locator(".companion-image-entry img[alt='photo.png']");
   await expect(sent).toHaveCount(2);
   await expect(page.getByText("正在发送…", { exact: true })).toBeVisible();
@@ -142,7 +142,7 @@ try {
   const secondPhoto = { ...photo, name: "second.png" };
   await choose.setInputFiles([secondPhoto, secondPhoto]);
   await page.locator("#companion-textarea").fill("第二条图片");
-  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator("#companion-textarea").press("Enter");
   const secondImages = page.locator(".companion-image-entry img[alt='second.png']");
   await expect(secondImages).toHaveCount(2);
   await secondImages.evaluateAll((nodes) => { window.__secondPreviews = nodes; });
@@ -173,14 +173,14 @@ try {
   const thirdPhoto = { ...photo, name: "third.png" };
   await choose.setInputFiles([thirdPhoto]);
   await page.locator("#companion-textarea").fill("第三条图片");
-  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator("#companion-textarea").press("Enter");
   await expect(page.getByText("第三条图片", { exact: true })).toBeVisible();
   await context.request.post(new URL("/__test/intervening-message", url).href);
   await expect(page.getByText("中间的回复", { exact: true })).toBeVisible();
   const fourthPhoto = { ...photo, name: "fourth.png" };
   await choose.setInputFiles([fourthPhoto]);
   await page.locator("#companion-textarea").fill("第四条图片");
-  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator("#companion-textarea").press("Enter");
   const fourthImage = page.locator(".companion-image-entry img[alt='fourth.png']");
   await expect(fourthImage).toHaveCount(1);
   await fourthImage.evaluateAll((nodes) => { window.__fourthPreview = nodes[0]; });
@@ -199,7 +199,7 @@ try {
   const retryPhoto = { ...photo, name: "retry.png" };
   await choose.setInputFiles([retryPhoto, retryPhoto]);
   await page.locator("#companion-textarea").fill("重试图片");
-  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator("#companion-textarea").press("Enter");
   const retryImages = page.locator(".companion-image-entry img[alt='retry.png']");
   await expect(retryImages).toHaveCount(2);
   const failed = page.locator(".message-sent").filter({ hasText: "重试图片" }).getByTestId(/failed-/);

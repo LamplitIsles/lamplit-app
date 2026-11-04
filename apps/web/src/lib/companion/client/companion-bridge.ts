@@ -10,6 +10,8 @@ import type { CompanionImageDraft } from "./image-drafts.js";
 import type { PendingSubmissionRetirement } from "./contracts.js";
 import type { CompanionReadiness } from "./readiness.js";
 import type { CompanionStateRecord } from "../domain.js";
+import type { StickerClient } from "../../sticker-client.js";
+import type { StickerIdentity } from "@lamplit/contracts";
 
 export interface CompanionIdentityView {
   companionName: string;
@@ -25,6 +27,8 @@ export interface CompanionIdentityView {
   affinityStage?: string;
 }
 export interface CompanionActions {
+  openStickers?: () => StickerClient;
+  sendSticker?: (sticker: StickerIdentity) => Promise<void>;
   search?: SearchBackend["search"];
   searchRead?: SearchBackend["searchRead"];
   send: (

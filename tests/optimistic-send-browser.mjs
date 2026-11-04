@@ -131,8 +131,7 @@ try {
       page.on("pageerror", (e) => errors.push(String(e)));
       await page.clock.install();
       await page.goto(url);
-      const input = page.locator("#companion-textarea"),
-        send = page.getByRole("button", { name: "发送消息", exact: true });
+      const input = page.locator("#companion-textarea");
       const recovery = page.getByTestId("input-recovery");
       const bubble = (text) =>
         page.locator(".message-sent").filter({ hasText: text });
@@ -154,7 +153,7 @@ try {
           fullPage: true,
         });
       await input.fill("ready");
-      await expect(send).toBeEnabled();
+      await expect(input).toBeEditable();
       await input.fill("");
       const photo = {
         name: "receipt.png",
@@ -174,7 +173,7 @@ try {
       await control({ action: "mode", state: "slow", hidden: true });
       await page.locator("#companion-image-library").setInputFiles(photo);
       await input.fill("慢确认文字图片");
-      await send.click();
+      await input.press("Enter");
       await expect(input).toHaveValue("");
       await expect(bubble("慢确认文字图片")).toHaveCount(1);
       await expect(sending("慢确认文字图片")).toHaveText("正在发送…");
@@ -204,7 +203,7 @@ try {
       await control({ action: "complete" });
       await control({ action: "mode", state: "publishFirst" });
       await input.fill("先发布后回执");
-      await send.click();
+      await input.press("Enter");
       await expect(bubble("先发布后回执")).toHaveCount(1);
       await expect
         .poll(
@@ -221,7 +220,7 @@ try {
       await expect(recovery).toHaveCount(0);
       await control({ action: "mode", state: "lost", hidden: true });
       await input.fill("断线前已提交");
-      await send.click();
+      await input.press("Enter");
       await expect
         .poll(async () => (await control({ action: "state" })).lookupCalls)
         .toBeGreaterThan(0);
@@ -237,7 +236,7 @@ try {
       await control({ action: "complete" });
       await control({ action: "mode", state: "null", hidden: true });
       await input.fill("尚无明确结果");
-      await send.click();
+      await input.press("Enter");
       await expect
         .poll(async () => (await control({ action: "state" })).submitCalls)
         .toBe(4);
@@ -341,7 +340,7 @@ try {
       await control({ action: "mode", state: "failed" });
       await page.locator("#companion-image-library").setInputFiles(photo);
       await input.fill("明确拒绝文字图片");
-      await send.click();
+      await input.press("Enter");
       await expect(failedMark()).toBeVisible();
       await expect(input).toHaveValue("");
       await expect(
@@ -410,7 +409,7 @@ try {
       await control({ action: "complete" });
       await control({ action: "mode", state: "withdrawn" });
       await input.fill("处理前撤回");
-      await send.click();
+      await input.press("Enter");
       await expect(bubble("处理前撤回")).toHaveCount(1);
       await expect(recovery).toContainText("处理前撤回");
       await snap("withdrawal");
@@ -418,7 +417,7 @@ try {
       await expect(recovery).toHaveCount(0);
       await control({ action: "mode", state: "submitted" });
       await input.fill("停止只停止回复");
-      await send.click();
+      await input.press("Enter");
       await expect(
         page.getByRole("button", { name: "停止当前回复", exact: true }),
       ).toBeVisible();

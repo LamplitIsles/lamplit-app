@@ -247,13 +247,60 @@ try {
     });
     await page.goto(url);
     const input = page.locator("#companion-textarea");
-    const send = page.getByRole("button", { name: "发送消息", exact: true });
     const choose = page.locator("#companion-image-library");
     const drafts = page.locator(".companion-image-draft-preview img");
     const recovery = page.getByTestId("input-recovery");
     const restore = page.getByRole("button", { name: "恢复编辑", exact: true });
     await expect(input).toBeVisible();
     await expect(page.locator(".companion-attach")).toBeVisible();
+    if (!external) {
+      const version = "a".repeat(64);
+      const sticker = { id: "cat", version, name: "小猫", tags: ["开心"], mediaType: "image/gif", available: true };
+      const pack = { id: "cats", name: "猫组", description: "", cover: sticker };
+      let favorite = false;
+      let stages = 0;
+      let denied = false;
+      const media = Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==", "base64");
+      const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+      await page.route("**/api/stickers/**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (denied) return route.fulfill({ status: 401 });
+        if (path.endsWith("/thumbnail") || path.endsWith("/original")) {
+          const original = path.endsWith("/original");
+          return route.fulfill({ status: 200, headers: { "content-type": original ? "image/gif" : "image/webp", etag: '"sticker"' }, body: original ? gif : media });
+        }
+        if (path.endsWith("/stage")) { stages++; return route.fulfill({ status: 500 }); }
+        if (path.endsWith("/favorites") && route.request().method() === "POST") {
+          favorite = route.request().postDataJSON().favorite;
+          return route.fulfill({ json: { sticker, favorite } });
+        }
+        if (path.endsWith("/packs")) return route.fulfill({ json: { packs: [pack], nextCursor: null } });
+        if (path.endsWith("/favorites")) return route.fulfill({ json: { stickers: favorite ? [sticker] : [], nextCursor: null } });
+        return route.fulfill({ json: { stickers: [sticker], nextCursor: null } });
+      });
+      await input.fill("保留草稿");
+      await page.getByRole("button", { name: "表情", exact: true }).click();
+      await page.getByRole("button", { name: "猫组", exact: true }).click();
+      await expect(page.locator(".sticker-pack-name")).toHaveText("猫组");
+      await page.getByRole("button", { name: "收藏表情", exact: true }).click();
+      await expect(page.getByRole("button", { name: "取消收藏", exact: true })).toBeVisible();
+      const item = page.locator(".sticker-send");
+      await item.hover();
+      await page.mouse.down();
+      await page.waitForTimeout(500);
+      await expect(page.locator(".sticker-preview-name")).toHaveText("小猫");
+      await page.mouse.up();
+      await expect(page.locator(".sticker-preview")).toHaveCount(0);
+      expect(stages).toBe(0);
+      await page.getByRole("button", { name: "表情", exact: true }).click();
+      await expect(input).toHaveValue("保留草稿");
+      denied = true;
+      await page.getByRole("button", { name: "表情", exact: true }).click();
+      await expect(page.locator(".sticker-panel")).toHaveCount(0);
+      await expect(input).toHaveValue("保留草稿");
+      await input.fill("");
+      await page.unroute("**/api/stickers/**");
+    }
     const image = await page.evaluate(() => {
       const canvas = document.createElement("canvas");
       canvas.width = 180;
@@ -290,7 +337,7 @@ try {
     expect(target.width).toBe(44);
     expect(target.height).toBe(44);
     expect((await input.boundingBox()).width).toBeGreaterThan(0);
-    await expect(send).toBeEnabled();
+    await expect(input).toBeEditable();
     const nativeLimits = (await control({ action: "state" })).limits;
     await choose.setInputFiles(
       Array.from({ length: nativeLimits.maxImagesPerMessage }, () => file),
@@ -335,7 +382,7 @@ try {
     await expect(drafts).toHaveCount(1);
     // Bare compact with images is refused before upload/chat admission.
     await input.fill("/compact");
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("/compact");
     await expect(drafts).toHaveCount(1);
     expect((await control({ action: "state" })).submissions).toEqual([]);
@@ -360,7 +407,7 @@ try {
       results.push({ width, thumbnail, target, overflow: false });
       continue;
     }
-    await send.click();
+    await input.press("Enter");
     await expect(drafts).toHaveCount(0);
     await expect
       .poll(async () => (await control({ action: "state" })).executions)
@@ -401,7 +448,7 @@ try {
     await guest.close();
     await input.fill("图片与文字");
     await choose.setInputFiles(file);
-    await send.click();
+    await input.press("Enter");
     await expect
       .poll(async () => (await control({ action: "state" })).submissions.length)
       .toBe(2);
@@ -506,7 +553,7 @@ try {
     await choose.setInputFiles(file);
     const beforeFailure = (await control({ action: "state" })).submissions
       .length;
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("");
     await expect(drafts).toHaveCount(0);
     await expect(
@@ -549,7 +596,7 @@ try {
     await expect(drafts).toHaveCount(1);
     await input.fill("恢复后编辑");
     await control({ action: "mode", state: "submitted" });
-    await send.click();
+    await input.press("Enter");
     await expect
       .poll(async () => (await control({ action: "state" })).recovery.length)
       .toBe(0);
@@ -680,10 +727,10 @@ try {
     });
     await input.fill("较早上传失败");
     await choose.setInputFiles(file);
-    await send.click();
+    await input.press("Enter");
     await uploadRequest;
     await input.fill("随后文字发送");
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("");
     releaseUpload();
     await expect(input).toHaveValue("");
@@ -705,7 +752,8 @@ try {
     await restore.click();
     await expect(input).toHaveValue("原生恢复输入");
     await expect(page.getByTestId("missing-recovery-image")).toBeVisible();
-    await expect(send).toBeDisabled();
+    await input.press("Enter");
+    await expect(input).toHaveValue("原生恢复输入");
     await page.screenshot({
       path: `${evidence}/missing-original-${width}.png`,
       fullPage: true,
@@ -713,13 +761,13 @@ try {
     await page
       .getByRole("button", { name: "移除缺失图片", exact: true })
       .click();
-    await send.click();
+    await input.press("Enter");
     await expect
       .poll(async () => (await control({ action: "state" })).recovery.length)
       .toBe(0);
     await control({ action: "mode", state: "failed" });
     await input.fill("拒绝输入");
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("");
     await expect(
       page
@@ -737,7 +785,7 @@ try {
     await expect(page.locator(".companion-attach")).toHaveCount(0);
     await input.fill("图片关闭仍可发文字");
     await control({ action: "mode", state: "submitted" });
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("");
     expect(
       await page.evaluate(
@@ -756,6 +804,27 @@ try {
     await page
       .locator(".messagebar")
       .screenshot({ path: `${evidence}/attachment-region-dark-${width}.png` });
+    if (!external) {
+      const version = "a".repeat(64);
+      const sticker = { id: "cat", version, name: "小猫", tags: [], mediaType: "image/gif", available: true };
+      const pack = { id: "cats", name: "猫组", description: "", cover: sticker };
+      await page.route("**/api/stickers/**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith("/stage")) return route.fulfill({ status: 401 });
+        if (path.endsWith("/thumbnail")) return route.fulfill({ status: 200, headers: { "content-type": "image/webp", etag: '"sticker"' }, body: Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==", "base64") });
+        if (path.endsWith("/packs")) return route.fulfill({ json: { packs: [pack], nextCursor: null } });
+        if (path.endsWith("/favorites")) return route.fulfill({ json: { stickers: [], nextCursor: null } });
+        return route.fulfill({ json: { stickers: [sticker], nextCursor: null } });
+      });
+      await input.fill("失权后保留草稿");
+      await page.getByRole("button", { name: "表情", exact: true }).click();
+      await page.getByRole("button", { name: "猫组", exact: true }).click();
+      await page.locator(".sticker-send").click();
+      await expect(page.locator(".sticker-panel")).toHaveCount(0);
+      await expect(input).toHaveValue("失权后保留草稿");
+      await expect(drafts).toHaveCount(2);
+      await page.unroute("**/api/stickers/**");
+    }
     expect(errors).toEqual([]);
     results.push({
       width,

@@ -11,6 +11,8 @@ import {
   UPLOAD_PATH,
   validateUploadResult,
   validateRetryImageMapping,
+  StickerIdentitySchema,
+  type StickerIdentity,
   type InputRecovery,
   validate,
   type ChatView,
@@ -20,6 +22,7 @@ import {
   type Submission,
 } from "@lamplit/contracts";
 import { ChatConnectionError, openChat } from "@lamplit/contracts/client";
+import { StickerClient } from "./sticker-client.ts";
 import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
 import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
@@ -29,6 +32,7 @@ export type PendingSend = Submission & {
   retrySource?: string;
   dispatched?: boolean;
   localImageCount?: number;
+  stickerInput?: StickerIdentity;
   createdAt: number;
   state: "sending" | "sent" | "failed";
 };
@@ -53,6 +57,8 @@ export class ChatController {
   loadingOlder = false;
   before: string | null = null;
   error = "";
+  private stickerClients = new Set<StickerClient>();
+  private stickerGeneration = 0;
   private client?: Awaited<ReturnType<typeof openChat>>;
   private socket?: WebSocket;
   private timer?: ReturnType<typeof setTimeout>;
@@ -97,6 +103,51 @@ export class ChatController {
   loadingRelationshipHistory = false;
   panelRevision = 0;
   private relationshipGeneration = 0;
+  openStickers(): StickerClient {
+    const client = this.client,
+      sessionId = this.view?.sessionId;
+    if (!client || !sessionId || this.closed) throw new Error("Offline");
+    const stickers = new StickerClient(
+      sessionId,
+      () =>
+        !this.closed &&
+        this.client === client &&
+        this.view?.sessionId === sessionId,
+    );
+    this.stickerClients.add(stickers);
+    return stickers;
+  }
+  private closeStickers() {
+    this.stickerGeneration++;
+    let interrupted = false;
+    this.pending = this.pending.map((pending) => {
+      if (
+        pending.stickerInput &&
+        pending.state === "sending" &&
+        pending.dispatched === false
+      ) {
+        interrupted = true;
+        return { ...pending, state: "failed" };
+      }
+      return pending;
+    });
+    if (interrupted) {
+      this.updateRecovery();
+      if (this.storageKey) this.save();
+    }
+    for (const stickers of this.stickerClients) stickers.close();
+    this.stickerClients.clear();
+  }
+  async sendSticker(sticker: StickerIdentity) {
+    await this.send(
+      "",
+      undefined,
+      [],
+      [],
+      undefined,
+      validate(StickerIdentitySchema, sticker),
+    );
+  }
   async readPanel<K extends keyof PanelBackend>(
     method: K,
     input: Omit<Parameters<PanelBackend[K]>[0], "sessionId">,
@@ -221,6 +272,7 @@ export class ChatController {
     this.timer = setTimeout(() => void this.connect(), delay);
   }
   close() {
+    this.closeStickers();
     this.discardPreview();
     this.closed = true;
     this.connected = false;
@@ -258,6 +310,7 @@ export class ChatController {
   private hydrate(sessionId: string) {
     const key = `lamplit.pending:${sessionId}`;
     if (this.storageKey === key) return;
+    this.closeStickers();
     this.storageKey = key;
     this.error = "";
     this.compactGeneration++;
@@ -337,10 +390,19 @@ export class ChatController {
                   : undefined,
               dispatched: item.dispatched !== false,
               localImageCount: item.localImageCount,
+              ...(item.stickerInput
+                ? {
+                    stickerInput: validate(
+                      StickerIdentitySchema,
+                      item.stickerInput,
+                    ),
+                  }
+                : {}),
               createdAt: item.createdAt,
               // One-time local draft normalization; unknown transport outcomes remain pending.
               state:
                 item.state === "failed" ||
+                (item.stickerInput && item.dispatched === false) ||
                 (item.state === "rejected" && item.admitted !== true)
                   ? "failed"
                   : item.state === "sent" ||
@@ -701,7 +763,7 @@ export class ChatController {
       return;
     const originals = this.originals.get(input.operationId);
     if (input.dispatched === false) {
-      if (input.localImageCount && !originals) {
+      if (input.localImageCount && !originals && !input.stickerInput) {
         this.error = "原图片不可用，请删除这条消息后重新选择图片发送。";
         this.changed();
         return;
@@ -713,6 +775,7 @@ export class ChatController {
           originals ?? [],
           input.replacementSourceIds,
           input,
+          input.stickerInput,
         );
       } catch {
         this.error = "重试失败，请检查连接和原图片后再试。";
@@ -847,6 +910,7 @@ export class ChatController {
       this.error = "对话整理结果尚未确认，请等待连接恢复后检查。";
     }
     this.relationshipGeneration++;
+    this.closeStickers();
     this.client = undefined;
     this.historyEpoch++;
     this.historyWork = undefined;
@@ -1064,6 +1128,7 @@ export class ChatController {
     images: readonly CompanionImageDraft[] = [],
     replacementSourceIds: readonly string[] = [],
     previous?: PendingSend,
+    stickerInput?: StickerIdentity,
   ) {
     if (text === "/compact") {
       if (images.length) throw new Error("compact-with-images");
@@ -1082,6 +1147,7 @@ export class ChatController {
     if (this.pending.length >= 20 && !previous)
       throw new Error("请先核对尚未确认的消息");
     const operationId = crypto.randomUUID();
+    const stickerGeneration = this.stickerGeneration;
     const current = () =>
       this.client === client &&
       this.view?.sessionId === sessionId &&
@@ -1103,7 +1169,8 @@ export class ChatController {
       operationId,
       logicalId: previous?.logicalId ?? previous?.operationId ?? operationId,
       dispatched: false,
-      localImageCount: images.length,
+      localImageCount: stickerInput ? 1 : images.length,
+      ...(stickerInput ? { stickerInput } : {}),
       text,
       createdAt: Date.now(),
       state: "sending",
@@ -1137,10 +1204,37 @@ export class ChatController {
     this.changed();
     let submitted = false;
     const sameSession = () =>
-      this.view?.sessionId === sessionId && !this.closed;
+      this.view?.sessionId === sessionId &&
+      !this.closed &&
+      (submitted ||
+        !stickerInput ||
+        (this.client === client &&
+          this.stickerGeneration === stickerGeneration));
     try {
       let refs: Submission["images"];
-      if (images.length) {
+      if (stickerInput) {
+        const stageCurrent = () =>
+          current() && this.stickerGeneration === stickerGeneration;
+        const stickers = new StickerClient(sessionId, stageCurrent);
+        stickers.onAuthorizationLost((status) => {
+          if (!stageCurrent()) return;
+          for (const picker of [...this.stickerClients]) {
+            if (!stageCurrent()) break;
+            picker.revokeAuthorization(status);
+          }
+        });
+        try {
+          refs = [
+            await stickers.stage({
+              sessionId,
+              operationId,
+              sticker: stickerInput,
+            }),
+          ];
+        } finally {
+          stickers.close();
+        }
+      } else if (images.length) {
         const limits = this.view!.capabilities.images;
         if (!limits) throw new Error("图片暂不可用");
         const upload = await preparePhotoUploads(

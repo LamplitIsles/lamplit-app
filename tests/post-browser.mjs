@@ -243,7 +243,7 @@ try {
         await assertMessage(id, src);
       }
       await input.fill("普通网页消息");
-      await page.getByRole("button", { name: "发送消息", exact: true }).click();
+      await page.locator("#companion-textarea").press("Enter");
       await control({ action: "complete" });
       await control({ action: "reminder" });
       await expect(

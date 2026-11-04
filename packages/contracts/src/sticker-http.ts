@@ -72,10 +72,12 @@ export async function stickerHttp(
   try {
     const path = url.pathname.slice(ROOT.length);
     if (request.method === "GET") {
-      const match = /^\/media\/([a-f0-9]{64})\/(original|preview)$/.exec(path);
+      const match = /^\/media\/([a-f0-9]{64})\/(original|thumbnail)$/.exec(
+        path,
+      );
       if (match) {
         const version = validate(StickerVersionSchema, match[1]);
-        const variant = match[2] as "original" | "preview";
+        const variant = match[2] as "original" | "thumbnail";
         const value = await backend.media(version, variant);
         if (!(await allowed()))
           return new Response("Unauthorized", { status: 403, headers });
@@ -86,11 +88,11 @@ export async function stickerHttp(
           !value.bytes.length ||
           value.bytes.length >
             (variant === "original" ? STICKER_UPLOAD_MAX_BYTES : 160_000) ||
-          (variant === "preview" && value.mediaType !== "image/jpeg")
+          (variant === "thumbnail" && value.mediaType !== "image/webp")
         )
           throw new Error("Invalid media");
         // The ETag represents the returned bytes, including a separately
-        // generated preview, not just the original's content version.
+        // generated thumbnail, not just the original's content version.
         const digest = new Uint8Array(
           await crypto.subtle.digest("SHA-256", Uint8Array.from(value.bytes)),
         );
@@ -118,6 +120,8 @@ export async function stickerHttp(
           return new Response(null, { status: 304, headers: mediaHeaders });
         return new Response(value.bytes as BodyInit, { headers: mediaHeaders });
       }
+      if (path.startsWith("/media/"))
+        return new Response("Not found", { status: 404, headers });
       const keys = [...url.searchParams.keys()];
       if (
         keys.some((key, index) => keys.indexOf(key) !== index) ||

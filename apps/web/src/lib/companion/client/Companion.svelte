@@ -28,7 +28,7 @@
   import Plus from "lucide-svelte/icons/plus";
   import ChevronDown from "lucide-svelte/icons/chevron-down";
   import ChevronRight from "lucide-svelte/icons/chevron-right";
-  import ArrowUp from "lucide-svelte/icons/arrow-up";
+  import Smile from "lucide-svelte/icons/smile";
   import {
     f7,
     f7ready,
@@ -67,6 +67,9 @@
   import BookOpen from "lucide-svelte/icons/book-open";
   import AlarmClock from "lucide-svelte/icons/alarm-clock";
   import Gallery from "./Gallery.svelte";
+  import StickerPanel from "./StickerPanel.svelte";
+  import type { StickerClient } from "../../sticker-client.js";
+  import type { ImageRef } from "@lamplit/contracts";
   import { longPress } from "./long-press.ts";
   import {
     overlayOpened,
@@ -294,6 +297,7 @@
     id: string;
     alt: string;
     previewUrl?: string;
+    attachment?: ImageRef;
   }
   interface ImagePart {
     kind: "images";
@@ -326,6 +330,10 @@
   let relationshipDrawer: HTMLElement;
   let photoBrowser: PhotoBrowser.PhotoBrowser | undefined;
   let imageSessionGeneration = 0;
+  let stickerClient: StickerClient | undefined;
+  let unsubscribeStickerAuthorization: (() => void) | undefined;
+  let stickerOpen = false;
+  let stickerFavoritesRevision = 0;
   let searchOpen = false;
 
   let statusText = "";
@@ -378,6 +386,7 @@
   $: effectiveWorkspaceReadiness = workspaceReadiness;
   $: effectiveSessionReadiness = sessionReadiness;
   $: if (sessionId !== panelSession) {
+    resetStickerClient();
     imageSessionGeneration++;
     dismissMessageMenu();
     imagePress?.destroy();
@@ -398,6 +407,9 @@
     diaryLoading = false;
     galleryLoading = false;
     alarmsLoading = false;
+  }
+  $: if (projection.status === "offline" && stickerClient) {
+    resetStickerClient();
   }
   $: if (panelRevision !== lastPanelRevision) {
     lastPanelRevision = panelRevision;
@@ -481,6 +493,8 @@
     const bar = node.parentElement!;
     const input = bar.querySelector<HTMLTextAreaElement>("textarea")!;
     composerInput = input;
+    input.setAttribute("enterkeyhint", "send");
+    input.addEventListener("focus", closeStickerPanel);
     const update = (value: typeof options) => {
       input.setAttribute("aria-label", value.label);
       if (value.suggestions) {
@@ -519,6 +533,7 @@
       update,
       destroy() {
         observer.disconnect();
+        input.removeEventListener("focus", closeStickerPanel);
         input.removeEventListener("input", wrapInput, true);
         input.removeEventListener("paste", onPaste);
         input.removeEventListener("keydown", onKeydown);
@@ -1170,6 +1185,36 @@
     }, 2000);
   }
 
+  function closeStickerPanel(): void {
+    stickerOpen = false;
+  }
+  function resetStickerClient(): void {
+    unsubscribeStickerAuthorization?.();
+    unsubscribeStickerAuthorization = undefined;
+    stickerClient?.close();
+    stickerClient = undefined;
+    stickerOpen = false;
+  }
+  function currentStickerClient(): StickerClient {
+    if (stickerClient) return stickerClient;
+    const client = actions.openStickers?.();
+    if (!client) throw new Error("Sticker service unavailable");
+    stickerClient = client;
+    unsubscribeStickerAuthorization = client.onAuthorizationLost(() => {
+      if (stickerClient !== client) return;
+      resetStickerClient();
+      liveAnnouncement = { key: "stickers.error" };
+    });
+    return client;
+  }
+  function toggleStickerPanel(): void {
+    if (stickerOpen) { closeStickerPanel(); return; }
+    try {
+      currentStickerClient();
+      composerInput?.blur();
+      stickerOpen = true;
+    } catch { liveAnnouncement = { key: "stickers.error" }; }
+  }
   function submit(): void {
     if (
       projection.canSubmit === false ||
@@ -1353,7 +1398,7 @@
     if (voiceBusy) return;
     if (
       commandSuggestion &&
-      (event.key === "Tab" || event.key === "Enter") &&
+      (event.key === "Tab" || (event.key === "Enter" && composer.draft !== commandSuggestion.command)) &&
       !event.shiftKey &&
       !event.isComposing &&
       !composer.composing
@@ -1643,7 +1688,7 @@
           );
           if (image)
             imagePress = longPress(image, {
-              run: (node) => showImageMenu(lightboxUrl, item.alt, node),
+              run: (node) => showImageMenu(lightboxUrl, item.alt, node, undefined, item.attachment),
             });
           (browser.swiper as Swiper).on(
             "click",
@@ -1718,6 +1763,7 @@
       id: item.id,
       alt: item.alt || t("image.preview"),
       previewUrl: item.previewUrl ?? imageUrls[item.id],
+      attachment: item.attachment as ImageRef | undefined,
     });
   }
   function showDraftLightbox(draft: CompanionImageDraft): void {
@@ -1783,6 +1829,7 @@
     name: string,
     target: HTMLElement,
     key?: string,
+    attachment?: ImageRef,
   ): void {
     if (key && showFailedMenu(key, target)) return;
     if (!url) return;
@@ -1790,6 +1837,21 @@
     messageMenu(
       target,
       [
+        ...(attachment && actions.openStickers ? [{
+          text: t("stickers.favoriteImage"),
+          run: async () => {
+            if (generation !== imageSessionGeneration) return;
+            try {
+              await currentStickerClient().favoriteImage(attachment);
+              if (generation === imageSessionGeneration) {
+                stickerFavoritesRevision++;
+                showToast(t("stickers.favoriteSaved"));
+              }
+            } catch {
+              if (generation === imageSessionGeneration) showToast(t("stickers.favoriteFailed"));
+            }
+          },
+        }] : []),
         {
           text: t("image.save"),
           run: async () => {
@@ -1932,6 +1994,7 @@
   }
 
   onDestroy(() => {
+    resetStickerClient();
     photoDisposed = true;
     nativePhotoGeneration += 1;
     dismissMessageMenu();
@@ -2166,27 +2229,6 @@
             </div>
           {/if}
         {/snippet}
-        {#snippet innerStart()}
-          {#if imageLimits || voiceBusy}<button
-              class="button button-tonal button-round companion-attach"
-              type="button"
-              aria-label={t(voiceBusy ? "voice.cancel" : "image.choose")}
-              title={t(voiceBusy ? "voice.cancel" : "image.choose")}
-              disabled={!voiceBusy && (!imageLimits || nativePhotoBusy)}
-              on:pointerdown={onImagePickerPointerDown}
-              on:pointerup={onImagePickerPointerUp}
-              on:pointercancel={clearImagePickerPointer}
-              on:contextmenu|preventDefault
-              on:click={() =>
-                voiceBusy ? void cancelVoiceInput() : choosePhoto()}
-              >{#if voiceBusy}<X size={20} aria-hidden="true" />{:else}<Plus
-                  size={19}
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />{/if}</button
-            >
-          {/if}
-        {/snippet}
         {#snippet beforeArea()}
           {#if recoveredDraft && recoveredDraft.key !== recoveredDraftKey}
             <div
@@ -2361,19 +2403,29 @@
                 aria-hidden="true"
               />{:else}<Mic size={19} strokeWidth={2} aria-hidden="true" />{/if}
           </button>
-          <button
-            class="button button-fill button-round companion-send"
-            aria-label={t("message.send")}
-            on:click={submit}
-            disabled={voiceBusy ||
-              nativePhotoBusy ||
-              projection.canSubmit === false ||
-              composer.draft.trim().length > MAX_MESSAGE_LENGTH ||
-              restoringRecovery ||
-              missingRecoveryImages ||
-              (!composer.draft.trim() && imageDrafts.length === 0)}
-            ><ArrowUp size={20} aria-hidden="true" /></button
-          >
+          <button class="button button-tonal button-round companion-stickers" type="button"
+            aria-label={t("stickers.open")} aria-pressed={stickerOpen}
+            disabled={voiceBusy || nativePhotoBusy || !actions.openStickers}
+            on:click={toggleStickerPanel}><Smile size={20} aria-hidden="true" /></button>
+          {#if imageLimits || voiceBusy}<button
+              class="button button-tonal button-round companion-attach"
+              type="button"
+              aria-label={t(voiceBusy ? "voice.cancel" : "image.choose")}
+              title={t(voiceBusy ? "voice.cancel" : "image.choose")}
+              disabled={!voiceBusy && (!imageLimits || nativePhotoBusy)}
+              on:pointerdown={onImagePickerPointerDown}
+              on:pointerup={onImagePickerPointerUp}
+              on:pointercancel={clearImagePickerPointer}
+              on:contextmenu|preventDefault
+              on:click={() =>
+                voiceBusy ? void cancelVoiceInput() : choosePhoto()}
+              >{#if voiceBusy}<X size={20} aria-hidden="true" />{:else}<Plus
+                  size={19}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />{/if}</button
+            >
+          {/if}
         {/snippet}
         {#snippet afterInner()}
           {#if projection.promptError || imageIntakeFailure}
@@ -2421,6 +2473,9 @@
             >
               {t(voiceFailure || "voice.failed")}
             </div>
+          {/if}
+          {#if stickerOpen && stickerClient && actions.sendSticker}
+            <StickerPanel client={stickerClient} {t} send={actions.sendSticker} favoritesRevision={stickerFavoritesRevision} canSend={projection.canSubmit !== false && !voiceBusy} />
           {/if}
         {/snippet}
       </Messagebar>
@@ -2609,6 +2664,7 @@
                                               image.alt || t("image.preview"),
                                               node,
                                               unit.id,
+                                              image.attachment as ImageRef | undefined,
                                             ),
                                         }}
                                         ><img

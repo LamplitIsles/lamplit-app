@@ -86,7 +86,7 @@ function backend(): StickerBackend {
                 ? [71, 73, 70, 56, 57, 97]
                 : [255, 216, 255],
             ),
-            mediaType: variant === "original" ? "image/gif" : "image/jpeg",
+            mediaType: variant === "original" ? "image/gif" : "image/webp",
           }
         : null,
   };
@@ -161,8 +161,8 @@ test("sticker identity remains bound to durable submission, recovery and history
       path: "/tmp",
     }),
   ).toThrow();
-  expect(stickerMediaUrl(version, "preview")).toBe(
-    `/api/stickers/media/${version}/preview`,
+  expect(stickerMediaUrl(version, "thumbnail")).toBe(
+    `/api/stickers/media/${version}/thumbnail`,
   );
   expect(() => stickerMediaUrl("../etc", "original")).toThrow();
 });
@@ -258,9 +258,13 @@ test("HTTP validates authorization, session, pages, versioned media and staging"
   expect(original?.headers.get("x-content-type-options")).toBe("nosniff");
   expect(
     (
-      await run(new Request(origin + stickerMediaUrl(version, "preview")))
+      await run(new Request(origin + stickerMediaUrl(version, "thumbnail")))
     )?.headers.get("content-type"),
-  ).toBe("image/jpeg");
+  ).toBe("image/webp");
+  expect(
+    (await run(new Request(origin + `/api/stickers/media/${version}/preview`)))
+      ?.status,
+  ).toBe(404);
   expect(
     (
       await run(
@@ -515,7 +519,7 @@ test("cached sticker media is revalidated only after authorization", async () =>
   );
   expect(afterHash?.status).toBe(403);
   const preview = await stickerHttp(
-    new Request(origin + stickerMediaUrl(version, "preview")),
+    new Request(origin + stickerMediaUrl(version, "thumbnail")),
     b,
     auth,
   );
@@ -710,4 +714,28 @@ test("failed sticker retry and reimport keep the sent version in real socket his
     server.unref();
     void server.stop(true);
   }
+});
+
+test("thumbnail enforces WebP and size and derives ETag from returned bytes", async () => {
+  const b = backend();
+  const url = origin + stickerMediaUrl(version, "thumbnail");
+  const read = () => stickerHttp(new Request(url), b, auth);
+  const first = await read();
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new Uint8Array([255, 216, 255])),
+  );
+  const hash = Array.from(digest, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  expect(first?.headers.get("etag")).toBe(`"${hash}-thumbnail-webp"`);
+  b.media = async () => ({
+    bytes: new Uint8Array(160_001),
+    mediaType: "image/webp",
+  });
+  expect((await read())?.status).toBe(400);
+  b.media = async () => ({
+    bytes: new Uint8Array([1]),
+    mediaType: "image/jpeg",
+  });
+  expect((await read())?.status).toBe(400);
 });

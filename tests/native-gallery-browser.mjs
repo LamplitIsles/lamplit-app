@@ -108,7 +108,6 @@ try {
   await expect(input).toBeVisible();
   const attach = page.locator(".companion-attach");
   const drafts = page.locator(".companion-image-draft-preview img");
-  const send = page.getByRole("button", { name: "发送消息", exact: true });
   const remove = page.getByRole("button", { name: "移除图片", exact: true });
   const uploads = [];
   page.on("request", (r) => {
@@ -184,12 +183,14 @@ try {
     },
   });
   await expect(attach).toBeDisabled();
-  await expect(send).toBeDisabled();
+  await input.press("Enter");
+  expect(uploads).toHaveLength(0);
   await resolvePick(["held", "first"]);
   await expect.poll(() => heldRead).toBe(true);
   await expect(page.locator(".companion-microphone")).toBeDisabled();
   await expect(attach).toBeDisabled();
-  await expect(send).toBeDisabled();
+  await input.press("Enter");
+  expect(uploads).toHaveLength(0);
   await page
     .locator(".companion-microphone")
     .evaluate((el) =>
@@ -228,7 +229,7 @@ try {
   await rejectPick("UNIMPLEMENTED");
   await expect(attach).toBeEnabled();
   expect(await page.evaluate(() => window.inputClicks)).toBe(0);
-  await send.click();
+  await input.press("Enter");
   await expect.poll(() => uploads.length).toBe(1);
   expect(uploads[0].images.map((i) => i.original)).toEqual([
     original("held").toString("base64"),
@@ -260,7 +261,7 @@ try {
       File.prototype.arrayBuffer = read;
     };
   });
-  await send.click();
+  await input.press("Enter");
   await expect(input).toHaveValue("");
   await expect(drafts).toHaveCount(0);
   await expect(page.getByTestId(/failed-/)).toBeVisible();

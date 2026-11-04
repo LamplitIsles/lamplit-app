@@ -290,7 +290,6 @@ try {
     const input = page.locator("#companion-textarea");
     const mic = page.locator(".companion-microphone");
     const cancel = page.getByRole("button", { name: "取消录音", exact: true });
-    const send = page.locator(".companion-send");
     const released = () =>
       expect
         .poll(() =>
@@ -559,7 +558,8 @@ try {
     await expect.poll(async () => (await observe(take)).nonzero).toBe(true);
     expect(await page.evaluate(() => window.voiceProbe.rates)).toEqual([16000]);
     await expect(input).toHaveValue("before REPLACE after");
-    await expect(send).toBeDisabled();
+    await input.press("Enter");
+    expect((await state()).executions).toBe(before);
     await page.screenshot({
       path: `${screenshots}/recording-${width}.png`,
       fullPage: true,
@@ -572,7 +572,7 @@ try {
     await released();
     expect((await state()).executions).toBe(before);
     await input.fill(`edited final ${width}`);
-    await send.click();
+    await input.press("Enter");
     await expect.poll(async () => (await state()).executions).toBe(before + 1);
     await control({ action: "complete", text: "fake reply" });
 
@@ -645,9 +645,11 @@ try {
     await start();
     await mic.click();
     await expect(input).toHaveValue(oversized);
-    await expect(send).toBeDisabled();
+    await input.press("Enter");
+    await expect(input).toHaveValue(oversized);
+    expect((await state()).executions).toBe(before + 1);
     await input.fill("shortened");
-    await expect(send).toBeEnabled();
+    await expect(input).toBeEditable();
     expect((await state()).executions).toBe(before + 1);
 
     // Actual rate mismatch fails without sending mislabeled audio or adding a resampler.
@@ -683,7 +685,7 @@ try {
       page.locator('[data-testid="companion-voice-error-status"]'),
     ).toBeVisible();
     await expect(input).toHaveValue("shortened");
-    await expect(send).toBeEnabled();
+    await expect(input).toBeEditable();
     await released();
 
     // Navigation closes an in-flight take, preventing results on a disposed page.
@@ -705,7 +707,7 @@ try {
       page.locator('[data-testid="companion-voice-unavailable-status"]'),
     ).toBeVisible();
     await input.fill(`disabled text ${width}`);
-    await send.click();
+    await input.press("Enter");
     await expect.poll(async () => (await state()).executions).toBe(before + 2);
     await control({ action: "complete" });
     await page.screenshot({
@@ -717,7 +719,7 @@ try {
     await page.reload();
     await expect(mic).toBeDisabled();
     await input.fill("still text");
-    await expect(send).toBeEnabled();
+    await expect(input).toBeEditable();
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,

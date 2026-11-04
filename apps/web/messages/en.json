@@ -321,5 +321,18 @@
   "settings.backgroundLoadFailed": "Unable to load background settings.",
   "settings.backgroundDisplayFailed": "Unable to refresh the chat background. Try refreshing again.",
   "settings.backgroundSaveFailed": "Upload could not be confirmed. Refresh to check.",
-  "settings.backgroundTooLarge": "Image is larger than 20 MB. Choose a smaller image."
+  "settings.backgroundTooLarge": "Image is larger than 20 MB. Choose a smaller image.",
+  "stickers.open": "Stickers",
+  "stickers.search": "Search stickers by name or tag",
+  "stickers.favorites": "Favorites",
+  "stickers.empty": "No stickers",
+  "stickers.more": "Load more",
+  "stickers.error": "Could not load stickers. Tap to retry.",
+  "stickers.sendFailed": "Could not send sticker. Please try again.",
+  "stickers.favorite": "Add to favorites",
+  "stickers.unfavorite": "Remove from favorites",
+  "stickers.favoriteFailed": "Favorite not confirmed. Check favorites.",
+  "stickers.favoriteImage": "Add to sticker favorites",
+  "stickers.favoriteSaved": "Added to favorites",
+  "stickers.preview": "Sticker preview"
 }

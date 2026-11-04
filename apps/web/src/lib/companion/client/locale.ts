@@ -1,7 +1,9 @@
 import * as messages from "../../paraglide/messages.js";
 import type { CompanionLanguage } from "./preferences.js";
 
-export type CompanionLocaleKey = keyof typeof messages;
+// Sticker messages are generated from the source catalogs alongside all other
+// messages by the normal application build.
+export type CompanionLocaleKey = keyof typeof messages | `stickers.${"open" | "search" | "favorites" | "empty" | "more" | "error" | "sendFailed" | "favorite" | "unfavorite" | "favoriteFailed" | "favoriteImage" | "favoriteSaved" | "preview"}`;
 export type CompanionTranslate = (
   key: CompanionLocaleKey,
   params?: Record<string, string | number>,
@@ -16,7 +18,7 @@ export function companionTranslate(
   locale: CompanionLanguage,
 ): CompanionTranslate {
   return (key, params) => {
-    const message = messages[key] as unknown as
+    const message = (messages as Record<string, unknown>)[key] as
       | ((
           inputs?: Record<string, string | number>,
           options?: { locale: CompanionLanguage },

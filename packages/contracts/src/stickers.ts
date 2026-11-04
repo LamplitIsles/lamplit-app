@@ -109,10 +109,10 @@ export type StickerStageResult = Static<typeof StickerStageResultSchema>;
 /** Only versioned, same-origin media endpoints are exposed; paths never come from the host filesystem. */
 export function stickerMediaUrl(
   version: string,
-  variant: "original" | "preview",
+  variant: "original" | "thumbnail",
 ): string {
   const hash = validate(StickerVersionSchema, version);
-  if (variant !== "original" && variant !== "preview")
+  if (variant !== "original" && variant !== "thumbnail")
     throw new Error("Invalid sticker variant");
   return `/api/stickers/media/${hash}/${variant}`;
 }
@@ -171,6 +171,6 @@ export interface StickerBackend {
   ): Promise<StickerStageResult>;
   media(
     version: string,
-    variant: "original" | "preview",
+    variant: "original" | "thumbnail",
   ): Promise<{ bytes: Uint8Array; mediaType: string } | null>;
 }

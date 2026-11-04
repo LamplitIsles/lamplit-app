@@ -153,7 +153,7 @@ try {
     ).toBe(true);
     // Execution still permits queued/steered input while the final body is held.
     await page.locator("#companion-textarea").fill("Test-owned queued input");
-    await expect(page.locator(".companion-send")).toBeEnabled();
+    await expect(page.locator("#companion-textarea")).toBeEditable();
     await page.locator("#companion-textarea").fill("");
     const finishedTurn = (await fixture.backend.read()).activeTurnId;
     await context.request.post(

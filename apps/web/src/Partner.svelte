@@ -185,6 +185,9 @@
     const tails = new Map<string | null, string>();
     for (const p of pending)
       if (!visible.some((m) => m.operationId === p.operationId)) {
+        // Staging has no image reference yet. Showing a missing-image bubble
+        // here would falsely look like failure while the sticker is prepared.
+        if (p.stickerInput && !p.images && p.state === "sending") continue;
         const logicalId = p.logicalId ?? p.operationId;
         if (!pendingAnchors.has(logicalId) && view)
           pendingAnchors.set(logicalId, { sessionId: view.sessionId, after: unique.at(-1)?.id ?? null });
@@ -340,6 +343,8 @@
     return undefined;
   });
   const actions: CompanionActions = {
+    openStickers: () => controller.openStickers(),
+    sendSticker: (sticker) => controller.sendSticker(sticker),
     async send(text, images, retire, sources) {
       if (!controller?.connected)
         throw new CompanionPreControllerError("请等待连接恢复后发送文字。");

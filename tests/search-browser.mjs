@@ -290,7 +290,7 @@ try {
     expect(final.calls).toContain(`read:${ids.repeated}`);
     expect(final.sessionId).toBe(initial.sessionId);
     expect(final.messages).toEqual(initial.messages);
-    await page.getByRole("button", { name: "发送消息", exact: true }).click();
+    await page.locator("#companion-textarea").press("Enter");
     await expect(draft).toHaveValue("");
     await expect(
       page

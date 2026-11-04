@@ -87,7 +87,6 @@ try {
     page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto(url);
     const input = page.locator("#companion-textarea");
-    const send = page.getByRole("button", { name: "发送消息", exact: true });
     const ring = page.locator(".companion-context-meter");
     const status = page.getByTestId("companion-continuity-status");
     const failure = page.getByTestId("input-error");
@@ -122,12 +121,12 @@ try {
     // Busy and native refusal preserve exact draft and never submit a user message.
     await control({ action: "busy", enabled: true });
     await input.fill("/compact");
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("/compact");
     expect((await control({ action: "state" })).calls).toBe(0);
     await control({ action: "busy", enabled: false });
     await control({ action: "refuse", enabled: true });
-    await send.click();
+    await input.press("Enter");
     await expect(input).toHaveValue("/compact");
     await expect(failure).toBeVisible();
     expect((await control({ action: "state" })).executions).toBe(0);
@@ -137,10 +136,11 @@ try {
     await input.fill("/comp");
     await page.locator("#companion-command-compact").click();
     await expect(input).toHaveValue("/compact");
-    await send.click();
+    await input.press("Enter");
     await expect(status).toHaveAttribute("data-state", "running");
     await expect(input).toHaveValue("");
-    await expect(send).toBeDisabled();
+    await input.press("Enter");
+    expect((await control({ action: "state" })).executions).toBe(1);
     await page.screenshot({
       path: `${evidence}/running-${width}.png`,
       fullPage: true,
@@ -172,7 +172,7 @@ try {
     // Lost response and reconnect only read native view. No automatic compact replay.
     await control({ action: "hold", enabled: true });
     await input.fill("/compact");
-    await send.click();
+    await input.press("Enter");
     await expect(status).toHaveAttribute("data-state", "running");
     const calls = (await control({ action: "state" })).calls;
     const disconnected = await context.request.post(`${controlUrl}/disconnect`);
@@ -180,7 +180,7 @@ try {
     await expect(input).toHaveValue("/compact");
     await control({ action: "release" });
     await control({ action: "finish" });
-    await expect(send).toBeEnabled({ timeout: 10000 });
+    await expect(input).toBeEditable({ timeout: 10000 });
     await silent();
     expect((await control({ action: "state" })).calls).toBe(calls);
     await page.reload();
@@ -189,7 +189,7 @@ try {
     // Old accepted callback cannot retire a draft belonging to the next session.
     await control({ action: "hold", enabled: true });
     await input.fill("/compact");
-    await send.click();
+    await input.press("Enter");
     await expect(status).toHaveAttribute("data-state", "running");
     await control({ action: "session", sessionId: "second-session" });
     await expect(status).toHaveCount(0);

@@ -321,5 +321,18 @@
   "settings.backgroundLoadFailed": "无法加载背景设置。",
   "settings.backgroundDisplayFailed": "无法刷新聊天背景，请刷新重试。",
   "settings.backgroundSaveFailed": "上传结果尚未确认，请刷新查看。",
-  "settings.backgroundTooLarge": "图片超过 20 MB，请选择较小的图片。"
+  "settings.backgroundTooLarge": "图片超过 20 MB，请选择较小的图片。",
+  "stickers.open": "表情",
+  "stickers.search": "搜索表情名称或标签",
+  "stickers.favorites": "收藏",
+  "stickers.empty": "没有表情",
+  "stickers.more": "加载更多",
+  "stickers.error": "加载失败，点按重试",
+  "stickers.sendFailed": "表情发送失败，请重试",
+  "stickers.favorite": "收藏表情",
+  "stickers.unfavorite": "取消收藏",
+  "stickers.favoriteFailed": "收藏未确认，请检查收藏列表",
+  "stickers.favoriteImage": "收藏为表情",
+  "stickers.favoriteSaved": "已收藏",
+  "stickers.preview": "表情预览"
 }

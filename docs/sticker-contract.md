@@ -1,8 +1,7 @@
 # Sticker contract — spec #8
 
-This contract supplies data for a future client; it does not implement a sticker
-picker or change the existing App UI. CFL spec #7 implements the host. Both must
-use the same reviewed contracts build. Old clients must update before consuming
+CFL implements the host. Both host and clients must use the same reviewed
+contracts build. Old clients must update before consuming
 sticker-bearing image references; there is no compatibility negotiation.
 
 All `/api/stickers` requests use chat owner authentication. Mutation requests
@@ -32,12 +31,16 @@ failure as admission or assume a timeout implies failure.
   animation frames and processing time; reject unsafe paths, links, duplicate
   names and mismatched formats; and make a validated pack visible atomically.
   The response is `{pack, count}`. The server defines the manifest separately.
-- `GET /media/{version}/{preview|original}` accepts a lowercase SHA-256 version.
-  Preview is a static JPEG, at most 160,000 bytes; original retains its MIME and
+- `GET /media/{version}/{thumbnail|original}` accepts a lowercase SHA-256 version.
+  Thumbnail is static WebP, first frame, retaining alpha, with longest side at most
+  512 pixels without upscaling and at most 160,000 bytes; original retains its MIME and
   animated GIF bytes. Content is immutable by version. Responses use `private,
 no-cache` and a representation-specific ETag so a browser may retain bytes
-  but must revalidate on every use. The host authorizes before returning either
-  bytes or a conditional 304; revoked access cannot use a cached response.
+  and must revalidate on every use. An application may explicitly show its own
+  same-identity cache first while revalidating in the background; a revoked item
+  can therefore briefly remain visible. Cache entries must be identity isolated,
+  bounded, and evicted on 401, 403, or 404. The host authorizes before returning
+  either bytes or a conditional 304.
   Responses have `nosniff`. Missing bytes return 404.
 
 For ID sending, `POST /stage` accepts `{sessionId, operationId, sticker:
@@ -58,3 +61,11 @@ call evidence and preserve the version. Animated originals and a static model
 representative are distinct; a static frame does not imply model comprehension
 of animation. Authentication, version existence and actual image validation are
 host responsibilities, not facts established by a client-supplied reference.
+
+The Companion `StickerClient` keeps at most 128 media entries and 10 MiB in
+memory per active session/connection. It does not persist media across reloads
+or reconnects. Callers retain the client while displaying the picker, release
+media listeners when no longer displayed, and clear displayed media when the
+client closes or reports eviction. Cached blobs may be displayed immediately;
+each load starts an authenticated conditional revalidation. Network failures
+leave existing cached content in place until a later successful revalidation.
