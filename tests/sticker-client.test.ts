@@ -22,6 +22,9 @@ const image = {
   sticker: { id: "cat", version },
 };
 const json = (body: unknown) => Response.json(body);
+// Bun adds preconnect to fetch; these fakes must never open real connections.
+const fakeFetch = (handler: () => Promise<Response>): typeof fetch =>
+  Object.assign(handler, { preconnect: () => {} });
 
 test("client paginates, searches and favorites existing sticker identity without recreating it", async () => {
   const requests: { path: string; body?: any }[] = [];
@@ -196,12 +199,13 @@ test("stale stage response cannot submit into another session", async () => {
 
 test("authorization failure evicts all cached media for the current client", async () => {
   let denied = false;
-  const transport = (async () =>
+  const transport = fakeFetch(async () =>
     denied
       ? new Response(null, { status: 401 })
       : new Response(new Uint8Array([1]), {
           headers: { "content-type": "image/webp", etag: '"v"' },
-        })) as typeof fetch;
+        }),
+  );
   const updates: (Blob | null)[] = [];
   const c = new StickerClient("session", () => true, transport);
   await c.loadMedia(version, "thumbnail", (value) => updates.push(value));
@@ -277,10 +281,9 @@ test.each([401, 403])(
   "a %s invalidation cannot resurrect an earlier in-flight thumbnail",
   async (status) => {
     const pending: ((response: Response) => void)[] = [];
-    const transport = (() =>
-      new Promise<Response>((resolve) =>
-        pending.push(resolve),
-      )) as typeof fetch;
+    const transport = fakeFetch(
+      () => new Promise<Response>((resolve) => pending.push(resolve)),
+    );
     const c = new StickerClient("session", () => true, transport);
     const before: (Blob | null)[] = [];
     const after: (Blob | null)[] = [];
@@ -315,10 +318,12 @@ test.each(["close", "session"])(
   async (mode) => {
     let resolve!: (response: Response) => void;
     let current = true;
-    const transport = (() =>
-      new Promise<Response>((r) => {
-        resolve = r;
-      })) as typeof fetch;
+    const transport = fakeFetch(
+      () =>
+        new Promise<Response>((r) => {
+          resolve = r;
+        }),
+    );
     const c = new StickerClient("session", () => current, transport);
     const updates: (Blob | null)[] = [];
     const pending = c.loadMedia(version, "thumbnail", (blob) =>
@@ -336,12 +341,12 @@ test.each(["close", "session"])(
 
 test("404 evicts only its media and uncertain network failure preserves cached media", async () => {
   let outcome: "ok" | "missing" | "network" = "ok";
-  const transport = (async () => {
+  const transport = fakeFetch(async () => {
     if (outcome === "network") throw new Error("offline");
     return outcome === "missing"
       ? new Response(null, { status: 404 })
       : thumbnailResponse(1);
-  }) as typeof fetch;
+  });
   const c = new StickerClient("session", () => true, transport);
   const a: (Blob | null)[] = [];
   const b: (Blob | null)[] = [];
@@ -365,10 +370,9 @@ test("404 evicts only its media and uncertain network failure preserves cached m
 test("a new request after an observed session change cannot revive the old response", async () => {
   let current = true;
   const responses: ((response: Response) => void)[] = [];
-  const transport = (() =>
-    new Promise<Response>((resolve) =>
-      responses.push(resolve),
-    )) as typeof fetch;
+  const transport = fakeFetch(
+    () => new Promise<Response>((resolve) => responses.push(resolve)),
+  );
   const c = new StickerClient("session", () => current, transport);
   const before: (Blob | null)[] = [];
   const after: (Blob | null)[] = [];
@@ -393,10 +397,9 @@ test("a new request after an observed session change cannot revive the old respo
 
 test("closing during notification prevents later listeners receiving stale bytes", async () => {
   const responses: ((response: Response) => void)[] = [];
-  const transport = (() =>
-    new Promise<Response>((resolve) =>
-      responses.push(resolve),
-    )) as typeof fetch;
+  const transport = fakeFetch(
+    () => new Promise<Response>((resolve) => responses.push(resolve)),
+  );
   const c = new StickerClient("session", () => true, transport);
   const second: (Blob | null)[] = [];
   const first = c.loadMedia(version, "thumbnail", (blob) => {
@@ -418,10 +421,12 @@ test.each(["200-after-404", "404-after-200", "network-before-404"])(
       resolve: (r: Response) => void;
       reject: (e: Error) => void;
     }[] = [];
-    const transport = (() =>
-      new Promise<Response>((resolve, reject) =>
-        requests.push({ resolve, reject }),
-      )) as typeof fetch;
+    const transport = fakeFetch(
+      () =>
+        new Promise<Response>((resolve, reject) =>
+          requests.push({ resolve, reject }),
+        ),
+    );
     const c = new StickerClient("session", () => true, transport);
     const cover: (Blob | null)[] = [];
     const grid: (Blob | null)[] = [];
@@ -468,10 +473,9 @@ test.each([401, 403])(
   "authorization %s invalidates in-flight JSON and notifies once",
   async (status) => {
     const requests: ((response: Response) => void)[] = [];
-    const transport = (() =>
-      new Promise<Response>((resolve) =>
-        requests.push(resolve),
-      )) as typeof fetch;
+    const transport = fakeFetch(
+      () => new Promise<Response>((resolve) => requests.push(resolve)),
+    );
     const c = new StickerClient("session", () => true, transport);
     const events: number[] = [];
     const unsubscribe = c.onAuthorizationLost((code) => events.push(code));
@@ -489,16 +493,20 @@ test.each([401, 403])(
     expect(events).toEqual([status]);
     expect(() => c.loadMedia(version, "thumbnail", () => {})).toThrow();
     unsubscribe();
-    const refreshed = new StickerClient("session", () => true, (async () =>
-      json({ packs: [], nextCursor: null })) as typeof fetch);
+    const refreshed = new StickerClient(
+      "session",
+      () => true,
+      fakeFetch(async () => json({ packs: [], nextCursor: null })),
+    );
     expect((await refreshed.page("packs")).nextCursor).toBeNull();
   },
 );
 
 test("a 404 invalidates both variants of its version, including a pending 304", async () => {
   const requests: ((response: Response) => void)[] = [];
-  const transport = (() =>
-    new Promise<Response>((resolve) => requests.push(resolve))) as typeof fetch;
+  const transport = fakeFetch(
+    () => new Promise<Response>((resolve) => requests.push(resolve)),
+  );
   const c = new StickerClient("session", () => true, transport);
   const thumbnail: (Blob | null)[] = [];
   const original: (Blob | null)[] = [];
@@ -531,10 +539,14 @@ test("a 404 invalidates both variants of its version, including a pending 304", 
 
 test("media 404 and network errors never emit the authorization loss event", async () => {
   let offline = false;
-  const c = new StickerClient("session", () => true, (async () => {
-    if (offline) throw new Error("offline");
-    return new Response(null, { status: 404 });
-  }) as typeof fetch);
+  const c = new StickerClient(
+    "session",
+    () => true,
+    fakeFetch(async () => {
+      if (offline) throw new Error("offline");
+      return new Response(null, { status: 404 });
+    }),
+  );
   const events: number[] = [];
   c.onAuthorizationLost((status) => events.push(status));
   await c.loadMedia(version, "thumbnail", () => {});
@@ -551,10 +563,7 @@ test("old 404 after observed session change cannot evict the refreshed session",
   const c = new StickerClient(
     "session",
     () => current,
-    (() =>
-      new Promise<Response>((resolve) =>
-        requests.push(resolve),
-      )) as typeof fetch,
+    fakeFetch(() => new Promise<Response>((resolve) => requests.push(resolve))),
   );
   const old = c.loadMedia(version, "thumbnail", () => {});
   current = false;
@@ -574,7 +583,7 @@ test("old 404 after observed session change cannot evict the refreshed session",
 test("authorization loss while JSON body is pending prevents its delivery", async () => {
   let release!: (value: unknown) => void;
   let call = 0;
-  const transport = (async () => {
+  const transport = fakeFetch(async () => {
     if (++call === 1)
       return {
         ok: true,
@@ -585,7 +594,7 @@ test("authorization loss while JSON body is pending prevents its delivery", asyn
           }),
       } as Response;
     return new Response(null, { status: 401 });
-  }) as typeof fetch;
+  });
   const c = new StickerClient("session", () => true, transport);
   const page = c.page("packs");
   await Promise.resolve();
@@ -1162,10 +1171,10 @@ test("lifecycle change during pending notification does not start a stale stage"
   };
   raw.storageKey = "lamplit.pending:session";
   let calls = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = fakeFetch(async () => {
     calls++;
     throw new Error("unexpected stage");
-  }) as typeof fetch;
+  });
   try {
     await c.sendSticker({ id: "cat", version });
     expect(c.pending[0]?.state).toBe("failed");
