@@ -75,6 +75,7 @@
           loadingOlder: controller.loadingOlder,
           historySyncFailed: controller.historySyncFailed,
           error: controller.error,
+          errorCode: controller.errorCode,
           relationship: controller.relationship,
           history: controller.relationshipHistory,
           relationshipStatus: controller.relationshipStatus,
@@ -103,13 +104,22 @@
     for (const [key, anchor] of pendingAnchors) {
       if (anchor.sessionId !== view?.sessionId || !active.has(key)) pendingAnchors.delete(key);
     }
-    // A retried message can arrive before its verified image mapping. Keep the
-    // original preview visible until that mapping is available.
-    const visible = unique.filter((m) => !pending.some((p) =>
-      p.operationId === m.operationId && p.retrySource && previews.some((preview) =>
-        preview.sessionId === view?.sessionId && preview.operationId === p.retrySource,
-      ),
-    ));
+    // A retried message can arrive before its verified attachment mapping.
+    // Keep the original content visible until the mapping is confirmed.
+    const visible = unique.filter(
+      (m) =>
+        !pending.some(
+          (p) =>
+            p.operationId === m.operationId &&
+            p.retrySource &&
+            ((p.files?.length && p.state !== "sent") ||
+              previews.some(
+                (preview) =>
+                  preview.sessionId === view?.sessionId &&
+                  preview.operationId === p.retrySource,
+              )),
+        ),
+    );
     const units: TimelineMessageUnit[] = visible.map((m) => {
       const local = previews.filter((preview) =>
         preview.sessionId === view?.sessionId && preview.operationId === m.operationId,
@@ -117,30 +127,45 @@
       const unitId = local.length ? `local:${local[0]!.draftId}` : m.id;
       const mediaId = m.imageState ? `${m.id}:image:` : undefined;
       return {
-          id: unitId,
-          answer: m.role === "agent" && !m.source,
-          streaming: m.textState === "streaming",
-          thinking: m.role === "agent" ? m.thinking : undefined,
-          alarm: m.source?.kind === "reminder",
-          keet: m.source?.kind === "keet" ? m.source : undefined,
-          matrix: m.source?.kind === "matrix" ? m.source : undefined,
-          post: m.source?.kind === "post" ? m.source : undefined,
-          side: m.role === "user" && !m.source ? "outgoing" : "incoming",
-          time: m.createdAt,
-          items: [
-            ...(m.imageState && m.imageState !== "ready" ? [{
-              id: mediaId!,
-              messageKey: unitId,
-              kind: "image" as const,
-              side: "incoming" as const,
-              state: m.imageState === "preparing" ? "running" as const : "failed" as const,
-              alt: t("image.preview"),
-              ...(m.imageState === "unknown" ? { error: t("image.statusUnknown") } : {}),
-            }] : []),
-            ...(m.images ?? []).map((image) => {
-              const localImage = local.find((preview) => preview.attachmentId === image.attachmentId);
-              return {
-              id: mediaId ?? (localImage ? `${unitId}:${localImage.draftId}` : `${m.id}:${image.attachmentId}`),
+        id: unitId,
+        answer: m.role === "agent" && !m.source,
+        streaming: m.textState === "streaming",
+        thinking: m.role === "agent" ? m.thinking : undefined,
+        alarm: m.source?.kind === "reminder",
+        keet: m.source?.kind === "keet" ? m.source : undefined,
+        matrix: m.source?.kind === "matrix" ? m.source : undefined,
+        post: m.source?.kind === "post" ? m.source : undefined,
+        side: m.role === "user" && !m.source ? "outgoing" : "incoming",
+        time: m.createdAt,
+        items: [
+          ...(m.imageState && m.imageState !== "ready"
+            ? [
+                {
+                  id: mediaId!,
+                  messageKey: unitId,
+                  kind: "image" as const,
+                  side: "incoming" as const,
+                  state:
+                    m.imageState === "preparing"
+                      ? ("running" as const)
+                      : ("failed" as const),
+                  alt: t("image.preview"),
+                  ...(m.imageState === "unknown"
+                    ? { error: t("image.statusUnknown") }
+                    : {}),
+                },
+              ]
+            : []),
+          ...(m.images ?? []).map((image) => {
+            const localImage = local.find(
+              (preview) => preview.attachmentId === image.attachmentId,
+            );
+            return {
+              id:
+                mediaId ??
+                (localImage
+                  ? `${unitId}:${localImage.draftId}`
+                  : `${m.id}:${image.attachmentId}`),
               messageKey: unitId,
               kind: "image" as const,
               side:
@@ -154,34 +179,52 @@
               attachment: image,
               ...(localImage ? { previewUrl: localImage.previewUrl } : {}),
               alt: image.name,
-            }; }),
-            ...(m.text
-              ? [
-                  {
-                    id: local.length ? `${unitId}:text:` : m.id,
-                    messageKey: unitId,
-                    kind: m.role === "notice" ? "notice" : "text",
-                    side:
-                      m.role === "user" && !m.source ? "outgoing" : "incoming",
-                    text: m.text,
-                  },
-                ]
-              : []),
-            ...(m.voice
-              ? [{
+            };
+          }),
+          ...(m.files ?? []).map((file) => ({
+            id: `${m.id}:file:${file.attachmentId}`,
+            messageKey: unitId,
+            kind: "file" as const,
+            side:
+              m.role === "user" && !m.source
+                ? ("outgoing" as const)
+                : ("incoming" as const),
+            name: file.name,
+            size: file.size,
+            attachment: file,
+          })),
+          ...(m.text
+            ? [
+                {
+                  id: local.length ? `${unitId}:text:` : m.id,
+                  messageKey: unitId,
+                  kind: m.role === "notice" ? "notice" : "text",
+                  side:
+                    m.role === "user" && !m.source ? "outgoing" : "incoming",
+                  text: m.text,
+                },
+              ]
+            : []),
+          ...(m.voice
+            ? [
+                {
                   id: `${m.id}:voice:`,
                   messageKey: m.id,
                   kind: "voice" as const,
                   side: "incoming" as const,
                   url: `/api/audio/${m.voice.id}.mp3`,
                   time: m.createdAt,
-                }]
-              : []),
-          ],
-        } as TimelineMessageUnit;
+                },
+              ]
+            : []),
+        ],
+      } as TimelineMessageUnit;
     });
-    const positions: Array<{ kind: "message" | "pending"; id: string; sourceId?: string }> =
-      visible.map((m) => ({ kind: "message", id: m.id, sourceId: m.id }));
+    const positions: Array<{
+      kind: "message" | "pending";
+      id: string;
+      sourceId?: string;
+    }> = visible.map((m) => ({ kind: "message", id: m.id, sourceId: m.id }));
     const tails = new Map<string | null, string>();
     for (const p of pending)
       if (!visible.some((m) => m.operationId === p.operationId)) {
@@ -190,8 +233,13 @@
         if (p.stickerInput && !p.images && p.state === "sending") continue;
         const logicalId = p.logicalId ?? p.operationId;
         if (!pendingAnchors.has(logicalId) && view)
-          pendingAnchors.set(logicalId, { sessionId: view.sessionId, after: unique.at(-1)?.id ?? null });
-        const unitId = p.previews?.length ? `local:${p.previews[0]!.id}` : p.logicalId ?? p.operationId;
+          pendingAnchors.set(logicalId, {
+            sessionId: view.sessionId,
+            after: unique.at(-1)?.id ?? null,
+          });
+        const unitId = p.previews?.length
+          ? `local:${p.previews[0]!.id}`
+          : (p.logicalId ?? p.operationId);
         const unit: TimelineMessageUnit = {
           id: unitId,
           side: "outgoing",
@@ -231,6 +279,15 @@
                   alt: t("image.failed"),
                 }))
               : []),
+            ...(p.files ?? p.fileDrafts ?? []).map((file, index) => ({
+              id: `${unitId}:file:${index}`,
+              messageKey: unitId,
+              kind: "file" as const,
+              side: "outgoing" as const,
+              name: file.name,
+              size: file.size,
+              ...("attachmentId" in file ? { attachment: file } : {}),
+            })),
             ...(p.text
               ? [
                   {
@@ -244,34 +301,60 @@
               : []),
           ],
         };
-        const observed = unique.findIndex((m) => m.operationId === p.operationId);
+        const observed = unique.findIndex(
+          (m) => m.operationId === p.operationId,
+        );
         let at = units.length;
         if (observed >= 0) {
           for (const next of unique.slice(observed + 1)) {
-            const index = positions.findIndex((position) => position.sourceId === next.id);
-            if (index >= 0) { at = index; break; }
+            const index = positions.findIndex(
+              (position) => position.sourceId === next.id,
+            );
+            if (index >= 0) {
+              at = index;
+              break;
+            }
           }
         } else {
           const anchor = pendingAnchors.get(logicalId);
           const after = anchor?.after ?? null;
           const predecessor = anchor?.predecessor;
-          const previousPending = pending.find((item) => (item.logicalId ?? item.operationId) === predecessor?.logicalId);
-          if (predecessor && previousPending) predecessor.operationId = previousPending.operationId;
-          const previousMessage = predecessor && unique.find((message) => message.operationId === predecessor.operationId);
-          const previousIndex = predecessor ? positions.findIndex((position) =>
-            (position.kind === "pending" && position.id === predecessor.logicalId) ||
-              (previousMessage && position.sourceId === previousMessage.id),
-          ) : -1;
+          const previousPending = pending.find(
+            (item) =>
+              (item.logicalId ?? item.operationId) === predecessor?.logicalId,
+          );
+          if (predecessor && previousPending)
+            predecessor.operationId = previousPending.operationId;
+          const previousMessage =
+            predecessor &&
+            unique.find(
+              (message) => message.operationId === predecessor.operationId,
+            );
+          const previousIndex = predecessor
+            ? positions.findIndex(
+                (position) =>
+                  (position.kind === "pending" &&
+                    position.id === predecessor.logicalId) ||
+                  (previousMessage && position.sourceId === previousMessage.id),
+              )
+            : -1;
           const tail = tails.get(after);
           const index = tail
-            ? positions.findIndex((position) => position.kind === "pending" && position.id === tail)
+            ? positions.findIndex(
+                (position) =>
+                  position.kind === "pending" && position.id === tail,
+              )
             : positions.findIndex((position) => position.sourceId === after);
           const latestIndex = Math.max(previousIndex, index);
           at = latestIndex >= 0 ? latestIndex + 1 : after === null && !tail ? 0 : units.length;
           tails.set(after, logicalId);
         }
         units.splice(at, 0, unit);
-        positions.splice(at, 0, { kind: "pending", id: logicalId, ...(observed >= 0 ? { sourceId: unique[observed]!.id } : {}) });
+        positions.splice(at, 0, {
+          kind: "pending",
+          id: logicalId,
+          ...(observed >= 0 ? { sourceId: unique[observed]!.id } : {}),
+        });
       }
     const preview = chatState?.connected ? view?.streamingReply : undefined;
     if (preview?.text && !unique.some((message) => message.id === preview.id)) {
@@ -316,6 +399,7 @@
       loadingOlder: !!chatState?.loadingOlder,
       historySyncFailed: !!chatState?.historySyncFailed,
       promptError: chatState?.error,
+      promptErrorCode: chatState?.errorCode,
     };
   });
   $effect(() => {
@@ -326,8 +410,11 @@
       ...state.view.messages.map((message) => message.operationId),
       ...state.pending.flatMap((item) => [item.operationId, item.retrySource]),
     ]);
-    for (const operationId of new Set(state.localPreviews.map((item) => item.operationId))) {
-      if (!retained.has(operationId)) controller.releasePreviews(state.view.sessionId, operationId);
+    for (const operationId of new Set(
+      state.localPreviews.map((item) => item.operationId),
+    )) {
+      if (!retained.has(operationId))
+        controller.releasePreviews(state.view.sessionId, operationId);
     }
   });
   const recovered = $derived.by(() => {
@@ -345,31 +432,53 @@
   const actions: CompanionActions = {
     openStickers: () => controller.openStickers(),
     sendSticker: (sticker) => controller.sendSticker(sticker),
-    async send(text, images, retire, sources) {
+    async send(text, images, retire, sources, files) {
       if (!controller?.connected)
         throw new CompanionPreControllerError("请等待连接恢复后发送文字。");
-      if (controller.pending.length >= 20)
+      if (controller.pending.length >= 20 && !images.length && !files?.length)
         throw new CompanionPreControllerError("请先核对尚未确认的消息。");
       const originSession = controller.view?.sessionId;
       try {
-        const previous = new Set(controller.pending.map((p) => p.logicalId ?? p.operationId));
+        const previous = new Set(
+          controller.pending.map((p) => p.logicalId ?? p.operationId),
+        );
         const predecessor = controller.pending.at(-1);
-        const after = [...controller.older, ...(controller.view?.messages ?? [])].at(-1)?.id ?? null;
-        const send = controller.send(text, retire, images, sources);
+        const after =
+          [...controller.older, ...(controller.view?.messages ?? [])].at(-1)
+            ?.id ?? null;
+        const send = controller.send(
+          text,
+          retire,
+          images,
+          sources,
+          undefined,
+          undefined,
+          files,
+        );
         for (const p of controller.pending) {
           const key = p.logicalId ?? p.operationId;
-          if (!previous.has(key) && originSession) pendingAnchors.set(key, {
-            sessionId: originSession, after,
-            ...(predecessor ? { predecessor: { logicalId: predecessor.logicalId ?? predecessor.operationId, operationId: predecessor.operationId } } : {}),
-          });
+          if (!previous.has(key) && originSession)
+            pendingAnchors.set(key, {
+              sessionId: originSession,
+              after,
+              ...(predecessor
+                ? {
+                    predecessor: {
+                      logicalId:
+                        predecessor.logicalId ?? predecessor.operationId,
+                      operationId: predecessor.operationId,
+                    },
+                  }
+                : {}),
+            });
         }
         await send;
       } catch (error) {
         if (controller.view?.sessionId !== originSession)
           throw new CompanionPreControllerError("会话已改变");
-        controller.error = error instanceof Error ? error.message : "发送失败";
+        controller.setError(error);
         revision += 1;
-        throw new CompanionPreControllerError(controller.error);
+        throw new CompanionPreControllerError(controller.error, controller.errorCode);
       }
     },
     retryFailed: (key) => controller.retryFailed(key),
@@ -522,6 +631,7 @@
     writePreference(APPEARANCE_STORAGE_KEY, value);
   }}
   imageLimits={chatState?.view?.capabilities.images || undefined}
+  fileLimits={chatState?.view?.capabilities.files || undefined}
   workspaceImages={chatState?.view?.capabilities.workspaceImages === true}
   recoveredDraft={recovered
     ? {
@@ -535,6 +645,7 @@
           name: image.name,
           url: mediaUrl(image.attachmentId),
         })),
+        files: recovered.files ?? [],
       }
     : undefined}
   onHistoryOpenChange={undefined}

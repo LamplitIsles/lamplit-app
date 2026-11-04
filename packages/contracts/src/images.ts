@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { validate } from "./validation.ts";
+import { FileRefSchema } from "./files.ts";
 export const UPLOAD_PATH = "/api/chat/images";
 export const MEDIA_PATH = "/api/chat/media/";
 const object = { additionalProperties: false } as const;
@@ -105,6 +106,7 @@ export const RecoverySchema = Type.Object(
     operationId: OperationIdSchema,
     text: Type.String({ maxLength: 16000 }),
     images: Type.Array(ImageRefSchema, { maxItems: 6 }),
+    files: Type.Optional(Type.Array(FileRefSchema, { maxItems: 6 })),
     replacementEligible: Type.Boolean(),
   },
   object,
@@ -219,7 +221,7 @@ export function validateUpload(
 }
 export function validateRecovery(value: unknown): InputRecovery {
   const input = validate(RecoverySchema, value);
-  if (!input.text.trim() && !input.images.length)
+  if (!input.text.trim() && !input.images.length && !input.files?.length)
     throw new Error("Invalid recovery eligibility");
   return input;
 }

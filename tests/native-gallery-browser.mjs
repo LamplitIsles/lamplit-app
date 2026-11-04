@@ -147,6 +147,7 @@ try {
   const start = async () => {
     const count = await page.evaluate(() => window.galleryCalls.length);
     await attach.click();
+    await page.getByRole("button", { name: "照片", exact: true }).click();
     await expect
       .poll(() => page.evaluate(() => window.galleryCalls.length))
       .toBe(count + 1);
@@ -293,6 +294,7 @@ try {
   await expect(drafts).toHaveCount(6);
   const fullCalls = await page.evaluate(() => window.galleryCalls.length);
   await attach.click();
+  await page.getByRole("button", { name: "照片", exact: true }).click();
   await expect(page.getByTestId("input-error")).toBeVisible();
   expect(await page.evaluate(() => window.galleryCalls.length)).toBe(fullCalls);
   while (await remove.count()) await remove.first().click();

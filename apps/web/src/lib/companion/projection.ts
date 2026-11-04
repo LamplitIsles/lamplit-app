@@ -1,6 +1,7 @@
 import type { KeetSource, MatrixSource, PostSource } from "@lamplit/contracts";
 import type { ImageAttachmentRef } from "./client/contracts.js";
 import type { ContinuityRecord } from "./continuity.js";
+import type { FileRef } from "@lamplit/contracts";
 export type MessageSide = "incoming" | "outgoing";
 export interface TimelineText {
   id: string;
@@ -51,6 +52,16 @@ export interface TimelineVoice {
   time?: number;
 }
 
+export interface TimelineFile {
+  id: string;
+  messageKey: string;
+  kind: "file";
+  side: MessageSide;
+  name: string;
+  size: number;
+  attachment?: FileRef;
+}
+
 export interface TimelineNotice {
   id: string;
   projectionKey?: string;
@@ -69,6 +80,7 @@ export interface TimelineContinuityRecord extends ContinuityRecord {}
 export type TimelineItem =
   | TimelineText
   | TimelineImage
+  | TimelineFile
   | TimelineVoice
   | TimelineNotice
   | TimelineContinuityRecord;

@@ -4,6 +4,8 @@ import type { SearchBackend } from "./search.ts";
 import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
 export * from "./images.ts";
+export * from "./files.ts";
+import { FileRefSchema, FileLimitsSchema, type FileRef } from "./files.ts";
 export * from "./stickers.ts";
 export * from "./workspace-images.ts";
 export * from "./compact.ts";
@@ -41,6 +43,7 @@ export const SubmissionSchema = Type.Object(
     operationId: OperationIdSchema,
     text: Type.String({ maxLength: 16000 }),
     images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
+    files: Type.Optional(Type.Array(FileRefSchema, { maxItems: 6 })),
     replacementSourceIds: Type.Optional(
       Type.Array(Id, { maxItems: 20, uniqueItems: true }),
     ),
@@ -120,6 +123,52 @@ export function validateRetryImageMapping(
     throw new Error("Invalid retry image mapping");
   return mapping;
 }
+export const RetryFileMappingSchema = Type.Object(
+  {
+    sessionId: Id,
+    sourceOperationId: OperationIdSchema,
+    files: Type.Array(
+      Type.Object(
+        { sourceAttachmentId: MediaIdSchema, ref: FileRefSchema },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 6 },
+    ),
+  },
+  { additionalProperties: false },
+);
+export type RetryFileMapping = Static<typeof RetryFileMappingSchema>;
+export function validateRetryFileMapping(
+  value: unknown,
+  sessionId: string,
+  sourceOperationId: string,
+  originals: readonly FileRef[],
+): RetryFileMapping {
+  const mapping = validate(RetryFileMappingSchema, value);
+  const sources = new Map(originals.map((file) => [file.attachmentId, file]));
+  if (
+    mapping.sessionId !== sessionId ||
+    mapping.sourceOperationId !== sourceOperationId ||
+    sources.size !== originals.length ||
+    mapping.files.length !== originals.length ||
+    new Set(mapping.files.map((file) => file.sourceAttachmentId)).size !==
+      originals.length ||
+    new Set(mapping.files.map((file) => file.ref.attachmentId)).size !==
+      originals.length ||
+    mapping.files.some((file) => {
+      const original = sources.get(file.sourceAttachmentId);
+      return (
+        !original ||
+        file.ref.availability !== "available" ||
+        file.ref.name !== original.name ||
+        file.ref.mediaType !== original.mediaType ||
+        file.ref.size !== original.size
+      );
+    })
+  )
+    throw new Error("Invalid retry file mapping");
+  return mapping;
+}
 export const ReceiptSchema = Type.Object(
   {
     operationId: Id,
@@ -128,6 +177,7 @@ export const ReceiptSchema = Type.Object(
     turnId: NullableId,
     error: Type.Union([Type.String(), Type.Null()]),
     retryImages: Type.Optional(RetryImageMappingSchema),
+    retryFiles: Type.Optional(RetryFileMappingSchema),
   },
   { additionalProperties: false },
 );
@@ -144,6 +194,17 @@ export function validateReceipt(value: unknown): Static<typeof ReceiptSchema> {
       mapping.images.some((image) => image.ref.availability !== "available"))
   )
     throw new Error("Invalid retry receipt");
+  const files = receipt.retryFiles;
+  if (
+    files &&
+    (files.sourceOperationId === receipt.operationId ||
+      new Set(files.files.map((file) => file.sourceAttachmentId)).size !==
+        files.files.length ||
+      new Set(files.files.map((file) => file.ref.attachmentId)).size !==
+        files.files.length ||
+      files.files.some((file) => file.ref.availability !== "available"))
+  )
+    throw new Error("Invalid retry file receipt");
   return receipt;
 }
 export function validateLookup(
@@ -235,6 +296,7 @@ export type VoiceRef = Static<typeof VoiceRefSchema>;
 export const MessageSchema = Type.Object(
   {
     images: Type.Optional(Type.Array(ImageRefSchema)),
+    files: Type.Optional(Type.Array(FileRefSchema, { maxItems: 6 })),
     imageState: Type.Optional(
       Type.Union([
         Type.Literal("preparing"),
@@ -342,6 +404,9 @@ export const ViewSchema = Type.Object(
         steer: Type.Literal(true),
         stop: Type.Literal(true),
         images: Type.Union([Type.Literal(false), ImageLimitsSchema]),
+        files: Type.Optional(
+          Type.Union([Type.Literal(false), FileLimitsSchema]),
+        ),
         workspaceImages: Type.Optional(Type.Literal(true)),
       },
       { additionalProperties: false },
@@ -398,7 +463,7 @@ export const capabilities: ChatView["capabilities"] = {
 /** Optional image/replacement fields are omitted for ordinary text, not a second submission path. */
 export function validateSubmission(value: unknown): Submission {
   const input = validate(SubmissionSchema, value);
-  if (!input.text.trim() && !input.images?.length)
+  if (!input.text.trim() && !input.images?.length && !input.files?.length)
     throw new Error("Empty message");
   if (
     input.images &&
@@ -407,7 +472,19 @@ export function validateSubmission(value: unknown): Submission {
       input.images.some((r) => r.availability !== "available"))
   )
     throw new Error("Invalid submitted images");
-  if (input.text === "/compact" && !input.images?.length)
+  if (
+    input.files &&
+    (new Set(input.files.map((file) => file.attachmentId)).size !==
+      input.files.length ||
+      input.files.some((file) => file.availability !== "available") ||
+      input.files.reduce((sum, file) => sum + file.size, 0) > 24_000_000)
+  )
+    throw new Error("Invalid submitted files");
+  if (
+    input.text === "/compact" &&
+    !input.images?.length &&
+    !input.files?.length
+  )
     throw new Error("Use native compact command");
   return input;
 }

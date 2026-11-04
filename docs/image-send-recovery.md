@@ -51,7 +51,14 @@ pending local previews remain available before upload completes.
 `ChatController.localPreviews` exposes `sessionId`, `operationId`, `draftId`,
 `order`, `attachmentId` and `previewUrl`; after the pending record is retired,
 the UI calls `releasePreviews(sessionId, operationId)` when it no longer needs
-those previews. A session switch or controller close releases retained ownership.
+those previews. When switching sessions in the same page, retain undispatched
+local attachment originals, previews and their retirement ownership for their
+originating authorized session; do not expose them in another session. Returning
+restores the failed pending input for explicit retry only. A controller close,
+authorization loss, observation or confirmed deletion releases that ownership.
+Page-wide retained attachment operations and unsettled preparations are limited
+to 20; further attachment sends wait for an item to be resolved or deleted,
+or for cancellation of an earlier preparation to settle.
 For a retry, the mapping moves to the new operation and attachment IDs only after
 the server's source-to-target receipt is verified.
 Use `validateUpload`, `validateSubmission` and `validateRecovery`, not schemas alone. The host can enforce smaller native
@@ -96,7 +103,7 @@ including completed agent images; staged uploads alone are not chat/album member
 
 ## User behavior
 
-Choose gallery photos, paste images or hold the attachment button to take a photo. Attachments use
+Choose photos or take a photo from the attachment menu, or paste images. Image drafts use
 the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
 44px removal targets and native preview/gallery behavior. Images can be sent alone.
 Online send immediately shows normal-color text and local image previews while
@@ -113,8 +120,11 @@ using its own source ID, while the submitted receipt remains successful.
 
 Page-owned previews/originals live until observation or confirmed deletion and never enter storage.
 Reference-only pending metadata is saved after upload; storage failure is visible.
-Before upload finishes, Files remain page-owned and cannot survive reload. Unsent
-Composer drafts likewise remain page-owned. Reloaded dispatched failures retry through native-owned originals, reassociated
+Before upload finishes, Files remain page-owned and survive a switch away and back
+to the same authorized session while the controller remains open; they cannot
+survive reload. A stale upload completion cannot submit after a session switch,
+and retry creates a new operation only on explicit user action. Unsent Composer
+drafts likewise remain page-owned. Reloaded dispatched failures retry through native-owned originals, reassociated
 under the new attempt and existing owner/session guard. Missing originals block retry
 without partial send, with a human error and Delete still available. Pending unknown inputs reconcile the same identity and, after 60 seconds, request
 fenced finalization only for dispatched complete payloads. Pre-upload local failures
@@ -132,7 +142,7 @@ Native state is checked again before send. Dismiss hides a recovery offer for th
 page/session only; it does not consume or delete native input. Clearing all restored
 text/images returns its offer. Explicitly discarding restored input dismisses that
 page-local offer and exposes the next source without changing native consumption. Unsent composer
-persistence and generic attachments are outside this feature.
+persistence is outside this feature. General files have a separate [file contract](chat-file-contract.md).
 
 ## Current verification and native handoff
 

@@ -367,6 +367,13 @@ export async function openChat(
             receipt.retryImages.sourceOperationId !== value.retry.operationId)
         )
           throw new Error("Wrong retry mapping");
+        if (
+          receipt?.retryFiles &&
+          (receipt.retryFiles.sessionId !== value.sessionId ||
+            !("retry" in value) ||
+            receipt.retryFiles.sourceOperationId !== value.retry.operationId)
+        )
+          throw new Error("Wrong retry file mapping");
         return receipt;
       },
       async retryFailed(input: RetryFailed) {
@@ -384,6 +391,12 @@ export async function openChat(
             receipt.retryImages.sourceOperationId !== value.operationId)
         )
           throw new Error("Wrong retry mapping");
+        if (
+          receipt.retryFiles &&
+          (receipt.retryFiles.sessionId !== value.sessionId ||
+            receipt.retryFiles.sourceOperationId !== value.operationId)
+        )
+          throw new Error("Wrong retry file mapping");
         return receipt;
       },
       async deleteFailed(input: DeleteFailed) {

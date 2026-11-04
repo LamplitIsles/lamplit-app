@@ -11,7 +11,8 @@ import type { PendingSubmissionRetirement } from "./contracts.js";
 import type { CompanionReadiness } from "./readiness.js";
 import type { CompanionStateRecord } from "../domain.js";
 import type { StickerClient } from "../../sticker-client.js";
-import type { StickerIdentity } from "@lamplit/contracts";
+import type { StickerIdentity, FileRef, FileLimits } from "@lamplit/contracts";
+import type { ChatFileDraft } from "../../file-upload.js";
 
 export interface CompanionIdentityView {
   companionName: string;
@@ -36,6 +37,7 @@ export interface CompanionActions {
     images: readonly CompanionImageDraft[],
     onRetire?: (retirement: PendingSubmissionRetirement) => void,
     replacementSourceIds?: readonly string[],
+    files?: readonly ChatFileDraft[],
   ) => Promise<void>;
   retryFailed?: (key: string) => Promise<void>;
   deleteFailed?: (key: string) => Promise<void>;
@@ -75,6 +77,7 @@ export interface CompanionRecoveredDraft {
   input: string;
   replacementEligible: boolean;
   images: readonly { id: string; name: string; url: string }[];
+  files?: readonly FileRef[];
 }
 
 export interface CompanionHistoryView {
@@ -102,6 +105,7 @@ export interface CompanionBridgeProps {
   sessionId?: string;
   /** Host-advertised image capability and intake limits; absent means unavailable. */
   imageLimits?: ImageAttachmentLimits;
+  fileLimits?: FileLimits;
   /** Recording availability from the same-origin voice capability endpoint. */
   voiceCapability?: "loading" | "available" | "unavailable";
   continuity?: CompanionContinuityView;

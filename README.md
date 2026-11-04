@@ -23,11 +23,12 @@ visible avatar, source time and local long-press Copy. History and complete-only
 text immediately; preserved messages remain unchanged. See [sentence replies](docs/sentence-replies.md). Streaming voice
 input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
 reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
-use the same native contract. Album browsing and saving originals work independently; generic attachments, TTS
+use the same native contract. Album browsing and saving originals work independently;
+hosts that advertise file support can also receive general file attachments. TTS
 and native releases remain outside this app. The shared app is the direct default
 frontend: standalone `/`, hosted `/chat`, with root-relative assets and no `/slice` alias.
 
-The composer places voice, stickers and image selection to the right of the
+The composer places voice, stickers and attachments to the right of the
 input. Enter sends the draft (Shift+Enter inserts a line break). The sticker
 panel supports name/tag search, pack browsing and Human favorites. Tapping a
 sticker sends it separately without consuming a draft; holding it previews the
@@ -140,9 +141,12 @@ chat as **App reminders**, with creation/editing still handled by Agent tools.
 See [public contract and native fixture facts](docs/companion-panels.md) for
 field definitions, limits and native integration requirements.
 
-## Images and recovery
+## Attachments and recovery
 
-Choose or paste supported images, preview/remove them, and send alone or with text.
+Use the plus menu to take a photo, choose photos, or upload files; paste supported
+images directly into the composer. Preview or remove drafts and send them alone or
+with text. File upload is available only when the connected host advertises it;
+files are displayed in chat and can be downloaded without joining the image album.
 The connected host advertises its limits: Pi up to six / 8 MB each / 24 MB originals
 per operation; CFL five / 5 MiB / 20 MiB. Failed upload retains its bubble and page-owned originals for direct retry.
 Submitted input recovery offers explicit inspection/restoration without replacing
@@ -153,7 +157,7 @@ dispatched inputs request authoritative fenced finalization while connected; nul
 unreachable results remain sending. Failed deletion persists after acknowledgement
 and has no undo. Unsent drafts and pre-upload originals are not saved across reload. The v2 service requires a matching frontend after update.
 
-See [image protocol](docs/image-send-recovery.md), [v2 submission handoff](docs/native-durable-submissions.md), and the [sticker backend contract](docs/sticker-contract.md). The sticker contract does not yet provide a picker or other sticker UI.
+See [image protocol](docs/image-send-recovery.md), [file contract](docs/chat-file-contract.md), [v2 submission handoff](docs/native-durable-submissions.md), and the [sticker backend contract](docs/sticker-contract.md).
 
 ## Context and compaction
 

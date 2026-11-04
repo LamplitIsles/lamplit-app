@@ -65,6 +65,10 @@ _Avoid_: New Composer design, Pi-specific frontend
 The owner's message being received for conversation, independently of the companion's reply. A failed or stopped reply does not make a received message fail.
 _Avoid_: Reply completion, model processing
 
+**Chat file attachment（聊天文件附件）**:
+A file the Human sends as part of a chat message for the companion to inspect. It is distinct from a chat image and remains associated with its message in conversation history.
+_Avoid_: Workspace image reference, photo, image library entry
+
 **Failed submission（发送失败）**:
 A message confirmed not received. It remains available to retry or delete; waiting for confirmation alone is not failure.
 _Avoid_: Disconnected message, failed reply

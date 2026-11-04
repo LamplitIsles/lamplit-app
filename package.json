@@ -22,6 +22,7 @@
     "test:settings-browser": "bun tests/settings-browser.mjs",
     "test:background-settings-browser": "bun tests/background-settings-browser.mjs",
     "test:images-browser": "bun tests/images-browser.mjs",
+    "test:file-attachments-browser": "bun tests/file-attachments-browser.mjs",
     "test:compact-browser": "bun tests/compact-browser.mjs",
     "test:search-browser": "bun tests/search-browser.mjs",
     "test:route-lifecycle-browser": "bun tests/route-lifecycle-browser.mjs",

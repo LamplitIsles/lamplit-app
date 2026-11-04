@@ -249,6 +249,7 @@ export async function createChatHost(
       await refresh();
       if (
         view.value.sessionId !== sessionId ||
+        (receipt?.retryFiles && receipt.retryFiles.sessionId !== sessionId) ||
         (receipt?.retryImages && receipt.retryImages.sessionId !== sessionId)
       )
         throw new Error("Wrong receipt session");
@@ -278,6 +279,13 @@ export async function createChatHost(
           receipt.retryImages.sourceOperationId !== value.retry.operationId)
       )
         throw new Error("Wrong retry mapping");
+      if (
+        receipt?.retryFiles &&
+        (receipt.retryFiles.sessionId !== value.sessionId ||
+          !("retry" in value) ||
+          receipt.retryFiles.sourceOperationId !== value.retry.operationId)
+      )
+        throw new Error("Wrong retry file mapping");
       await refresh();
       if (view.value.sessionId !== value.sessionId)
         throw new Error("Wrong session");
@@ -299,6 +307,12 @@ export async function createChatHost(
           receipt.retryImages.sourceOperationId !== value.operationId)
       )
         throw new Error("Wrong retry mapping");
+      if (
+        receipt.retryFiles &&
+        (receipt.retryFiles.sessionId !== value.sessionId ||
+          receipt.retryFiles.sourceOperationId !== value.operationId)
+      )
+        throw new Error("Wrong retry file mapping");
       await refresh();
       if (view.value.sessionId !== value.sessionId)
         throw new Error("Wrong session");
@@ -692,3 +706,5 @@ export async function createChatHost(
 
 export { imageHttp, type ImageBackend } from "./image-http.ts";
 export { stickerHttp } from "./sticker-http.ts";
+
+export { fileHttp, type FileBackend, type FileOwner } from "./file-http.ts";

@@ -66,14 +66,22 @@
   import Volume2 from "lucide-svelte/icons/volume-2";
   import X from "lucide-svelte/icons/x";
   import Images from "lucide-svelte/icons/images";
+  import FileText from "lucide-svelte/icons/file-text";
   import Heart from "lucide-svelte/icons/heart";
   import BookOpen from "lucide-svelte/icons/book-open";
   import AlarmClock from "lucide-svelte/icons/alarm-clock";
   import Gallery from "./Gallery.svelte";
   import StickerPanel from "./StickerPanel.svelte";
   import type { StickerClient } from "../../sticker-client.js";
-  import type { ImageRef } from "@lamplit/contracts";
+  import type { ImageRef, FileLimits } from "@lamplit/contracts";
+  import {
+    createFileDrafts,
+    fileIntakeError,
+    restoreFileDraft,
+    type ChatFileDraft,
+  } from "../../file-upload.ts";
   import { longPress } from "./long-press.ts";
+  import { ATTACHMENT_CAPACITY_ERROR, PENDING_MESSAGE_CAPACITY_ERROR } from "../../chat-controller.ts";
   import {
     overlayOpened,
     overlayClosed,
@@ -108,6 +116,7 @@
   import type {
     CompanionProjection,
     TimelineImage,
+    TimelineFile,
     TimelineItem,
     TimelineMessageUnit,
     TimelineNotice,
@@ -199,6 +208,7 @@
   export let imageLimits:
     | import("./contracts.js").ImageAttachmentLimits
     | undefined;
+  export let fileLimits: FileLimits | undefined;
   export let voiceCapability: "loading" | "available" | "unavailable" =
     "unavailable";
   export let continuity: CompanionContinuityView = {};
@@ -223,7 +233,6 @@
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   const LONG_WAIT_DELAY_MS = 12_000;
   const LONG_WAIT_ROTATION_MS = 9_000;
-  const PHOTO_LONG_PRESS_MS = 450;
   const VOICE_WAVEFORM_BAR_COUNT = 28;
   const EMPTY_VOICE_PLAYBACK = { current: 0, duration: 0, playing: false };
   const IMAGE_TILE_SIZE = 64;
@@ -239,6 +248,9 @@
   let composerInput: HTMLTextAreaElement;
   let photoLibraryInput: HTMLInputElement;
   let photoCaptureInput: HTMLInputElement;
+  let fileInput: HTMLInputElement;
+  let filePickerSession: string | undefined;
+  let filePickerGeneration = 0;
   let nativePhotoBusy = false;
   let nativePhotoGeneration = 0;
   let photoDisposed = false;
@@ -249,7 +261,12 @@
   let timelineRevealFrame = 0;
   let timelineGeometry = { height: 0, viewport: 0 };
   let detailOpen = false;
-  type PreferencesTab = "home" | "appearance" | "models" | "voice" | "voice-output";
+  type PreferencesTab =
+    | "home"
+    | "appearance"
+    | "models"
+    | "voice"
+    | "voice-output";
   function preferencesTabFromLocation(): PreferencesTab | undefined {
     const routes: Record<string, PreferencesTab> = {
       "#settings": "home", "#settings/appearance": "appearance",
@@ -272,9 +289,17 @@
     window.history.replaceState(
       { ...state, companionSettings: false }, "", location.pathname + location.search,
     );
-    window.history.pushState({ ...state, companionSettings: true }, "", "#settings");
+    window.history.pushState(
+      { ...state, companionSettings: true },
+      "",
+      "#settings",
+    );
     if (tab !== "home") {
-      window.history.pushState({ ...state, companionSettings: true }, "", `#settings/${tab}`);
+      window.history.pushState(
+        { ...state, companionSettings: true },
+        "",
+        `#settings/${tab}`,
+      );
     }
   });
   let drawerTab: "history" | "diary" | "images" | "alarms" = "history";
@@ -310,7 +335,7 @@
   }
   interface ContentPart {
     kind: "item";
-    item: TimelineText | TimelineImage | TimelineVoice;
+    item: TimelineText | TimelineImage | TimelineVoice | TimelineFile;
   }
   type MessageContentPart = ImagePart | ContentPart;
   let lightbox: ImagePreviewTarget | undefined;
@@ -353,6 +378,7 @@
   let contextMeterPopover: HTMLElement;
   let continuityStatus: CompactionLifecycleState | undefined;
   let imageDrafts: CompanionImageDraft[] = [];
+  let fileDrafts: ChatFileDraft[] = [];
   let imageIntakeFailure: CompanionMessage | undefined;
   let imageDraftSessionId: string | undefined;
   let recoveredDraftKey = "";
@@ -364,8 +390,6 @@
   let deferredPreviewReleases: CompanionImageDraft[] = [];
   let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
-  let imagePickerPointer: { id: number; startedAt: number } | undefined;
-  let suppressImagePickerClick = false;
   let messagebarComponent: Messagebar;
   let messagesComponent: Messages;
   let voiceInsertion = { start: 0, end: 0 };
@@ -435,15 +459,16 @@
   );
   $: typingVisible =
     projection.running && !projection.replyCompleted && !imageGenerationRunning;
-  $: commandSuggestion = imageDrafts.length
-    ? undefined
-    : findComposerCommand(composer.draft, t);
+  $: commandSuggestion =
+    imageDrafts.length || fileDrafts.length
+      ? undefined
+      : findComposerCommand(composer.draft, t);
   $: voiceBusy =
     voiceStatus === "starting" ||
     voiceStatus === "recording" ||
     voiceStatus === "stopping" ||
     voiceStatus === "transcribing";
-  $: if (imageDrafts) void scheduleComposerResize();
+  $: if (imageDrafts || fileDrafts) void scheduleComposerResize();
   $: contextCapacity = resolveContextCapacity(continuity?.contextPressure);
   $: latestContinuityLifecycle = continuity?.lifecycle ?? undefined;
   $: syncContinuityStatus(latestContinuityLifecycle);
@@ -458,6 +483,7 @@
     nativePhotoGeneration += 1;
     releaseSubmissionImages(imageDrafts);
     imageDrafts = [];
+    fileDrafts = [];
     imageDraftSessionId = sessionId;
     recoveredDraftKey = "";
     recoveredPendingKey = "";
@@ -471,6 +497,7 @@
   $: if (
     !composer.draft &&
     !imageDrafts.length &&
+    !fileDrafts.length &&
     !restoringRecovery &&
     !missingRecoveryImages
   ) {
@@ -559,6 +586,7 @@
     if (
       composer.draft.trim() ||
       imageDrafts.length ||
+      fileDrafts.length ||
       !draft.replacementEligible
     )
       return;
@@ -578,12 +606,25 @@
         missing = true;
       }
     }
+    const restoredFiles: ChatFileDraft[] = [];
+    const current = () =>
+      token === recoveredDraftToken &&
+      sessionId === imageDraftSessionId &&
+      !photoDisposed;
+    for (const file of draft.files ?? []) {
+      try {
+        restoredFiles.push(await restoreFileDraft(file, current));
+      } catch {
+        missing = true;
+      }
+    }
     if (token !== recoveredDraftToken || sessionId !== imageDraftSessionId)
       return;
     restoringRecovery = false;
     if (
       composer.draft !== originalComposer ||
       imageDrafts.length ||
+      fileDrafts.length ||
       recoveredDraft?.key !== draft.key ||
       !recoveredDraft.replacementEligible
     ) {
@@ -595,6 +636,7 @@
     replacementSourceIds = draft.sourceIds;
     missingRecoveryImages = missing;
     imageDrafts = createImageDrafts(files);
+    fileDrafts = restoredFiles;
     void scheduleComposerResize();
     liveAnnouncement = { key: "recovery.restored" };
   }
@@ -620,10 +662,17 @@
           : [item],
       )
       .filter(
-        (item): item is TimelineText | TimelineImage | TimelineVoice =>
+        (
+          item,
+        ): item is
+          | TimelineText
+          | TimelineImage
+          | TimelineVoice
+          | TimelineFile =>
           item.kind === "text" ||
           item.kind === "image" ||
-          item.kind === "voice",
+          item.kind === "voice" ||
+          item.kind === "file",
       );
     if (unit.side === "outgoing") {
       const images = content.filter(
@@ -689,10 +738,19 @@
     return voice ? `voice-${voice.id}` : `message-${unit.id}`;
   }
 
+  function capacityErrorKey(code?: string): CompanionLocaleKey | undefined {
+    if (code === ATTACHMENT_CAPACITY_ERROR) return "error.attachmentCapacity";
+    if (code === PENDING_MESSAGE_CAPACITY_ERROR) return "error.pendingMessageCapacity";
+    return undefined;
+  }
+
   function messengerRecoveryMessage(
     value: string,
     operation?: string,
+    code?: string,
   ): string | CompanionMessage {
+    const capacityKey = capacityErrorKey(code);
+    if (capacityKey) return { key: capacityKey };
     if (operation === "stop") return { key: "error.stop" };
     if (operation === "send") return { key: "error.send" };
     return value;
@@ -701,7 +759,8 @@
   function noticeText(item: TimelineNotice, t: CompanionTranslate): string {
     if (item.id === "prompt-error")
       return t(
-        projection.promptErrorOp === "stop" ? "error.stop" : "error.send",
+        capacityErrorKey(projection.promptErrorCode) ??
+          (projection.promptErrorOp === "stop" ? "error.stop" : "error.send"),
       );
     return item.text;
   }
@@ -841,7 +900,7 @@
       });
     }
     liveAnnouncement = value.promptError
-      ? messengerRecoveryMessage(value.promptError, value.promptErrorOp)
+      ? messengerRecoveryMessage(value.promptError, value.promptErrorOp, value.promptErrorCode)
       : (value.lastAgentError ?? "");
     const wantedImages = new Map<string, TimelineImage>();
     for (const item of value.items)
@@ -1232,9 +1291,19 @@
     const restoreText = composer.draft;
     const text = restoreText.trim();
     if (text.length > MAX_MESSAGE_LENGTH) return;
-    if ((!text && imageDrafts.length === 0) || composer.composing) return;
+    if (text === "/compact" && (imageDrafts.length || fileDrafts.length)) {
+      liveAnnouncement = { key: "error.compactImages" };
+      return;
+    }
+    if (
+      (!text && imageDrafts.length === 0 && fileDrafts.length === 0) ||
+      composer.composing
+    )
+      return;
     const submittedDrafts = [...imageDrafts];
+    const submittedFiles = [...fileDrafts];
     const originSessionId = sessionId;
+    const originSessionGeneration = nativePhotoGeneration;
     const sources = replacementSourceIds;
     replacementSourceIds = [];
     // Local recovery ownership is independent of native replacement sources.
@@ -1246,18 +1315,22 @@
       composing: false,
     };
     imageDrafts = [];
+    fileDrafts = [];
     returnToLatest();
     void tick().then(returnToLatest);
     void scheduleComposerResize();
     const onRetire = (): void => releaseSubmissionImages(submittedDrafts);
     void Promise.resolve()
-      .then(() => actions.send(text, submittedDrafts, onRetire, sources))
+      .then(() =>
+        actions.send(text, submittedDrafts, onRetire, sources, submittedFiles),
+      )
       .catch((error: unknown) => {
         // Only failures before admission return Files locally. Merge with current
         // edits even if another send began; native recovery is always explicit.
         if (
           error instanceof CompanionPreControllerError &&
-          sessionId === originSessionId
+          sessionId === originSessionId &&
+          nativePhotoGeneration === originSessionGeneration
         ) {
           composer = {
             ...composer,
@@ -1268,6 +1341,7 @@
             composing: false,
           };
           imageDrafts = [...imageDrafts, ...submittedDrafts];
+          fileDrafts = [...fileDrafts, ...submittedFiles];
           replacementSourceIds = [
             ...new Set([...replacementSourceIds, ...sources]),
           ];
@@ -1275,9 +1349,14 @@
         } else if (error instanceof CompanionPreControllerError) {
           releaseSubmissionImages(submittedDrafts);
         }
-        if (sessionId !== originSessionId) return;
+        if (sessionId !== originSessionId || nativePhotoGeneration !== originSessionGeneration) return;
+        const capacityKey = error instanceof CompanionPreControllerError
+          ? capacityErrorKey(error.code)
+          : undefined;
         liveAnnouncement =
-          error instanceof Error && error.message === "compact-with-images"
+          capacityKey
+            ? { key: capacityKey }
+            : error instanceof Error && error.message === "compact-with-images"
             ? { key: "error.compactImages" }
             : { key: "error.restored" };
       });
@@ -1455,6 +1534,58 @@
     addImages(Array.from(input.files ?? []));
     input.value = "";
   }
+  function onFileInput(event: Event): void {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    if (
+      !files.length ||
+      filePickerSession !== sessionId ||
+      filePickerGeneration !== nativePhotoGeneration ||
+      photoDisposed
+    )
+      return;
+    const error = fileIntakeError(fileDrafts, files, fileLimits);
+    if (error) {
+      imageIntakeFailure = { key: `file.error.${error}` };
+      liveAnnouncement = imageIntakeFailure;
+      return;
+    }
+    imageIntakeFailure = undefined;
+    fileDrafts = [...fileDrafts, ...createFileDrafts(files)];
+  }
+  function formatFileSize(size: number): string {
+    if (size < 1000) return `${size} B`;
+    if (size < 1_000_000) return `${(size / 1000).toFixed(1)} KB`;
+    return `${(size / 1_000_000).toFixed(1)} MB`;
+  }
+  async function downloadFile(item: TimelineFile): Promise<void> {
+    const ref = item.attachment;
+    const originSession = sessionId;
+    const generation = nativePhotoGeneration;
+    if (!ref || ref.availability !== "available" || !originSession) return;
+    try {
+      const restored = await restoreFileDraft(ref, () =>
+        sessionId === originSession && generation === nativePhotoGeneration && !photoDisposed,
+      );
+      const url = URL.createObjectURL(
+        new Blob([restored.file], { type: "application/octet-stream" }),
+      );
+      const link = document.createElement("a");
+      link.className = "external";
+      link.href = url;
+      link.download =
+        ref.name.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, "-").trim() ||
+        "download";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      if (sessionId === originSession && generation === nativePhotoGeneration)
+        liveAnnouncement = { key: "file.downloadFailed" };
+    }
+  }
   function onPaste(event: ClipboardEvent): void {
     const images = imageFilesFromClipboard(event.clipboardData);
     if (images.length === 0) return;
@@ -1508,34 +1639,44 @@
     releaseSubmissionImages([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
-  function onImagePickerPointerDown(event: PointerEvent): void {
-    if (voiceBusy || nativePhotoBusy || event.pointerType !== "touch") return;
-    imagePickerPointer = { id: event.pointerId, startedAt: Date.now() };
-  }
-  function onImagePickerPointerUp(event: PointerEvent): void {
-    if (!imagePickerPointer || imagePickerPointer.id !== event.pointerId)
-      return;
-    const held =
-      Date.now() - imagePickerPointer.startedAt >= PHOTO_LONG_PRESS_MS;
-    imagePickerPointer = undefined;
-    if (!held) return;
-    suppressImagePickerClick = true;
-    event.preventDefault();
+  function openAttachmentMenu(target: HTMLElement): void {
     if (nativePhotoBusy || voiceBusy || restoringRecovery) return;
-    if (hasNativeCamera()) void selectNativePhotos(true);
-    else photoCaptureInput?.click();
-  }
-  function clearImagePickerPointer(): void {
-    imagePickerPointer = undefined;
-  }
-  function choosePhoto(): void {
-    if (suppressImagePickerClick) {
-      suppressImagePickerClick = false;
-      return;
-    }
-    if (nativePhotoBusy || voiceBusy || restoringRecovery) return;
-    if (hasNativeCamera()) void selectNativePhotos();
-    else photoLibraryInput?.click();
+    messageMenu(
+      target,
+      [
+        {
+          text: t("attachment.camera"),
+          disabled: !imageLimits,
+          run: () => {
+            if (!canIntakePhoto()) return;
+            if (hasNativeCamera()) void selectNativePhotos(true);
+            else photoCaptureInput?.click();
+          },
+        },
+        {
+          text: t("attachment.photos"),
+          disabled: !imageLimits,
+          run: () => {
+            if (!canIntakePhoto()) return;
+            if (hasNativeCamera()) void selectNativePhotos();
+            else photoLibraryInput?.click();
+          },
+        },
+        {
+          text: t("attachment.files"),
+          disabled: !fileLimits,
+          run: () => {
+            if (!fileLimits || projection.canSubmit === false) return;
+            filePickerSession = sessionId;
+            filePickerGeneration = nativePhotoGeneration;
+            fileInput?.click();
+          },
+        },
+      ],
+      t("actions.cancel"),
+      undefined,
+      true,
+    );
   }
   function formatHistoryDate(value: string, locale: string): string {
     const date = new Date(value);
@@ -1593,13 +1734,21 @@
   }
   function openPreferences(): void {
     if (preferencesOpen) return;
-    window.history.pushState({ ...window.history.state, companionSettings: true }, "", "#settings");
+    window.history.pushState(
+      { ...window.history.state, companionSettings: true },
+      "",
+      "#settings",
+    );
     preferencesTab = "home";
     preferencesOpen = true;
     void tick().then(() => preferencesBack?.focus());
   }
   function openPreferencesTab(tab: Exclude<PreferencesTab, "home">): void {
-    window.history.pushState({ ...window.history.state, companionSettings: true }, "", `#settings/${tab}`);
+    window.history.pushState(
+      { ...window.history.state, companionSettings: true },
+      "",
+      `#settings/${tab}`,
+    );
     preferencesTab = tab;
     void tick().then(() => preferencesBack?.focus());
   }
@@ -1610,7 +1759,11 @@
       window.history.replaceState(window.history.state, "", "#settings");
       preferencesTab = "home";
     } else {
-      window.history.replaceState(window.history.state, "", location.pathname + location.search);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        location.pathname + location.search,
+      );
       preferencesOpen = false;
       void tick().then(() => preferencesButton?.focus());
     }
@@ -1619,9 +1772,14 @@
     const tab = preferencesTabFromLocation();
     preferencesOpen = tab !== undefined;
     if (tab) preferencesTab = tab;
-    void tick().then(() => (tab ? preferencesBack : preferencesButton)?.focus());
+    void tick().then(() =>
+      (tab ? preferencesBack : preferencesButton)?.focus(),
+    );
   }
-  function setPreferencesSupport(tab: "models" | "voice" | "voice-output", supported: boolean): void {
+  function setPreferencesSupport(
+    tab: "models" | "voice" | "voice-output",
+    supported: boolean,
+  ): void {
     if (tab === "models") modelSettingsSupported = supported;
     else if (tab === "voice") voiceSettingsSupported = supported;
     else voiceOutputSettingsSupported = supported;
@@ -1694,7 +1852,14 @@
           );
           if (image)
             imagePress = longPress(image, {
-              run: (node) => showImageMenu(lightboxUrl, item.alt, node, undefined, item.attachment),
+              run: (node) =>
+                showImageMenu(
+                  lightboxUrl,
+                  item.alt,
+                  node,
+                  undefined,
+                  item.attachment,
+                ),
             });
           (browser.swiper as Swiper).on(
             "click",
@@ -1788,6 +1953,15 @@
       t("actions.cancel"),
     );
   }
+  function showFileMenu(item: TimelineFile, target: HTMLElement): void {
+    if (showFailedMenu(item.messageKey, target)) return;
+    if (item.attachment?.availability !== "available") return;
+    messageMenu(
+      target,
+      [{ text: t("file.download"), run: () => downloadFile(item) }],
+      t("actions.cancel"),
+    );
+  }
   function showFailedMenu(key: string, target: HTMLElement): boolean {
     const unit = projection.messageUnits.find((u) => u.id === key);
     if (!unit?.failed) return false;
@@ -1843,21 +2017,26 @@
     messageMenu(
       target,
       [
-        ...(attachment && actions.openStickers ? [{
-          text: t("stickers.favoriteImage"),
-          run: async () => {
-            if (generation !== imageSessionGeneration) return;
-            try {
-              await currentStickerClient().favoriteImage(attachment);
-              if (generation === imageSessionGeneration) {
-                stickerFavoritesRevision++;
-                showToast(t("stickers.favoriteSaved"));
-              }
-            } catch {
-              if (generation === imageSessionGeneration) showToast(t("stickers.favoriteFailed"));
-            }
-          },
-        }] : []),
+        ...(attachment && actions.openStickers
+          ? [
+              {
+                text: t("stickers.favoriteImage"),
+                run: async () => {
+                  if (generation !== imageSessionGeneration) return;
+                  try {
+                    await currentStickerClient().favoriteImage(attachment);
+                    if (generation === imageSessionGeneration) {
+                      stickerFavoritesRevision++;
+                      showToast(t("stickers.favoriteSaved"));
+                    }
+                  } catch {
+                    if (generation === imageSessionGeneration)
+                      showToast(t("stickers.favoriteFailed"));
+                  }
+                },
+              },
+            ]
+          : []),
         {
           text: t("image.save"),
           run: async () => {
@@ -2007,10 +2186,7 @@
     imagePress?.destroy();
     panelGeneration++;
     photoBrowser?.destroy();
-    for (const el of [
-      relationshipDrawer,
-      contextMeterPopover,
-    ])
+    for (const el of [relationshipDrawer, contextMeterPopover])
       if (el) overlayDestroyed({ el });
     if (copyToastTimer) clearTimeout(copyToastTimer);
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
@@ -2181,7 +2357,7 @@
         value={composer.draft}
         readonly={voiceBusy}
         maxHeight={144}
-        attachmentsVisible={imageDrafts.length > 0}
+        attachmentsVisible={imageDrafts.length > 0 || fileDrafts.length > 0}
         placeholder={t("composer.placeholder", {
           name: identity.companionName,
         })}
@@ -2250,6 +2426,7 @@
                   !recoveredDraft.replacementEligible ||
                   !!composer.draft.trim() ||
                   imageDrafts.length > 0 ||
+                  fileDrafts.length > 0 ||
                   restoringRecovery}
                 on:click={() =>
                   recoveredDraft && void restoreRecoveredDraft(recoveredDraft)}
@@ -2271,8 +2448,11 @@
                     src={image.url}
                     alt={image.name}
                   />{/each}
+                {#each recoveredDraft.files ?? [] as file}<p>
+                    {file.name}
+                  </p>{/each}
               </details>
-              {#if composer.draft.trim() || imageDrafts.length}<span
+              {#if composer.draft.trim() || imageDrafts.length || fileDrafts.length}<span
                   >{t("recovery.busy")}</span
                 >{/if}
             </div>
@@ -2288,6 +2468,7 @@
                   recoveredPendingKey = "";
                   releaseSubmissionImages(imageDrafts);
                   imageDrafts = [];
+                  fileDrafts = [];
                   composer = { ...composer, draft: "", composing: false };
                   replacementSourceIds = [];
                   missingRecoveryImages = false;
@@ -2334,11 +2515,20 @@
             aria-hidden="true"
             on:change={onImageInput}
           />
+          <input
+            bind:this={fileInput}
+            class="companion-image-input"
+            type="file"
+            multiple
+            tabindex="-1"
+            aria-hidden="true"
+            on:change={onFileInput}
+          />
 
           <MessagebarAttachments
             class="companion-image-drafts"
             role="group"
-            aria-label={t("image.pending")}
+            aria-label={t("attachment.pending")}
           >
             {#each imageDrafts as draft (draft.id)}
               <MessagebarAttachment
@@ -2367,6 +2557,24 @@
                   ><X size={16} aria-hidden="true" /></button
                 >
               </MessagebarAttachment>
+            {/each}
+            {#each fileDrafts as draft (draft.id)}
+              <div class="companion-file-draft" data-testid="file-draft">
+                <div class="companion-file-details">
+                  <span>{draft.file.name}</span><small
+                    >{formatFileSize(draft.file.size)}</small
+                  >
+                </div>
+                <button
+                  class="button button-tonal button-round"
+                  type="button"
+                  aria-label={t("file.remove", { name: draft.file.name })}
+                  on:click={() =>
+                    (fileDrafts = fileDrafts.filter((item) => item !== draft))}
+                >
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </div>
             {/each}
           </MessagebarAttachments>
         {/snippet}
@@ -2412,19 +2620,21 @@
           <button class="button button-tonal button-round companion-stickers" type="button"
             aria-label={t("stickers.open")} aria-pressed={stickerOpen}
             disabled={voiceBusy || nativePhotoBusy || !actions.openStickers}
-            on:click={toggleStickerPanel}><Smile size={20} aria-hidden="true" /></button>
-          {#if imageLimits || voiceBusy}<button
+            on:click={toggleStickerPanel}
+            ><Smile size={20} aria-hidden="true" /></button
+          >
+          {#if imageLimits || fileLimits || voiceBusy}<button
               class="button button-tonal button-round companion-attach"
               type="button"
-              aria-label={t(voiceBusy ? "voice.cancel" : "image.choose")}
-              title={t(voiceBusy ? "voice.cancel" : "image.choose")}
-              disabled={!voiceBusy && (!imageLimits || nativePhotoBusy)}
-              on:pointerdown={onImagePickerPointerDown}
-              on:pointerup={onImagePickerPointerUp}
-              on:pointercancel={clearImagePickerPointer}
-              on:contextmenu|preventDefault
-              on:click={() =>
-                voiceBusy ? void cancelVoiceInput() : choosePhoto()}
+              aria-label={t(voiceBusy ? "voice.cancel" : "attachment.open")}
+              title={t(voiceBusy ? "voice.cancel" : "attachment.open")}
+              aria-haspopup="dialog"
+              disabled={!voiceBusy &&
+                ((!imageLimits && !fileLimits) || nativePhotoBusy)}
+              on:click={(event) =>
+                voiceBusy
+                  ? void cancelVoiceInput()
+                  : openAttachmentMenu(event.currentTarget)}
               >{#if voiceBusy}<X size={20} aria-hidden="true" />{:else}<Plus
                   size={19}
                   strokeWidth={2}
@@ -2440,7 +2650,9 @@
               role="alert"
               data-testid="input-error"
             >
-              {projection.promptError ||
+              {(capacityErrorKey(projection.promptErrorCode)
+                ? t(capacityErrorKey(projection.promptErrorCode)!)
+                : projection.promptError) ||
                 (imageIntakeFailure
                   ? t(imageIntakeFailure.key, imageIntakeFailure.params)
                   : "")}
@@ -2758,6 +2970,27 @@
                                   />
                                 {/if}
                               </div>
+                            {:else if part.item.kind === "file"}
+                              {@const item = part.item}
+                              <button
+                                class="companion-file-message"
+                                type="button"
+                                data-testid="file-message"
+                                aria-label={t("file.actions", { name: item.name })}
+                                disabled={!unit.failed && item.attachment?.availability !== "available"}
+                                on:click={(event) => showFileMenu(item, event.currentTarget)}
+                                use:longPress={{ run: (node) => showFileMenu(item, node) }}
+                              >
+                                <FileText size={20} aria-hidden="true" />
+                                <div class="companion-file-details">
+                                  <span>{item.name}</span><small
+                                    >{formatFileSize(item.size)}</small
+                                  >
+                                </div>
+                                {#if item.attachment?.availability === "missing"}
+                                  <span role="status">{t("file.missing")}</span>
+                                {/if}
+                              </button>
                             {:else if part.item.kind === "voice"}
                               {@const item = part.item}
                               {@const playback =
@@ -2777,67 +3010,61 @@
                                     use:trackVoiceAudio={item.id}
                                   ></audio>
                                 {/if}
-                                  <button
-                                    class="button button-tonal button-round companion-voice-control"
-                                    aria-label={playback.playing
-                                      ? t("voice.pause")
-                                      : t("voice.play")}
-                                    on:click={(event) =>
-                                      void toggleVoice(
-                                        item,
-                                        event.currentTarget,
-                                      )}
-                                  >
-                                    {#if playback.playing}<Pause
-                                        size={18}
-                                        fill="currentColor"
+                                <button
+                                  class="button button-tonal button-round companion-voice-control"
+                                  aria-label={playback.playing
+                                    ? t("voice.pause")
+                                    : t("voice.play")}
+                                  on:click={(event) =>
+                                    void toggleVoice(item, event.currentTarget)}
+                                >
+                                  {#if playback.playing}<Pause
+                                      size={18}
+                                      fill="currentColor"
+                                      aria-hidden="true"
+                                    />{:else}<Play
+                                      size={18}
+                                      fill="currentColor"
+                                      aria-hidden="true"
+                                    />{/if}
+                                </button>
+                                <div class="companion-voice-player">
+                                  <div class="companion-voice-waveform">
+                                    {#each voiceWaveform(item.id) as height, index}<span
+                                        class:played={(index + 1) /
+                                          VOICE_WAVEFORM_BAR_COUNT <=
+                                          voiceProgress(playback)}
+                                        style={`--voice-bar:${height}%`}
                                         aria-hidden="true"
-                                      />{:else}<Play
-                                        size={18}
-                                        fill="currentColor"
-                                        aria-hidden="true"
-                                      />{/if}
-                                  </button>
-                                  <div class="companion-voice-player">
-                                    <div class="companion-voice-waveform">
-                                      {#each voiceWaveform(item.id) as height, index}<span
-                                          class:played={(index + 1) /
-                                            VOICE_WAVEFORM_BAR_COUNT <=
-                                            voiceProgress(playback)}
-                                          style={`--voice-bar:${height}%`}
-                                          aria-hidden="true"
-                                        ></span>{/each}
-                                      <input
-                                        class="companion-voice-seek"
-                                        type="range"
-                                        min="0"
-                                        max={playback.duration || 0}
-                                        step="0.1"
-                                        value={playback.current}
-                                        disabled={!hasVoiceDuration(playback)}
-                                        aria-label={t("voice.progress")}
-                                        aria-valuetext={hasVoiceDuration(
-                                          playback,
-                                        )
-                                          ? `${formatVoiceSeconds(playback.current)} / ${formatVoiceSeconds(playback.duration, "ceil")}`
-                                          : t("loading.progress")}
-                                        on:input={(event) =>
-                                          seekVoice(event, item.id)}
-                                      />
-                                    </div>
-                                    <div class="companion-voice-meta">
-                                      {#if voiceErrors[item.id]}<span
-                                          role="alert"
-                                          >{t("voice.playFailed")}</span
-                                        >{:else if voiceTimestamp(playback)}<span
-                                          role="timer"
-                                          aria-live="off"
-                                          >{voiceTimestamp(playback)}</span
-                                        >{:else}<span role="status"
-                                          >{t("loading.progress")}</span
-                                        >{/if}
-                                    </div>
+                                      ></span>{/each}
+                                    <input
+                                      class="companion-voice-seek"
+                                      type="range"
+                                      min="0"
+                                      max={playback.duration || 0}
+                                      step="0.1"
+                                      value={playback.current}
+                                      disabled={!hasVoiceDuration(playback)}
+                                      aria-label={t("voice.progress")}
+                                      aria-valuetext={hasVoiceDuration(playback)
+                                        ? `${formatVoiceSeconds(playback.current)} / ${formatVoiceSeconds(playback.duration, "ceil")}`
+                                        : t("loading.progress")}
+                                      on:input={(event) =>
+                                        seekVoice(event, item.id)}
+                                    />
                                   </div>
+                                  <div class="companion-voice-meta">
+                                    {#if voiceErrors[item.id]}<span role="alert"
+                                        >{t("voice.playFailed")}</span
+                                      >{:else if voiceTimestamp(playback)}<span
+                                        role="timer"
+                                        aria-live="off"
+                                        >{voiceTimestamp(playback)}</span
+                                      >{:else}<span role="status"
+                                        >{t("loading.progress")}</span
+                                      >{/if}
+                                  </div>
+                                </div>
                               </div>
                             {/if}
                           {/if}{/snippet}
@@ -2946,7 +3173,7 @@
                           text={part.kind !== "images"
                             ? textContent
                             : undefined}
-                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""}`}
+                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""} ${unit.items.some((item) => item.kind === "file") ? "companion-has-files" : ""}`}
                           data-pending={unit.pending || undefined}
                           data-testid={partIndex === 0
                             ? unitTestId(unit)

@@ -11,9 +11,10 @@ export function dismissMessageMenu() {
 
 export function messageMenu(
   target: HTMLElement,
-  actions: { text: string; run(): void | Promise<void> }[],
+  actions: { text: string; run(): void | Promise<void>; disabled?: boolean }[],
   cancelLabel: string,
   confirmation?: string,
+  preferSheet = false,
 ) {
   closeCurrent?.();
   document.getSelection()?.removeAllRanges();
@@ -21,13 +22,14 @@ export function messageMenu(
   const modal = f7.actions.create({
     cssClass: "companion-action-menu",
     convertToPopover: true,
-    forceToPopover: true,
+    forceToPopover: !preferSheet,
     targetEl: target,
     closeOnEscape: true,
     buttons: [
       ...(confirmation ? [{ text: confirmation, label: true }] : []),
       ...actions.map((action) => ({
         text: action.text,
+        disabled: action.disabled,
         onClick: () => {
           void action.run();
         },
@@ -44,8 +46,16 @@ export function messageMenu(
           confirmation ?? actions.map((action) => action.text).join(", "),
         );
         const buttons = [
-          ...root.querySelectorAll<HTMLElement>(".list-button, .item-link"),
+          ...root.querySelectorAll<HTMLElement>(
+            ".list-button:not(.disabled), .item-link:not(.disabled), .actions-button:not(.disabled)",
+          ),
         ];
+        for (const disabled of root.querySelectorAll<HTMLElement>(
+          ".list-button.disabled, .item-link.disabled, .actions-button.disabled",
+        )) {
+          disabled.setAttribute("role", "button");
+          disabled.setAttribute("aria-disabled", "true");
+        }
         for (const button of buttons) {
           button.setAttribute("role", "button");
           button.tabIndex = 0;
