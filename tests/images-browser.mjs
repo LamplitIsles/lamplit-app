@@ -8,6 +8,11 @@ import { imagesFixture } from "./images-fixture.ts";
 import { resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 const external = process.env.APP_ACCEPTANCE_URL;
+const stickerPanelOnly = process.env.APP_STICKER_PANEL_ONLY === "1";
+if (stickerPanelOnly && (external || process.env.APP_ACCEPTANCE_CONTROL_URL))
+  throw new Error("Sticker panel-only check requires the local fake host");
+if (stickerPanelOnly && process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1")
+  throw new Error("Sticker panel-only and image cardinality modes are exclusive");
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
 const fixture = imagesFixture();
@@ -194,7 +199,7 @@ try {
   }
   for (const width of process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
     ? []
-    : [390, 1280, 320]) {
+    : stickerPanelOnly ? [390] : [390, 1280, 320]) {
     const context = await browser.newContext({
       viewport: { width, height: 844 },
       locale: "zh-CN",
@@ -260,10 +265,12 @@ try {
       let favorite = false;
       let stages = 0;
       let denied = false;
+      const stickerReads = [];
       const media = Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==", "base64");
       const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7", "base64");
       await page.route("**/api/stickers/**", async (route) => {
         const path = new URL(route.request().url()).pathname;
+        if (route.request().method() === "GET") stickerReads.push(path);
         if (denied) return route.fulfill({ status: 401 });
         if (path.endsWith("/thumbnail") || path.endsWith("/original")) {
           const original = path.endsWith("/original");
@@ -280,6 +287,13 @@ try {
       });
       await input.fill("保留草稿");
       await page.getByRole("button", { name: "表情", exact: true }).click();
+      await expect.poll(() => stickerReads.filter((path) => path.endsWith("/packs")).length).toBeGreaterThanOrEqual(1);
+      await expect.poll(() => stickerReads.filter((path) => path.endsWith("/favorites")).length).toBeGreaterThanOrEqual(2);
+      await expect(page.getByText("收藏未确认，请检查收藏列表", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("加载失败，点按重试", { exact: true })).toHaveCount(0);
+      await page.getByRole("searchbox", { name: "搜索表情名称或标签" }).fill("猫");
+      await expect.poll(() => stickerReads.filter((path) => path.endsWith("/search")).length).toBeGreaterThanOrEqual(1);
+      await expect(page.getByRole("button", { name: "小猫", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "猫组", exact: true }).click();
       await expect(page.locator(".sticker-pack-name")).toHaveText("猫组");
       await page.getByRole("button", { name: "收藏表情", exact: true }).click();
@@ -300,6 +314,12 @@ try {
       await expect(input).toHaveValue("保留草稿");
       await input.fill("");
       await page.unroute("**/api/stickers/**");
+    }
+    if (stickerPanelOnly) {
+      expect(errors).toEqual([]);
+      results.push({ width, stickerPanel: "passed" });
+      await context.close();
+      continue;
     }
     const image = await page.evaluate(() => {
       const canvas = document.createElement("canvas");
@@ -844,7 +864,9 @@ try {
     ) + "\n",
   );
   console.log(
-    process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
+    stickerPanelOnly
+      ? "Sticker panel fake-host browser acceptance passed."
+      : process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
       ? "Output6/7/11 initial/history ordered refs, connection and six-image input guard passed."
       : "Image/recovery browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, protected recovery/refresh/edit/replacement, missing originals, rejection/withdrawal/submission, disabled storage, 390/1280/320 overflow.",
   );

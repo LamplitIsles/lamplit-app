@@ -26,6 +26,79 @@ const json = (body: unknown) => Response.json(body);
 const fakeFetch = (handler: () => Promise<Response>): typeof fetch =>
   Object.assign(handler, { preconnect: () => {} });
 
+test("default transport keeps the global receiver for picker list requests", async () => {
+  const previousFetch = globalThis.fetch;
+  const requests: {
+    path: string;
+    session: string | null;
+    query: string | null;
+  }[] = [];
+  globalThis.fetch = Object.assign(
+    async function (
+      this: unknown,
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) {
+      expect(this).toBe(globalThis);
+      expect(typeof input).toBe("string");
+      expect(init?.credentials).toBe("same-origin");
+      expect(init?.cache).toBe("no-store");
+      const url = new URL(String(input), "http://fixture");
+      requests.push({
+        path: url.pathname,
+        session: url.searchParams.get("sessionId"),
+        query: url.searchParams.get("query"),
+      });
+      if (url.pathname === "/api/stickers/packs")
+        return json({ packs: [], nextCursor: null });
+      if (
+        url.pathname === "/api/stickers/favorites" ||
+        url.pathname === "/api/stickers/search"
+      )
+        return json({ stickers: [sticker], nextCursor: null });
+      throw new Error("Unexpected fake endpoint");
+    },
+    { preconnect: () => {} },
+  );
+  let client: InstanceType<typeof StickerClient> | undefined;
+  try {
+    client = new StickerClient("fixture-session", () => true);
+    const packs = await client.page("packs");
+    const [favorites1, favorites2, search1, search2] = await Promise.all([
+      client.page("favorites"),
+      client.page("favorites"),
+      client.page("search", { query: "猫" }),
+      client.page("search", { query: "cat" }),
+    ]);
+    expect(packs.nextCursor).toBeNull();
+    for (const page of [favorites1, favorites2, search1, search2]) {
+      expect("stickers" in page && page.stickers).toEqual([sticker]);
+    }
+    expect(requests).toEqual([
+      { path: "/api/stickers/packs", session: "fixture-session", query: null },
+      {
+        path: "/api/stickers/favorites",
+        session: "fixture-session",
+        query: null,
+      },
+      {
+        path: "/api/stickers/favorites",
+        session: "fixture-session",
+        query: null,
+      },
+      { path: "/api/stickers/search", session: "fixture-session", query: "猫" },
+      {
+        path: "/api/stickers/search",
+        session: "fixture-session",
+        query: "cat",
+      },
+    ]);
+  } finally {
+    client?.close();
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("client paginates, searches and favorites existing sticker identity without recreating it", async () => {
   const requests: { path: string; body?: any }[] = [];
   const transport = (async (path: string, init?: RequestInit) => {

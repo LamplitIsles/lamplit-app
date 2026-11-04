@@ -73,7 +73,7 @@ export class StickerClient {
   private async request(path: string, init?: RequestInit) {
     this.assertCurrent();
     const epoch = this.epoch;
-    const response = await this.transport(path, {
+    const response = await this.transport.call(globalThis, path, {
       ...init,
       credentials: "same-origin",
       cache: "no-store",
