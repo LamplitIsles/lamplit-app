@@ -1,12 +1,13 @@
 import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
+import { imageHttp } from "../packages/contracts/src/server.ts";
+import { createUiTestHost } from "./ui-test-host.ts";
 import { imagesFixture } from "./images-fixture.ts";
 import { resolve } from "node:path";
 const fixture = imagesFixture();
 let sessionId = "fixture-session";
-const host = await createChatHost(
+const host = await createUiTestHost(
   {
     ...fixture.backend,
     read: async () => ({ ...(await fixture.backend.read()), sessionId }),
@@ -27,6 +28,7 @@ const server = Bun.serve({
     if (path === "/__test/session") {
       sessionId = (await req.json()).sessionId;
       await fixture.control({ action: "reset" });
+      await host.publish();
       return Response.json({ sessionId });
     }
     if (path === "/__test/image-send-recovery")
@@ -280,13 +282,12 @@ try {
   expect(uploads[1].images[0].original).toBe(
     original("read-recovery").toString("base64"),
   );
-  // Recovery still uses owned uploaded originals and the same draft path.
+  // Recovery restores only text and does not recreate attachment drafts.
   await context.request.post(new URL("/__test/image-send-recovery", url).href, {
     data: { action: "nativeRecovery" },
   });
   await page.getByRole("button", { name: "恢复编辑", exact: true }).click();
-  await expect(drafts).toHaveCount(1);
-  await remove.click();
+  await expect(drafts).toHaveCount(0);
   await input.fill("");
   // A full composer never passes limit=0 (unlimited) into the native picker.
   await start();

@@ -6,19 +6,17 @@ import {
   capabilities,
   fileDownloadUrl,
   validate,
-  validateFileUpload,
+  validateFileManifest,
   validateFileUploadResult,
   validateRecovery,
   validateRetryFileMapping,
   validateSubmission,
 } from "../packages/contracts/src/index.ts";
-import { fileHttp } from "../packages/contracts/src/server.ts";
+import { fileHttp, fileStreamHttp } from "../packages/contracts/src/server.ts";
 import { fileLimits, filesFixture } from "./files-fixture.ts";
 import {
   createFileDrafts,
   fileIntakeError,
-  prepareFileUploads,
-  restoreFileDraft,
 } from "../apps/web/src/lib/file-upload.ts";
 
 const operationId = () => crypto.randomUUID();
@@ -28,24 +26,20 @@ const upload = () => ({
   files: [
     {
       id: "one",
-      order: 0,
       name: '../"\r\n<script>.bin',
       mediaType: "",
       size: 4,
-      data: btoa("\0\xff\x01\x80"),
     },
     {
       id: "empty",
-      order: 1,
       name: "空文件",
       mediaType: "application/x-unknown",
       size: 0,
-      data: "",
     },
   ],
 });
 const request = (value: unknown, headers: Record<string, string> = {}) =>
-  new Request("http://fixture/api/chat/files", {
+  new Request("http://fixture/api/chat/file-operations", {
     method: "POST",
     headers: {
       origin: "http://fixture",
@@ -63,51 +57,28 @@ const auth = async () => ({
 
 test("strict file limits, empty and arbitrary bytes, mixed submission, history and recovery", async () => {
   const value = upload();
-  expect(validateFileUpload(value, fileLimits)).toEqual(value);
+  expect(validateFileManifest(value, fileLimits)).toEqual(value);
   for (const files of [
-    [{ ...value.files[0], data: "AB==", size: 1 }],
-    [{ ...value.files[0], size: 0 }],
-    [{ ...value.files[0], order: 1 }],
-    [value.files[0], { ...value.files[0], order: 1 }],
+    [value.files[0], value.files[0]],
     Array.from({ length: 7 }, (_, order) => ({
       ...value.files[1],
       id: `f${order}`,
-      order,
     })),
   ])
-    expect(() => validateFileUpload({ ...value, files }, fileLimits)).toThrow();
+    expect(() =>
+      validateFileManifest({ ...value, files }, fileLimits),
+    ).toThrow();
   expect(() =>
-    validateFileUpload(value, { ...fileLimits, maxFileBytes: 3 }),
+    validateFileManifest(value, { ...fileLimits, maxFileBytes: 3 }),
   ).toThrow();
   expect(() =>
-    validateFileUpload(value, { ...fileLimits, maxMessageFileBytes: 3 }),
+    validateFileManifest(value, { ...fileLimits, maxMessageFileBytes: 3 }),
   ).toThrow();
-  const exact = new File([new Uint8Array(8_000_000)], "boundary.bin");
-  expect(
-    fileIntakeError([], [exact, exact, exact], fileLimits),
-  ).toBeUndefined();
-  expect(
-    fileIntakeError(
-      [],
-      [exact, exact, exact, new File(["x"], "x")],
-      fileLimits,
-    ),
-  ).toBe("total");
-  expect(
-    fileIntakeError(
-      [],
-      [new File([new Uint8Array(8_000_001)], "large")],
-      fileLimits,
-    ),
-  ).toBe("size");
   expect(fileIntakeError([], [new File([], "empty")], undefined)).toBe(
     "unavailable",
   );
   const f = filesFixture();
-  const result = validateFileUploadResult(
-    await f.backend.upload(value, owner),
-    value,
-  );
+  const result = await stage(f, value);
   const refs = result.files.map((file) => file.ref);
   expect(
     validateSubmission({
@@ -198,15 +169,46 @@ test("strict file limits, empty and arbitrary bytes, mixed submission, history a
   ).toThrow();
 });
 
-test("private HTTP authenticates, checks origin/session, preserves bytes and never executes uploaded content", async () => {
+async function stage(
+  f: ReturnType<typeof filesFixture>,
+  value: ReturnType<typeof upload>,
+) {
+  const reserved = (await fileStreamHttp(request(value), f.backend, auth))!;
+  expect(reserved.status).toBe(200);
+  for (const [i, item] of value.files.entries()) {
+    const bytes = i === 0 ? new Uint8Array([0, 255, 1, 128]) : new Uint8Array();
+    const req = new Request(
+      `http://fixture/api/chat/file-operations/${value.operationId}/files/${item!.id}`,
+      {
+        method: "PUT",
+        headers: {
+          origin: "http://fixture",
+          "content-type": "application/octet-stream",
+        },
+        body: bytes,
+      },
+    );
+    expect((await fileStreamHttp(req, f.backend, auth))!.status).toBe(204);
+  }
+  const complete = new Request(
+    `http://fixture/api/chat/file-operations/${value.operationId}/complete`,
+    { method: "POST", headers: { origin: "http://fixture" } },
+  );
+  return validateFileUploadResult(
+    await (await fileStreamHttp(complete, f.backend, auth))!.json(),
+    value,
+  );
+}
+
+test("private streaming HTTP authenticates, checks origin/session and preserves bytes", async () => {
   const f = filesFixture(),
     value = upload();
   expect(
-    (await fileHttp(request(value), f.backend, async () => null))?.status,
+    (await fileStreamHttp(request(value), f.backend, async () => null))?.status,
   ).toBe(401);
   expect(
     (
-      await fileHttp(
+      await fileStreamHttp(
         request(value, { origin: "http://other" }),
         f.backend,
         auth,
@@ -214,47 +216,26 @@ test("private HTTP authenticates, checks origin/session, preserves bytes and nev
     )?.status,
   ).toBe(403);
   expect(
-    (await fileHttp(request({ ...value, sessionId: "other" }), f.backend, auth))
-      ?.status,
-  ).toBe(403);
-  expect(
     (
-      await fileHttp(request(value), f.backend, async () => ({
-        ownerId: "owner",
-        sessionId: "fixture-session",
-        limits: false,
-      }))
-    )?.status,
-  ).toBe(503);
-  expect(
-    (
-      await fileHttp(
-        request(value, { "content-length": "33000001" }),
+      await fileStreamHttp(
+        request({ ...value, sessionId: "other" }),
         f.backend,
         auth,
       )
     )?.status,
-  ).toBe(413);
-  let calls = 0;
+  ).toBe(403);
   expect(
     (
-      await fileHttp(request(value), f.backend, async () => ({
-        ownerId: "owner",
-        sessionId: ++calls === 1 ? "fixture-session" : "other",
-        limits: fileLimits,
+      await fileStreamHttp(request(value), f.backend, async () => ({
+        ...owner,
+        limits: false,
       }))
     )?.status,
-  ).toBe(403);
-  expect(f.uploads.size).toBe(0);
-  const response = (await fileHttp(request(value), f.backend, auth))!;
-  expect(response.status).toBe(200);
-  const result = validateFileUploadResult(await response.json(), value);
-  expect(
-    await (await fileHttp(request(value), f.backend, auth))!.json(),
-  ).toEqual(result);
+  ).toBe(503);
+  const result = await stage(f, value);
   expect(
     (
-      await fileHttp(
+      await fileStreamHttp(
         request({
           ...value,
           files: [{ ...value.files[0], name: "changed" }, value.files[1]],
@@ -271,29 +252,26 @@ test("private HTTP authenticates, checks origin/session, preserves bytes and nev
   expect(
     (
       await fileHttp(get, f.backend, async () => ({
-        ownerId: "another-owner",
-        sessionId: "fixture-session",
+        ...owner,
+        ownerId: "other",
         limits: fileLimits,
       }))
     )?.status,
   ).toBe(404);
-  let ownerChecks = 0;
+  let calls = 0;
   expect(
     (
       await fileHttp(get, f.backend, async () => ({
-        ownerId: ++ownerChecks === 1 ? "owner" : "another-owner",
-        sessionId: "fixture-session",
+        ...owner,
+        ownerId: ++calls === 1 ? "owner" : "other",
         limits: fileLimits,
       }))
     )?.status,
   ).toBe(403);
   const download = (await fileHttp(get, f.backend, auth))!;
   expect(download.headers.get("content-type")).toBe("application/octet-stream");
-  expect(download.headers.get("content-disposition")).toBe(
-    'attachment; filename="download"',
-  );
+  expect(download.headers.get("content-disposition")).toBe("attachment");
   expect(download.headers.get("content-security-policy")).toContain("sandbox");
-  expect(download.headers.get("cache-control")).toContain("no-store");
   expect([...new Uint8Array(await download.arrayBuffer())]).toEqual([
     0, 255, 1, 128,
   ]);
@@ -306,63 +284,13 @@ test("private HTTP authenticates, checks origin/session, preserves bytes and nev
       )
     )?.status,
   ).toBe(404);
-  calls = 0;
   expect(
-    (
-      await fileHttp(get, f.backend, async () => ({
-        ownerId: "owner",
-        sessionId: ++calls === 1 ? "fixture-session" : "other",
-        limits: fileLimits,
-      }))
-    )?.status,
-  ).toBe(403);
-});
-
-test("drafts upload and recover exact bytes, with session checks", async () => {
-  const drafts = createFileDrafts([
-    new File([new Uint8Array([0, 255])], "x.bin"),
-    new File([], "zero"),
-  ]);
-  const input = await prepareFileUploads(
-    "fixture-session",
-    operationId(),
-    drafts,
-    fileLimits,
-  );
-  expect(input.files.map((f) => f.data)).toEqual(["AP8=", ""]);
-  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
-  Object.defineProperty(globalThis, "location", {
-    configurable: true,
-    value: { href: "http://fixture/" },
-  });
-  try {
-    const ref = {
-      attachmentId: "f",
-      name: "x.bin",
-      mediaType: "",
-      size: 2,
-      availability: "available" as const,
-    };
-    const restored = await restoreFileDraft(
-      ref,
-      () => true,
-      async () => new Response(new Uint8Array([0, 255])),
-    );
-    expect([...new Uint8Array(await restored.file.arrayBuffer())]).toEqual([
-      0, 255,
-    ]);
-    await expect(restoreFileDraft(ref, () => false)).rejects.toThrow();
-    await expect(
-      restoreFileDraft(
-        ref,
-        () => true,
-        async () => new Response("x"),
-      ),
-    ).rejects.toThrow();
-  } finally {
-    if (previous) Object.defineProperty(globalThis, "location", previous);
-    else delete (globalThis as any).location;
-  }
+    await fileHttp(
+      new Request("http://fixture/api/chat/files", { method: "POST" }),
+      f.backend,
+      auth,
+    ),
+  ).toBeUndefined();
 });
 
 test("controller retains file identity through uncertain admission and explicit retry", async () => {
@@ -380,9 +308,13 @@ test("controller retains file identity through uncertain admission and explicit 
   });
   globalThis.fetch = Object.assign(
     async (input: RequestInfo | URL, init?: RequestInit) =>
-      (await fileHttp(
+      (await fileStreamHttp(
         new Request(input, {
           ...init,
+          // Bun's empty File reader differs from its HTTP byte-stream reader.
+          ...(init?.body instanceof File && init.body.size === 0
+            ? { body: new Uint8Array() }
+            : {}),
           headers: { ...init?.headers, origin: "http://fixture" },
         }),
         f.backend,
@@ -588,8 +520,7 @@ test("controller does not submit after session changes away and back while uploa
       capabilities: { files: fileLimits },
       recovery: [],
     };
-    const f = filesFixture();
-    finish(Response.json(await f.backend.upload(uploaded, owner)));
+    finish(Response.json({ manifest: uploaded, uploaded: [] }));
     await sending;
     expect(submits).toBe(0);
   } finally {
@@ -649,7 +580,7 @@ test("controller stages mixed image and file independently and submits both", as
             sessionId: "fixture-session",
             limits: imageLimits,
           }))
-        : await fileHttp(request, fileFixture.backend, auth);
+        : await fileStreamHttp(request, fileFixture.backend, auth);
     },
   });
   let submission: any;

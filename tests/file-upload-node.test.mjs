@@ -1,164 +1,198 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { fileHttp, fileStreamHttp } from "../packages/contracts/dist/server.js";
 import {
-  FileUploadSchema,
-  validate,
-  validateFileUpload,
+  validateFileManifest,
+  validateFileUploadResult,
 } from "../packages/contracts/dist/index.js";
-import { fileHttp } from "../packages/contracts/dist/server.js";
 
 const limits = {
   maxFilesPerMessage: 6,
-  maxFileBytes: 8_000_000,
-  maxMessageFileBytes: 24_000_000,
+  maxFileBytes: 100_000_000,
+  maxMessageFileBytes: 200_000_000,
 };
 const operationId = "00000000-0000-0000-0000-000000000001";
-const file = (data, size, order = 0) => ({
-  id: `file_${order}`,
-  order,
-  name: `file-${order}.bin`,
-  mediaType: "",
-  size,
-  data,
-});
-const upload = (files) => ({
-  sessionId: "fixture-session",
+const manifest = {
+  sessionId: "node-session",
   operationId,
-  files,
-});
-const digest = (value) => createHash("sha256").update(value).digest("hex");
+  files: [0, 1].map((i) => ({
+    id: `f${i}`,
+    name: `file${i}`,
+    mediaType: "",
+    size: 100_000_000,
+  })),
+};
+const owner = { ownerId: "node-owner", sessionId: "node-session", limits };
+const base = "/api/chat/file-operations";
+const op = `${base}/${operationId}`;
 
-test("Node maximum file and three-file aggregate are accepted over shared HTTP", async () => {
-  const original = Buffer.alloc(8_000_000, 0xa7);
-  const data = original.toString("base64");
-  const single = upload([file(data, original.length)]);
-  assert.equal(validateFileUpload(single, limits), single);
-  assert.equal(validate(FileUploadSchema, single), single);
-  const triple = upload(
-    Array.from({ length: 3 }, (_, order) => file(data, original.length, order)),
+test("Node streams two exact 100 MB files and completes ordered refs", async () => {
+  validateFileManifest(manifest, limits);
+  assert.throws(() =>
+    validateFileManifest(
+      {
+        ...manifest,
+        files: [
+          ...manifest.files,
+          { id: "extra", name: "extra", mediaType: "", size: 1 },
+        ],
+      },
+      limits,
+    ),
   );
-  assert.equal(validateFileUpload(triple, limits), triple);
-  const body = JSON.stringify(triple);
-  let uploads = 0;
+  const hashes = new Map();
+  let status;
   const backend = {
-    async upload(input, owner) {
-      uploads++;
-      assert.deepEqual(owner, {
-        ownerId: "owner",
-        sessionId: "fixture-session",
-      });
-      return {
+    async reserve(input, _owner, check) {
+      await check();
+      return (status = { manifest: input, uploaded: [] });
+    },
+    async status() {
+      return status ?? null;
+    },
+    async receive(_manifest, id, bytes, _owner, check) {
+      const hash = createHash("sha256");
+      for await (const chunk of bytes) hash.update(chunk);
+      const digest = hash.digest("hex");
+      await check();
+      if (hashes.has(id) && hashes.get(id) !== digest) throw Error("conflict");
+      hashes.set(id, digest);
+      if (!status.uploaded.includes(id)) status.uploaded.push(id);
+    },
+    async complete(input, _owner, check) {
+      await check();
+      return (status.result = {
         sessionId: input.sessionId,
         operationId: input.operationId,
-        files: input.files.map((item) => {
-          const bytes = Buffer.from(item.data, "base64");
-          assert.equal(bytes.length, 8_000_000);
-          assert.equal(digest(bytes), digest(original));
-          return {
-            id: item.id,
-            order: item.order,
-            ref: {
-              attachmentId: `stored_${item.order}`,
-              name: item.name,
-              mediaType: item.mediaType,
-              size: item.size,
-              availability: "available",
-            },
-          };
+        files: input.files.map((f, order) => ({
+          id: f.id,
+          order,
+          ref: {
+            attachmentId: `stored${order}`,
+            name: f.name,
+            mediaType: f.mediaType,
+            size: f.size,
+            availability: "available",
+          },
+        })),
+      });
+    },
+  };
+  const call = async (path, init) =>
+    await fileStreamHttp(
+      new Request(`http://fixture${path}`, init),
+      backend,
+      async () => owner,
+    );
+  assert.equal(
+    (
+      await call(base, {
+        method: "POST",
+        headers: {
+          origin: "http://fixture",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(manifest),
+      })
+    ).status,
+    200,
+  );
+  const chunk = new Uint8Array(64_000);
+  chunk.fill(0xa7);
+  let total = 0;
+  const before = process.memoryUsage().rss;
+  let peak = before;
+  for (const file of manifest.files) {
+    let sent = 0,
+      pulls = 0;
+    const body = new ReadableStream({
+      pull(controller) {
+        pulls++;
+        if (pulls % 50 === 0) peak = Math.max(peak, process.memoryUsage().rss);
+        const n = Math.min(chunk.length, file.size - sent);
+        if (!n) return controller.close();
+        sent += n;
+        controller.enqueue(chunk.subarray(0, n));
+      },
+    });
+    const response = await call(`${op}/files/${file.id}`, {
+      method: "PUT",
+      headers: {
+        origin: "http://fixture",
+        "content-type": "application/octet-stream",
+      },
+      body,
+      duplex: "half",
+    });
+    assert.equal(response.status, 204);
+    assert.equal(sent, file.size);
+    assert.ok(pulls > 1000);
+    total += sent;
+  }
+  assert.equal(total, 200_000_000);
+  assert.equal(hashes.size, 2);
+  assert.equal(hashes.get("f0"), hashes.get("f1"));
+  assert.equal(
+    hashes.get("f0"),
+    "fd90860b11170be7e0ce8bbb807fd6b88ad2997f8f36ad09ca2ffb433e551ab3",
+  );
+  const response = await call(`${op}/complete`, {
+    method: "POST",
+    headers: { origin: "http://fixture" },
+  });
+  const result = validateFileUploadResult(await response.json(), manifest);
+  assert.deepEqual(
+    result.files.map((f) => f.id),
+    ["f0", "f1"],
+  );
+  assert.ok(peak - before < 100_000_000, `RSS grew ${peak - before} bytes`);
+  console.log(
+    `Node synthetic 200 MB peak RSS increase: ${peak - before} bytes`,
+  );
+});
+
+test("Node streaming download is authenticated and old JSON endpoint is not mounted", async () => {
+  const bytes = new Uint8Array([0, 255, 1]);
+  const backend = {
+    async fileStream(id, owner) {
+      assert.equal(owner.ownerId, "node-owner");
+      if (id !== "f0") return null;
+      return {
+        size: bytes.length,
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(bytes);
+            c.close();
+          },
         }),
       };
     },
-    async file() {
-      return null;
-    },
   };
-  const req = new Request("http://fixture/api/chat/files", {
-    method: "POST",
-    headers: { origin: "http://fixture", "content-type": "application/json" },
-    body,
-  });
-  const result = await fileHttp(req, backend, async () => ({
-    ownerId: "owner",
-    sessionId: "fixture-session",
-    limits,
-  }));
-  assert.equal(result.status, 200);
-  assert.equal((await result.json()).files.length, 3);
-  assert.equal(uploads, 1);
-  assert.throws(
-    () =>
-      validateFileUpload(upload([...triple.files, file("AA==", 1, 3)]), limits),
-    /Files too large/,
+  const auth = async () => owner;
+  assert.equal(
+    await fileHttp(
+      new Request("http://fixture/api/chat/files", { method: "POST" }),
+      backend,
+      auth,
+    ),
+    undefined,
   );
-});
-
-test("Base64 syntax, canonical tail, size and small inputs retain rejection boundaries", () => {
-  for (const bytes of [
-    Buffer.alloc(0),
-    Buffer.from([0]),
-    Buffer.from([0, 255]),
-    Buffer.from([0, 255, 7]),
-    Buffer.from([0, 255, 7, 128]),
-  ]) {
-    const input = upload([file(bytes.toString("base64"), bytes.length)]);
-    assert.equal(validateFileUpload(input, limits), input);
-  }
-  for (const data of [
-    "A",
-    "AAA",
-    "A===",
-    "=AAA",
-    "AA=A",
-    "AA==AAAA",
-    "AAAA\n",
-    "AA-_",
-    "AA$=",
-    "éAAA",
-  ]) {
-    const input = upload([file(data, 0)]);
-    assert.throws(
-      () => validate(FileUploadSchema, input),
-      /Invalid chat payload/,
-      data,
-    );
-    assert.throws(
-      () => validateFileUpload(input, limits),
-      /Invalid chat payload/,
-      data,
-    );
-  }
-  for (const data of ["AB==", "AAB="]) {
-    assert.throws(
-      () =>
-        validateFileUpload(
-          upload([file(data, data.endsWith("==") ? 1 : 2)]),
-          limits,
-        ),
-      /Invalid base64/,
-      data,
-    );
-  }
-  assert.throws(
-    () => validateFileUpload(upload([file("AA==", 0)]), limits),
-    /Invalid file limits\/order/,
+  assert.equal(
+    (
+      await fileHttp(
+        new Request("http://fixture/api/chat/files/f0"),
+        backend,
+        async () => null,
+      )
+    ).status,
+    401,
   );
-  const huge = Buffer.alloc(8_000_000, 3).toString("base64");
-  const invalidMiddle = `${huge.slice(0, 4_000_000)}!${huge.slice(4_000_001)}`;
-  assert.throws(
-    () => validateFileUpload(upload([file(invalidMiddle, 8_000_000)]), limits),
-    /Invalid chat payload/,
+  const response = await fileHttp(
+    new Request("http://fixture/api/chat/files/f0"),
+    backend,
+    auth,
   );
-  assert.throws(
-    () =>
-      validateFileUpload(
-        upload([file(`${huge.slice(0, -4)}AB==`, 8_000_000)]),
-        limits,
-      ),
-    /Invalid base64/,
-  );
-  const tooLarge = Buffer.alloc(8_000_001).toString("base64");
-  assert.throws(() =>
-    validateFileUpload(upload([file(tooLarge, 8_000_001)]), limits),
-  );
+  assert.equal(response.headers.get("content-disposition"), "attachment");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
 });

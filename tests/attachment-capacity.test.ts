@@ -190,7 +190,8 @@ test("an explicit pre-dispatch retry replaces its pending item at the same-sessi
   let uploads = 0;
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
-    value: async () => {
+    value: async (_url: URL, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET") return new Response(null, { status: 404 });
       uploads++;
       return new Response(null, { status: 503 });
     },

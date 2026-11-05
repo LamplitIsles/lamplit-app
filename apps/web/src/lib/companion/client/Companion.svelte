@@ -73,11 +73,10 @@
   import Gallery from "./Gallery.svelte";
   import StickerPanel from "./StickerPanel.svelte";
   import type { StickerClient } from "../../sticker-client.js";
-  import type { ImageRef, FileLimits } from "@lamplit/contracts";
+  import { fileDownloadUrl, type ImageRef, type FileLimits } from "@lamplit/contracts";
   import {
     createFileDrafts,
     fileIntakeError,
-    restoreFileDraft,
     type ChatFileDraft,
   } from "../../file-upload.ts";
   import { longPress } from "./long-press.ts";
@@ -379,10 +378,9 @@
   let imageDraftSessionId: string | undefined;
   let recoveredDraftKey = "";
   let recoveredPendingKey = "";
-  let recoveredDraftToken = 0;
   let replacementSourceIds: readonly string[] = [];
-  let missingRecoveryImages = false;
-  let restoringRecovery = false;
+  let restoredNeedsAttachments = false;
+  let restoredEmptyRecovery = false;
   let deferredPreviewReleases: CompanionImageDraft[] = [];
   let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
@@ -483,23 +481,25 @@
     imageDraftSessionId = sessionId;
     recoveredDraftKey = "";
     recoveredPendingKey = "";
-    recoveredDraftToken += 1;
     replacementSourceIds = [];
-    missingRecoveryImages = false;
-    restoringRecovery = false;
+    restoredNeedsAttachments = false;
+    restoredEmptyRecovery = false;
     composer = createComposerState();
     void scheduleComposerResize();
+  }
+  $: if (restoredEmptyRecovery && (composer.draft || imageDrafts.length || fileDrafts.length)) {
+    restoredEmptyRecovery = false;
   }
   $: if (
     !composer.draft &&
     !imageDrafts.length &&
     !fileDrafts.length &&
-    !restoringRecovery &&
-    !missingRecoveryImages
+    !restoredEmptyRecovery
   ) {
     replacementSourceIds = [];
     recoveredDraftKey = "";
     recoveredPendingKey = "";
+    restoredNeedsAttachments = false;
   }
   $: if (projection.canSubmit === false && voiceBusy) void cancelVoiceInput();
   $: if (sessionId !== voiceSessionId) {
@@ -571,13 +571,8 @@
     };
   }
 
-  async function restoreRecoveredDraft(
-    draft: CompanionRecoveredDraft,
-  ): Promise<void> {
+  function restoreRecoveredDraft(draft: CompanionRecoveredDraft): void {
     if (nativePhotoBusy) return;
-    const token = ++recoveredDraftToken;
-    recoveredDraftKey = draft.key;
-    recoveredPendingKey = draft.localPendingKey ?? "";
     if (sessionId !== imageDraftSessionId) return;
     if (
       composer.draft.trim() ||
@@ -586,53 +581,12 @@
       !draft.replacementEligible
     )
       return;
-    restoringRecovery = true;
-    const originalComposer = composer.draft;
-    const files: File[] = [];
-    let missing = false;
-    for (const image of draft.images) {
-      try {
-        const response = await fetch(image.url);
-        if (!response.ok) throw new Error("Missing image");
-        const blob = await response.blob();
-        files.push(
-          new File([blob], image.name, { type: blob.type || "image/png" }),
-        );
-      } catch {
-        missing = true;
-      }
-    }
-    const restoredFiles: ChatFileDraft[] = [];
-    const current = () =>
-      token === recoveredDraftToken &&
-      sessionId === imageDraftSessionId &&
-      !photoDisposed;
-    for (const file of draft.files ?? []) {
-      try {
-        restoredFiles.push(await restoreFileDraft(file, current));
-      } catch {
-        missing = true;
-      }
-    }
-    if (token !== recoveredDraftToken || sessionId !== imageDraftSessionId)
-      return;
-    restoringRecovery = false;
-    if (
-      composer.draft !== originalComposer ||
-      imageDrafts.length ||
-      fileDrafts.length ||
-      recoveredDraft?.key !== draft.key ||
-      !recoveredDraft.replacementEligible
-    ) {
-      recoveredDraftKey = "";
-      recoveredPendingKey = "";
-      return;
-    }
+    recoveredDraftKey = draft.key;
+    recoveredPendingKey = draft.localPendingKey ?? "";
+    restoredEmptyRecovery = !draft.input;
     composer = { ...composer, draft: draft.input, composing: false };
     replacementSourceIds = draft.sourceIds;
-    missingRecoveryImages = missing;
-    imageDrafts = createImageDrafts(files);
-    fileDrafts = restoredFiles;
+    restoredNeedsAttachments = draft.images.length > 0 || (draft.files?.length ?? 0) > 0;
     void scheduleComposerResize();
     liveAnnouncement = { key: "recovery.restored" };
   }
@@ -1288,9 +1242,7 @@
     if (
       projection.canSubmit === false ||
       voiceBusy ||
-      nativePhotoBusy ||
-      restoringRecovery ||
-      missingRecoveryImages
+      nativePhotoBusy
     )
       return;
     const restoreText = composer.draft;
@@ -1311,6 +1263,8 @@
     const originSessionGeneration = nativePhotoGeneration;
     const sources = replacementSourceIds;
     replacementSourceIds = [];
+    restoredNeedsAttachments = false;
+    restoredEmptyRecovery = false;
     // Local recovery ownership is independent of native replacement sources.
     if (recoveredPendingKey) actions.dismissRecovery?.(recoveredPendingKey);
     recoveredPendingKey = "";
@@ -1570,22 +1524,24 @@
     const generation = nativePhotoGeneration;
     if (!ref || ref.availability !== "available" || !originSession) return;
     try {
-      const restored = await restoreFileDraft(ref, () =>
-        sessionId === originSession && generation === nativePhotoGeneration && !photoDisposed,
-      );
-      const url = URL.createObjectURL(
-        new Blob([restored.file], { type: "application/octet-stream" }),
-      );
+      const url = new URL(fileDownloadUrl(ref.attachmentId), location.href);
+      // Check availability without buffering; the download manager reads the file.
+      const response = await fetch(url, { credentials: "same-origin", redirect: "error" });
+      if (!response.ok || sessionId !== originSession || generation !== nativePhotoGeneration || photoDisposed) {
+        await response.body?.cancel();
+        throw new Error("file-unavailable");
+      }
+      await response.body?.cancel();
+      if (sessionId !== originSession || generation !== nativePhotoGeneration || photoDisposed) return;
       const link = document.createElement("a");
       link.className = "external";
-      link.href = url;
+      link.href = url.href;
       link.download =
         ref.name.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, "-").trim() ||
         "download";
       document.body.append(link);
       link.click();
       link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch {
       if (sessionId === originSession && generation === nativePhotoGeneration)
         liveAnnouncement = { key: "file.downloadFailed" };
@@ -1601,7 +1557,6 @@
   function canIntakePhoto(): boolean {
     return (
       !voiceBusy &&
-      !restoringRecovery &&
       !!imageLimits &&
       projection.canSubmit !== false &&
       !photoDisposed
@@ -1645,7 +1600,7 @@
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
   function openAttachmentMenu(target: HTMLElement): void {
-    if (nativePhotoBusy || voiceBusy || restoringRecovery) return;
+    if (nativePhotoBusy || voiceBusy) return;
     messageMenu(
       target,
       [
@@ -2431,10 +2386,9 @@
                   !recoveredDraft.replacementEligible ||
                   !!composer.draft.trim() ||
                   imageDrafts.length > 0 ||
-                  fileDrafts.length > 0 ||
-                  restoringRecovery}
+                  fileDrafts.length > 0}
                 on:click={() =>
-                  recoveredDraft && void restoreRecoveredDraft(recoveredDraft)}
+                  recoveredDraft && restoreRecoveredDraft(recoveredDraft)}
                 >{t("recovery.restore")}</button
               >
               <button
@@ -2462,8 +2416,9 @@
                 >{/if}
             </div>
           {/if}
-          {#if replacementSourceIds.length}
+          {#if replacementSourceIds.length || (recoveredDraftKey && (restoredNeedsAttachments || restoredEmptyRecovery))}
             <div class="companion-input-recovery">
+              {#if restoredNeedsAttachments}<span>{t("recovery.missing")}</span>{/if}
               <button
                 class="button"
                 type="button"
@@ -2476,25 +2431,10 @@
                   fileDrafts = [];
                   composer = { ...composer, draft: "", composing: false };
                   replacementSourceIds = [];
-                  missingRecoveryImages = false;
+                  restoredNeedsAttachments = false;
+                  restoredEmptyRecovery = false;
                   void scheduleComposerResize();
                 }}>{t("recovery.discardRestored")}</button
-              >
-            </div>
-          {/if}
-          {#if missingRecoveryImages}
-            <div
-              class="companion-input-recovery"
-              role="alert"
-              data-testid="missing-recovery-image"
-            >
-              <span>{t("recovery.missing")}</span>
-              <button
-                class="button button-tonal"
-                type="button"
-                on:click={() => {
-                  missingRecoveryImages = false;
-                }}>{t("recovery.removeMissing")}</button
               >
             </div>
           {/if}

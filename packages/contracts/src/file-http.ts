@@ -1,11 +1,7 @@
 import {
-  FILE_UPLOAD_PATH,
   FILE_DOWNLOAD_PATH,
-  MAX_FILE_UPLOAD_BODY_BYTES,
-  validateFileUpload,
-  validateFileUploadResult,
+  MAX_FILE_BYTES,
   type FileLimits,
-  type FileUpload,
 } from "./files.ts";
 import { MediaIdSchema } from "./images.ts";
 import { validate } from "./validation.ts";
@@ -15,10 +11,11 @@ export interface FileOwner {
   sessionId: string;
 }
 export interface FileBackend {
-  /** Scoped to the authenticated owner/session; operation and payload are immutable. */
-  upload(input: FileUpload, owner: FileOwner): Promise<unknown>;
-  /** Return only files the authenticated owner/session may read. */
-  file(id: string, owner: FileOwner): Promise<Uint8Array | null>;
+  /** Return only owner/session-authorized bytes as an exact-size stream. */
+  fileStream(
+    id: string,
+    owner: FileOwner,
+  ): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null>;
 }
 /** Mount before static assets. Resolve authorization and session on each request. */
 export async function fileHttp(
@@ -31,11 +28,7 @@ export async function fileHttp(
   } | null>,
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
-  if (
-    url.pathname !== FILE_UPLOAD_PATH &&
-    !url.pathname.startsWith(FILE_DOWNLOAD_PATH)
-  )
-    return;
+  if (!url.pathname.startsWith(FILE_DOWNLOAD_PATH)) return;
   const owner = await authorize();
   if (
     !owner ||
@@ -51,50 +44,19 @@ export async function fileHttp(
     "Content-Security-Policy": "sandbox; default-src 'none'",
   };
   try {
-    if (url.pathname === FILE_UPLOAD_PATH) {
-      if (request.method !== "POST")
-        return new Response(null, { status: 405, headers });
-      if (request.headers.get("origin") !== url.origin)
-        return new Response(null, { status: 403, headers });
-      if (!owner.limits)
-        return new Response("Files unavailable", { status: 503, headers });
-      if (request.headers.get("content-type") !== "application/json")
-        return new Response(null, { status: 415, headers });
-      if (
-        Number(request.headers.get("content-length")) >
-        MAX_FILE_UPLOAD_BODY_BYTES
-      )
-        return new Response(null, { status: 413, headers });
-      const reader = request.body?.getReader();
-      if (!reader) throw new Error("Missing body");
-      const chunks: Uint8Array[] = [];
-      let length = 0;
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          length += value.byteLength;
-          if (length > MAX_FILE_UPLOAD_BODY_BYTES) {
-            await reader.cancel();
-            return new Response(null, { status: 413, headers });
-          }
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      const bytes = new Uint8Array(length);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.length;
-      }
-      const input = validateFileUpload(
-        JSON.parse(new TextDecoder().decode(bytes)),
-        owner.limits,
-      );
-      if (input.sessionId !== owner.sessionId)
-        return new Response(null, { status: 403, headers });
+    if (request.method !== "GET")
+      return new Response(null, { status: 405, headers });
+    const id = validate(
+      MediaIdSchema,
+      url.pathname.slice(FILE_DOWNLOAD_PATH.length),
+    );
+    const file = await backend.fileStream(id, {
+      ownerId: owner.ownerId,
+      sessionId: owner.sessionId,
+    });
+    let acquiredReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let handedOff = false;
+    try {
       const current = await authorize();
       if (
         !current ||
@@ -102,54 +64,61 @@ export async function fileHttp(
         current.sessionId !== owner.sessionId
       )
         return new Response(null, { status: 403, headers });
-      if (!current.limits) return new Response(null, { status: 503, headers });
-      validateFileUpload(input, current.limits);
-      const result = validateFileUploadResult(
-        await backend.upload(input, {
-          ownerId: owner.ownerId,
-          sessionId: owner.sessionId,
-        }),
-        input,
-      );
-      const final = await authorize();
+      if (!file) return new Response("Missing file", { status: 404, headers });
       if (
-        !final ||
-        final.ownerId !== owner.ownerId ||
-        final.sessionId !== owner.sessionId
+        !Number.isSafeInteger(file.size) ||
+        file.size < 0 ||
+        file.size > MAX_FILE_BYTES
       )
-        return new Response(null, { status: 403, headers });
-      return Response.json(result, { headers });
+        throw new Error("Invalid file size");
+      const reader = file.body.getReader();
+      acquiredReader = reader;
+      let count = 0;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const auth = await authorize();
+            if (
+              !auth ||
+              auth.ownerId !== owner.ownerId ||
+              auth.sessionId !== owner.sessionId
+            )
+              throw new Error("Authorization changed");
+            const next = await reader.read();
+            if (next.done) {
+              if (count !== file.size) throw new Error("Wrong file size");
+              reader.releaseLock();
+              controller.close();
+              return;
+            }
+            count += next.value.byteLength;
+            if (count > file.size) throw new Error("Wrong file size");
+            controller.enqueue(next.value);
+          } catch (error) {
+            await reader.cancel().catch(() => {});
+            controller.error(error);
+          }
+        },
+        async cancel(reason) {
+          await reader.cancel(reason);
+        },
+      });
+      const response = new Response(body, {
+        headers: {
+          ...headers,
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": "attachment",
+          "Content-Length": String(file.size),
+        },
+      });
+      handedOff = true;
+      return response;
+    } finally {
+      if (file && !handedOff) {
+        if (acquiredReader) await acquiredReader.cancel().catch(() => {});
+        else await file.body.cancel().catch(() => {});
+      }
     }
-    if (request.method !== "GET")
-      return new Response(null, { status: 405, headers });
-    const id = validate(
-      MediaIdSchema,
-      url.pathname.slice(FILE_DOWNLOAD_PATH.length),
-    );
-    const bytes = await backend.file(id, {
-      ownerId: owner.ownerId,
-      sessionId: owner.sessionId,
-    });
-    if (
-      bytes &&
-      (!(bytes instanceof Uint8Array) || bytes.byteLength > 8_000_000)
-    )
-      throw new Error("Invalid file result");
-    const current = await authorize();
-    if (
-      !current ||
-      current.ownerId !== owner.ownerId ||
-      current.sessionId !== owner.sessionId
-    )
-      return new Response(null, { status: 403, headers });
-    if (!bytes) return new Response("Missing file", { status: 404, headers });
-    return new Response(bytes as BodyInit, {
-      headers: {
-        ...headers,
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": 'attachment; filename="download"',
-      },
-    });
   } catch {
     return new Response("File request failed", { status: 400, headers });
   }

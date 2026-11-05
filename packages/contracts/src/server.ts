@@ -700,3 +700,7 @@ export { imageHttp, type ImageBackend } from "./image-http.ts";
 export { stickerHttp } from "./sticker-http.ts";
 
 export { fileHttp, type FileBackend, type FileOwner } from "./file-http.ts";
+
+export { fileStreamHttp, type FileStreamBackend, type FileStreamStatus } from "./file-stream-http.ts";
+
+export { FileOperationRetiredError, FileOperationNotFoundError } from "./files.ts";

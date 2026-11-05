@@ -68,10 +68,11 @@ for (const mode of ["unknown", "failed"])
         retries = 0,
         lookups = 0,
         released = 0;
+      let manifest: any;
       set("fetch", async (url: any, init: any) => {
-        const path = new URL(String(url)).pathname,
-          input = JSON.parse(init.body);
+        const path = new URL(String(url)).pathname;
         if (path === "/api/chat/images") {
+          const input = JSON.parse(init.body);
           imageBytes = input.images[0].original;
           return Response.json({
             sessionId: input.sessionId,
@@ -88,14 +89,23 @@ for (const mode of ["unknown", "failed"])
             })),
           });
         }
-        if (path === "/api/chat/files") {
-          fileBytes = input.files[0].data;
+        if (path === "/api/chat/file-operations") {
+          manifest = JSON.parse(init.body);
+          return Response.json({ manifest, uploaded: [] });
+        }
+        if (init?.method === "PUT") {
+          fileBytes = Buffer.from(await init.body.arrayBuffer()).toString(
+            "base64",
+          );
+          return new Response(null, { status: 204 });
+        }
+        if (path.endsWith("/complete"))
           return Response.json({
-            sessionId: input.sessionId,
-            operationId: input.operationId,
-            files: input.files.map((x: any) => ({
+            sessionId: manifest.sessionId,
+            operationId: manifest.operationId,
+            files: manifest.files.map((x: any, order: number) => ({
               id: x.id,
-              order: x.order,
+              order,
               ref: {
                 attachmentId: "file-ref",
                 name: x.name,
@@ -105,7 +115,6 @@ for (const mode of ["unknown", "failed"])
               },
             })),
           });
-        }
         throw Error(`unexpected route ${path}`);
       });
       const c = new ChatController(() => {}, storage()),
@@ -182,9 +191,10 @@ test("capacity retry distinguishes unsettled cancellation from an ordinary uploa
   const desc = save();
   set("location", { href: "http://fixture.invalid/" });
   const releases: ((v: Response) => void)[] = [];
-  set(
-    "fetch",
-    async () => await new Promise<Response>((r) => releases.push(r)),
+  set("fetch", async (_url: URL, init?: RequestInit) =>
+    !init?.method || init.method === "GET"
+      ? new Response(null, { status: 404 })
+      : await new Promise<Response>((r) => releases.push(r)),
   );
   const c = new ChatController(() => {}, storage()),
     x = c as any;

@@ -299,7 +299,7 @@
   "recovery.restore": "恢复编辑",
   "recovery.discard": "忽略",
   "recovery.busy": "请先发送或清空当前输入。",
-  "recovery.missing": "部分原始附件无法恢复。请重新选择附件或明确移除缺失附件。",
+  "recovery.missing": "附件未恢复，请重新选择。",
   "recovery.removeMissing": "移除缺失附件",
   "recovery.inspect": "查看提交内容",
   "recovery.restored": "已恢复，可编辑后发送。",

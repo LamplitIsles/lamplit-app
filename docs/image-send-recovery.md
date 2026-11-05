@@ -134,9 +134,10 @@ input recovery uses a new ID and verified replacement source IDs. Restored local
 from native replacement sources.
 
 Independent withdrawn-input recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
-current text/images are present; it cannot overwrite new edits. Original bytes are
-rehydrated over authorized HTTP. Missing originals leave editable text and block
-send until the user explicitly removes missing images or selects replacements.
+current text or attachments are present; it cannot overwrite new edits. Restore puts only text in
+the composer and does not fetch or restore image or file originals. Attachments must be selected
+and uploaded again if wanted; a person can also send the restored text without them. Explicit
+failed-message retry remains separate and retains its existing original-attachment behavior.
 Edited recovery sends with a new operation ID and verified replacement source ID.
 Native state is checked again before send. Dismiss hides a recovery offer for this
 page/session only; it does not consume or delete native input. Clearing all restored

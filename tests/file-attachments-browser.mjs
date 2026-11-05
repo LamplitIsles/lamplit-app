@@ -3,6 +3,7 @@ import { chromium, expect } from "@playwright/test";
 import {
   imageHttp,
   fileHttp,
+  fileStreamHttp,
 } from "../packages/contracts/src/server.ts";
 import { imagesFixture } from "./images-fixture.ts";
 import { filesFixture, fileLimits } from "./files-fixture.ts";
@@ -17,6 +18,8 @@ const files = filesFixture();
 const fileMessages = new Map();
 const marker = "__fixture_file_only__";
 let enabled = true;
+let fileReads = 0;
+let testRecovery = null;
 let currentSession = "fixture-session";
 let raceMessage;
 let failFileUpload = false;
@@ -30,6 +33,7 @@ const backend = {
     return {
       ...view,
       sessionId: currentSession,
+      ...(testRecovery ? { recovery: testRecovery } : {}),
       capabilities: {
         ...view.capabilities,
         files: enabled ? fileLimits : false,
@@ -78,11 +82,14 @@ const server = Bun.serve({
           limits: enabled ? fileLimits : false,
         }
       : null;
-    if (path === "/api/chat/files" && request.method === "POST") {
+    if (path.startsWith("/api/chat/files/") && request.method === "GET") fileReads++;
+    if (path === "/api/chat/file-operations" && request.method === "POST") {
       fileUploads++;
       if (failFileUpload) return new Response(null, { status: 503 });
     }
     if (path === "/api/chat/images" && request.method === "POST") imageUploads++;
+    const stream = await fileStreamHttp(request, files.streamBackend, async () => owner);
+    if (stream) return stream;
     const file = await fileHttp(request, files.backend, async () => owner);
     if (file) return file;
     const image = await imageHttp(request, images.imageBackend, async () =>
@@ -309,6 +316,58 @@ try {
     expect(errors).toEqual([]);
     await context.close();
   }
+  // Recovery restores text only; selecting a replacement file is explicit.
+  const savedRef = [...fileMessages.values()].flat().find((ref) => ref.name === "笔记.txt");
+  expect(savedRef).toBeDefined();
+  const recoveryContext = await browser.newContext({ locale: "zh-CN" });
+  await recoveryContext.addInitScript(denyNativeNotifications);
+  const recoveryPage = await recoveryContext.newPage();
+  for (const text of ["恢复的文字", ""]) {
+    const sourceId = crypto.randomUUID();
+    testRecovery = [{ sourceId, operationId: sourceId, text, images: [], files: [savedRef], replacementEligible: true }];
+    await host.publish();
+    await recoveryPage.goto(`http://127.0.0.1:${server.port}/`);
+    await expect(recoveryPage.getByTestId("input-recovery")).toBeVisible();
+    const before = fileReads;
+    await recoveryPage.getByRole("button", { name: "恢复编辑", exact: true }).click();
+    await expect(recoveryPage.locator("#companion-textarea")).toHaveValue(text);
+    await expect(recoveryPage.getByTestId("file-draft")).toHaveCount(0);
+    await expect(recoveryPage.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
+    expect(fileReads).toBe(before);
+    await recoveryPage.getByRole("button", { name: "添加附件" }).click();
+    const [replacementPicker] = await Promise.all([
+      recoveryPage.waitForEvent("filechooser"),
+      recoveryPage.getByRole("button", { name: "上传文件", exact: true }).click(),
+    ]);
+    await replacementPicker.setFiles({ name: "new.txt", mimeType: "text/plain", buffer: Buffer.from("replacement") });
+    await expect(recoveryPage.getByTestId("file-draft")).toHaveCount(1);
+    await recoveryPage.getByRole("button", { name: "丢弃恢复的输入", exact: true }).click();
+  }
+  await recoveryContext.close();
+  testRecovery = null;
+  await host.publish();
+  // History downloads remain available when uploads are disabled.
+  enabled = false;
+  await host.publish();
+  const largeContext = await browser.newContext({ locale: "zh-CN", acceptDownloads: true });
+  await largeContext.addInitScript(denyNativeNotifications);
+  const largePage = await largeContext.newPage();
+  await largePage.goto(`http://127.0.0.1:${server.port}/`);
+  const largeFile = largePage.getByTestId("file-message").filter({ hasText: "笔记.txt" }).last();
+  await expect(largeFile).toBeVisible();
+  await largeFile.hover(); await largePage.mouse.down();
+  await largePage.waitForTimeout(550); await largePage.mouse.up();
+  const readsBefore = fileReads;
+  const [largeDownload] = await Promise.all([
+    largePage.waitForEvent("download"),
+    largePage.getByRole("button", { name: "下载", exact: true }).click(),
+  ]);
+  expect(largeDownload.suggestedFilename()).toBe("笔记.txt");
+  expect((await readFile(await largeDownload.path())).toString()).toBe("hello file");
+  expect(fileReads - readsBefore).toBe(2); // authorization preflight and browser download
+  await largeContext.close();
+  enabled = true;
+  await host.publish();
   const touchContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
     hasTouch: true,

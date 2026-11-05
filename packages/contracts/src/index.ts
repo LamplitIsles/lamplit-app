@@ -5,7 +5,13 @@ import { ReminderSourceSchema, type PanelBackend } from "./panels.ts";
 export * from "./panels.ts";
 export * from "./images.ts";
 export * from "./files.ts";
-import { FileRefSchema, FileLimitsSchema, type FileRef } from "./files.ts";
+import {
+  FileRefSchema,
+  FileLimitsSchema,
+  MAX_FILES_PER_MESSAGE,
+  MAX_MESSAGE_FILE_BYTES,
+  type FileRef,
+} from "./files.ts";
 export * from "./stickers.ts";
 export * from "./workspace-images.ts";
 export * from "./compact.ts";
@@ -43,7 +49,9 @@ export const SubmissionSchema = Type.Object(
     operationId: OperationIdSchema,
     text: Type.String({ maxLength: 16000 }),
     images: Type.Optional(Type.Array(ImageRefSchema, { maxItems: 6 })),
-    files: Type.Optional(Type.Array(FileRefSchema, { maxItems: 6 })),
+    files: Type.Optional(
+      Type.Array(FileRefSchema, { maxItems: MAX_FILES_PER_MESSAGE }),
+    ),
     replacementSourceIds: Type.Optional(
       Type.Array(Id, { maxItems: 20, uniqueItems: true }),
     ),
@@ -132,7 +140,7 @@ export const RetryFileMappingSchema = Type.Object(
         { sourceAttachmentId: MediaIdSchema, ref: FileRefSchema },
         { additionalProperties: false },
       ),
-      { minItems: 1, maxItems: 6 },
+      { minItems: 1, maxItems: MAX_FILES_PER_MESSAGE },
     ),
   },
   { additionalProperties: false },
@@ -296,7 +304,9 @@ export type VoiceRef = Static<typeof VoiceRefSchema>;
 export const MessageSchema = Type.Object(
   {
     images: Type.Optional(Type.Array(ImageRefSchema)),
-    files: Type.Optional(Type.Array(FileRefSchema, { maxItems: 6 })),
+    files: Type.Optional(
+      Type.Array(FileRefSchema, { maxItems: MAX_FILES_PER_MESSAGE }),
+    ),
     imageState: Type.Optional(
       Type.Union([
         Type.Literal("preparing"),
@@ -460,7 +470,8 @@ export function validateSubmission(value: unknown): Submission {
     (new Set(input.files.map((file) => file.attachmentId)).size !==
       input.files.length ||
       input.files.some((file) => file.availability !== "available") ||
-      input.files.reduce((sum, file) => sum + file.size, 0) > 24_000_000)
+      input.files.reduce((sum, file) => sum + file.size, 0) >
+        MAX_MESSAGE_FILE_BYTES)
   )
     throw new Error("Invalid submitted files");
   if (

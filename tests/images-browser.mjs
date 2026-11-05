@@ -614,7 +614,8 @@ try {
     await expect(recovery).toBeVisible();
     await restore.click();
     await expect(input).toHaveValue("上传失败保留");
-    await expect(drafts).toHaveCount(1);
+    await expect(drafts).toHaveCount(0);
+    await expect(page.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
     await input.fill("恢复后编辑");
     await control({ action: "mode", state: "submitted" });
     await input.press("Enter");
@@ -632,32 +633,24 @@ try {
     await page.reload();
     expect((await control({ action: "state" })).executions).toBe(executions);
     await expect(recovery).toHaveCount(0);
-    // A delayed native recovery result cannot replace edits made while originals load.
+    // Restoring text never fetches original attachments.
     await control({ action: "nativeRecovery" });
     await page.reload();
     await expect(recovery).toBeVisible();
-    let releaseMedia;
-    const heldMedia = new Promise((resolve) => {
-      releaseMedia = resolve;
-    });
-    let mediaStarted;
-    const mediaRequest = new Promise((resolve) => {
-      mediaStarted = resolve;
-    });
+    let mediaRequests = 0;
     await page.route("**/api/chat/media/**/original", async (route) => {
-      mediaStarted();
-      const response = await route.fetch();
-      await heldMedia;
-      await route.fulfill({ response });
+      mediaRequests++;
+      await route.abort();
     });
     await restore.click();
-    await mediaRequest;
-    await input.fill("恢复期间编辑");
-    releaseMedia();
-    await expect(restore).toBeDisabled();
-    await expect(input).toHaveValue("恢复期间编辑");
+    await expect(input).toHaveValue("原生恢复输入");
     await expect(drafts).toHaveCount(0);
+    expect(mediaRequests).toBe(0);
+    await input.fill("恢复期间编辑");
+    await expect(input).toHaveValue("恢复期间编辑");
     await page.unrouteAll({ behavior: "wait" });
+    await input.fill("");
+    await expect(recovery).toBeVisible();
     await page.getByRole("button", { name: "忽略", exact: true }).click();
     await expect(recovery).toHaveCount(0);
     expect((await control({ action: "state" })).recovery.length).toBe(1);
@@ -675,22 +668,8 @@ try {
       expect(nextSource).toBeDefined();
       const assertOriginal = async (source) => {
         await expect(input).toHaveValue(source.text);
-        await expect(drafts).toHaveCount(1);
-        const original = await context.request.get(
-          new URL(
-            `/api/chat/media/${source.images[0].attachmentId}/original`,
-            url,
-          ).href,
-        );
-        expect(original.ok()).toBe(true);
-        const restored = await drafts
-          .first()
-          .evaluate(async (image) =>
-            Array.from(
-              new Uint8Array(await (await fetch(image.src)).arrayBuffer()),
-            ),
-          );
-        expect(Buffer.from(restored)).toEqual(await original.body());
+        await expect(drafts).toHaveCount(0);
+        await expect(page.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
       };
       // The control acknowledgement is not delivery of its recovery view to the browser.
       await expect(recovery.locator("img")).toHaveAttribute(
@@ -704,7 +683,6 @@ try {
           .getByRole("button", { name: "丢弃恢复的输入", exact: true })
           .click();
       else {
-        await remove.click();
         await input.fill("");
         await expect(recovery).toBeVisible();
         await page.getByRole("button", { name: "忽略", exact: true }).click();
@@ -765,23 +743,15 @@ try {
     await page.unrouteAll({ behavior: "wait" });
     await control({ action: "uploadFailure", enabled: false });
     await input.fill("");
-    // Native-origin recovery rehydrates on refresh; missing media requires explicit removal.
+    // Missing originals do not block restoring and sending the text.
     await control({ action: "nativeRecovery" });
     await page.reload();
     await expect(recovery).toBeVisible();
     await control({ action: "missing" });
     await restore.click();
     await expect(input).toHaveValue("原生恢复输入");
-    await expect(page.getByTestId("missing-recovery-image")).toBeVisible();
-    await input.press("Enter");
-    await expect(input).toHaveValue("原生恢复输入");
-    await page.screenshot({
-      path: `${evidence}/missing-original-${width}.png`,
-      fullPage: true,
-    });
-    await page
-      .getByRole("button", { name: "移除缺失图片", exact: true })
-      .click();
+    await expect(drafts).toHaveCount(0);
+    await expect(page.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
     await input.press("Enter");
     await expect
       .poll(async () => (await control({ action: "state" })).recovery.length)

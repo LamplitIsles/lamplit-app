@@ -299,7 +299,7 @@
   "recovery.restore": "Restore to edit",
   "recovery.discard": "Dismiss",
   "recovery.busy": "Send or clear the current input first.",
-  "recovery.missing": "Some original attachments are missing. Select them again or explicitly remove the missing attachments.",
+  "recovery.missing": "Attachments were not restored. Please select them again.",
   "recovery.removeMissing": "Remove missing attachments",
   "recovery.inspect": "Inspect submitted input",
   "recovery.restored": "Restored. Edit and send when ready.",

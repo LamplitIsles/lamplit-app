@@ -6,14 +6,14 @@ import type {
 } from "@lamplit/contracts";
 import {
   CHAT_PATH,
+  MAX_FILES_PER_MESSAGE,
+  MAX_FILE_BYTES,
   OperationIdSchema,
   validateSubmission,
   UPLOAD_PATH,
   validateUploadResult,
   validateRetryImageMapping,
   validateRetryFileMapping,
-  FILE_UPLOAD_PATH,
-  validateFileUploadResult,
   StickerIdentitySchema,
   type StickerIdentity,
   type InputRecovery,
@@ -25,7 +25,7 @@ import {
 } from "@lamplit/contracts";
 import { ChatConnectionError, openChat } from "@lamplit/contracts/client";
 import { StickerClient } from "./sticker-client.ts";
-import { prepareFileUploads, type ChatFileDraft } from "./file-upload.ts";
+import { streamFileUploads, type ChatFileDraft } from "./file-upload.ts";
 import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
 import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
@@ -485,7 +485,7 @@ export class ChatController {
             (item.localFileCount &&
               (!Number.isInteger(item.localFileCount) ||
                 item.localFileCount < 1 ||
-                item.localFileCount > 6)) ||
+                item.localFileCount > MAX_FILES_PER_MESSAGE)) ||
             (item.localImageCount &&
               (!Number.isInteger(item.localImageCount) ||
                 item.localImageCount < 1 ||
@@ -528,7 +528,7 @@ export class ChatController {
               localImageCount: item.localImageCount,
               localFileCount: item.localFileCount,
               ...(Array.isArray(item.fileDrafts) &&
-              item.fileDrafts.length <= 6 &&
+              item.fileDrafts.length <= MAX_FILES_PER_MESSAGE &&
               item.fileDrafts.every(
                 (f: any) =>
                   typeof f.id === "string" &&
@@ -536,7 +536,7 @@ export class ChatController {
                   typeof f.size === "number" &&
                   Number.isSafeInteger(f.size) &&
                   f.size >= 0 &&
-                  f.size <= 8_000_000,
+                  f.size <= MAX_FILE_BYTES,
               )
                 ? { fileDrafts: item.fileDrafts }
                 : {}),
@@ -1556,23 +1556,17 @@ export class ChatController {
       if (files.length) {
         const limits = this.view!.capabilities.files;
         if (!limits) throw new Error("文件暂不可用");
-        const upload = await prepareFileUploads(
+        const result = await streamFileUploads(
           sessionId,
           operationId,
           files,
           limits,
-        );
-        if (!current()) throw new Error("连接已改变，请重新发送");
-        const response = await fetch(new URL(FILE_UPLOAD_PATH, location.href), {
-          method: "POST",
-          credentials: "same-origin",
-          redirect: "error",
-          signal: preparation?.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(upload),
+          current,
+          preparation?.signal,
+        ).catch((error: unknown) => {
+          if (!current()) throw error;
+          throw new Error("文件上传失败，请重试。");
         });
-        if (!response.ok) throw new Error("文件上传失败，请重试。");
-        const result = validateFileUploadResult(await response.json(), upload);
         if (!current()) throw new Error("连接已改变，请重新发送");
         fileRefs = result.files.map((item) => item.ref);
       }

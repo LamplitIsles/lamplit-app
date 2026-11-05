@@ -72,12 +72,13 @@ test("failed and in-flight attachments survive A-B-A and retry only explicitly w
         const entered = new Promise<void>((resolve) => {
           notify = resolve;
         });
+        const manifests = new Map<string, any>();
         Object.defineProperty(globalThis, "fetch", {
           configurable: true,
           value: async (url: URL | string, init: RequestInit) => {
             const path = new URL(url.toString()).pathname;
-            const input = JSON.parse(String(init.body));
-            if (path === "/api/chat/images")
+            if (path === "/api/chat/images") {
+              const input = JSON.parse(String(init.body));
               return Response.json({
                 sessionId: input.sessionId,
                 operationId: input.operationId,
@@ -92,19 +93,41 @@ test("failed and in-flight attachments survive A-B-A and retry only explicitly w
                   },
                 })),
               });
-            if (path !== "/api/chat/files")
-              throw new Error(`unexpected route ${path}`);
-            uploads++;
-            operations.push(input.operationId);
-            expect(input.sessionId).toBe("A");
-            expect(input.files[0].data).toBe("AQID");
-            const result = () =>
-              Response.json({
+            }
+            if (path === "/api/chat/file-operations") {
+              const input = JSON.parse(String(init.body));
+              uploads++;
+              operations.push(input.operationId);
+              expect(input.sessionId).toBe("A");
+              manifests.set(input.operationId, input);
+              if (uploads === 1) {
+                oldSignal = init.signal;
+                notify();
+                if (mode === "failed")
+                  return new Response(null, { status: 503 });
+                return await new Promise<Response>((resolve) => {
+                  resolveOld = resolve;
+                });
+              }
+              return Response.json({ manifest: input, uploaded: [] });
+            }
+            const parts = path.split("/");
+            const input = manifests.get(parts[4]!);
+            if (init.method === "GET")
+              return new Response(null, { status: 404 });
+            if (init.method === "PUT") {
+              expect([
+                ...new Uint8Array(await (init.body as Blob).arrayBuffer()),
+              ]).toEqual([1, 2, 3]);
+              return new Response(null, { status: 204 });
+            }
+            if (path.endsWith("/complete"))
+              return Response.json({
                 sessionId: input.sessionId,
                 operationId: input.operationId,
-                files: input.files.map((f: any) => ({
+                files: input.files.map((f: any, order: number) => ({
                   id: f.id,
-                  order: f.order,
+                  order,
                   ref: {
                     attachmentId: `file_${input.operationId}`,
                     name: f.name,
@@ -114,15 +137,7 @@ test("failed and in-flight attachments survive A-B-A and retry only explicitly w
                   },
                 })),
               });
-            if (uploads === 1) {
-              oldSignal = init.signal;
-              notify();
-              if (mode === "failed") return new Response(null, { status: 503 });
-              return await new Promise<Response>((resolve) => {
-                resolveOld = resolve;
-              });
-            }
-            return result();
+            throw new Error(`unexpected route ${path}`);
           },
         });
         const controller = new ChatController(() => {}, storage());
@@ -455,10 +470,12 @@ test("aborted but unsettled preparations still count toward the page bound", asy
   const releases: Array<(response: Response) => void> = [];
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
-    value: async () =>
-      await new Promise<Response>((resolve) => {
-        releases.push(resolve);
-      }),
+    value: async (_url: URL, init?: RequestInit) =>
+      !init?.method || init.method === "GET"
+        ? new Response(null, { status: 404 })
+        : await new Promise<Response>((resolve) => {
+            releases.push(resolve);
+          }),
   });
   const c = new ChatController(() => {}, storage());
   (c as any).client = { close() {} };
@@ -613,4 +630,91 @@ test("photo-only preparation failure remains retryable after a session switch", 
       else delete (globalThis as any)[key];
   }
   expect(released).toBe(1);
+});
+
+test("reload validates pending file metadata at protocol boundaries", () => {
+  const drafts = Array.from({ length: 6 }, (_, i) => ({
+    id: `file${i}`,
+    name: `file${i}`,
+    size: i === 0 ? 100_000_000 : 0,
+  }));
+  const pending = {
+    operationId: crypto.randomUUID(),
+    text: "",
+    state: "failed",
+    dispatched: false,
+    localFileCount: 6,
+    fileDrafts: drafts,
+    createdAt: 1,
+  };
+  const saved = new Map([["lamplit.pending:A", JSON.stringify([pending])]]);
+  const controller = new ChatController(() => {}, storage(saved));
+  try {
+    enter(controller, "A");
+    expect(controller.pending[0]?.fileDrafts).toEqual(drafts);
+    const oversize = new ChatController(
+      () => {},
+      storage(
+        new Map([
+          [
+            "lamplit.pending:A",
+            JSON.stringify([
+              { ...pending, fileDrafts: [{ ...drafts[0], size: 100_000_001 }] },
+            ]),
+          ],
+        ]),
+      ),
+    );
+    try {
+      enter(oversize, "A");
+      expect(oversize.pending[0]?.fileDrafts).toBeUndefined();
+    } finally {
+      oversize.close();
+    }
+    const tooManyDrafts = new ChatController(
+      () => {},
+      storage(
+        new Map([
+          [
+            "lamplit.pending:A",
+            JSON.stringify([
+              {
+                ...pending,
+                fileDrafts: [
+                  ...drafts,
+                  { id: "extra", name: "extra", size: 0 },
+                ],
+              },
+            ]),
+          ],
+        ]),
+      ),
+    );
+    try {
+      enter(tooManyDrafts, "A");
+      expect(tooManyDrafts.pending[0]?.fileDrafts).toBeUndefined();
+    } finally {
+      tooManyDrafts.close();
+    }
+    const overcount = new ChatController(
+      () => {},
+      storage(
+        new Map([
+          [
+            "lamplit.pending:A",
+            JSON.stringify([{ ...pending, localFileCount: 7 }]),
+          ],
+        ]),
+      ),
+    );
+    try {
+      enter(overcount, "A");
+      expect(overcount.pending).toEqual([]);
+      expect(overcount.error).toBe("无法读取上次发送状态，请先检查聊天记录。");
+    } finally {
+      overcount.close();
+    }
+  } finally {
+    controller.close();
+  }
 });
