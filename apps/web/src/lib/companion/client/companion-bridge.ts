@@ -49,6 +49,7 @@ export interface CompanionActions {
   refreshRelationship?: (history?: boolean) => Promise<void>;
   stop?: () => Promise<void>;
   loadOlder?: () => Promise<void>;
+  fillHistoryGap?: (id: number) => Promise<void>;
   attachmentUrl?: (attachment: unknown) => Promise<string>;
   loadEarlierHistory?: () => Promise<void>;
   retryHistory?: () => void;

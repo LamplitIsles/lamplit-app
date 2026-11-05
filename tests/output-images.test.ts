@@ -1,3 +1,4 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { expect, test } from "bun:test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
@@ -17,7 +18,8 @@ for (const count of [6, 7, 11])
       const fixture = imagesFixture();
       const state = await fixture.control({ action: "complete", count });
       const message = state.messages[0]!;
-      const host = await createChatHost({
+      const projected = { ...message, ends: [message.text.length] };
+      const host = await createUiTestHost({
         ...fixture.backend,
         async read() {
           const view = await fixture.backend.read();
@@ -61,19 +63,18 @@ for (const count of [6, 7, 11])
         () => {
           offline = true;
         },
-        () => {},
       );
       try {
-        expect(view!.messages).toEqual(historyOnly ? [] : [message]);
-        expect((await client.history(message.id)).messages).toEqual([message]);
+        expect(view!.messages).toEqual(historyOnly ? [] : [projected]);
+        expect((await client.history(message.id)).messages).toEqual([projected]);
         expect(offline).toBe(false);
         if (historyOnly) return;
         const next = await fixture.control({ action: "complete", count });
-        await host.refresh();
+        await host.publish();
         const end = Date.now() + 3000;
         while (view!.messages.length !== 2 && Date.now() < end)
           await Bun.sleep(10);
-        expect(view!.messages).toEqual(next.messages);
+        expect(view!.messages).toEqual(next.messages.map(item => ({ ...item, ends: [item.text.length] })));
         expect(offline).toBe(false);
         for (const role of ["agent", "user", "notice"] as const)
           expect(validate(MessageSchema, { ...message, role })).toEqual({

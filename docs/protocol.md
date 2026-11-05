@@ -14,7 +14,7 @@ Reloading the page reads updated configuration.
 | Member                                                                 | Meaning                                                                                 |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `view`                                                                 | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
-| `history(before)`                                                      | Previous page of ordered timeline entries, including in-progress image slots           |
+| `history(before)`                                                      | Previous page of source messages and its opaque continuation cursor                     |
 | `submit({ operationId, text, images?, replacementSourceIds? })`        | New input; the engine adapter starts or steers its native conversation                  |
 | `lookup(operationId)`                                                  | Reconcile admission after lost acknowledgement                                          |
 | `finalizeSubmission({ sessionId, submission } / { sessionId, retry })` | Fenced terminal admission decision for an expired immutable attempt                     |
@@ -50,7 +50,9 @@ and tool-call-only entries successful answers. See [UI and acceptance](collapsed
 ## Delivery semantics
 
 A turn can produce multiple independently identified entries. Text, images,
-voice and user messages share one authoritative order in live and history pages.
+voice and user messages use the order supplied by the backend in each view and
+history page. Continuity across pages depends on the provider's cursor and
+ordering semantics, as described below.
 An in-progress text entry uses `textState: "streaming"`; its completed form uses
 the same message ID and may use `textState: "complete"`.
 A later failure or stop does not turn unfinished text into a successful message.
@@ -115,8 +117,8 @@ sending and recorded admission remains sent. No old wire DTOs are accepted.
 
 The view remains version 2 and the Chord service remains `lamplit.chat.v2`.
 Deploy matching clients and host together: there is no negotiation or old-wire
-fallback, and an older client may not understand timeline events. The transport
-envelope remains v1.
+fallback. Current clients require projected reply boundaries and do not consume
+the former independent timeline events. The transport envelope remains v1.
 
 ## Final reply body evidence
 
@@ -286,45 +288,105 @@ See [Matrix presentation and native acceptance](matrix-source-ui.md).
 
 ## In-progress answers
 
-`ChatView.streamingReply?` is `{ id, turnId, createdAt, text }`, using the same
-bounded nonempty ID, nullable turn ID, number time and string text conventions as
-messages. It contains only available answer text, never thinking, signatures,
+`ChatView.streamingReply?` is `{ id, turnId, createdAt, text, ends }`, using the
+same bounded nonempty ID, nullable turn ID, number time and string text conventions
+as messages. It contains only available answer text, never thinking, signatures,
 tool arguments or output. Omission means there is no current preview. The shared
-host refresh copies or deletes this field alongside timeline messages atomically.
+host refresh copies or deletes this field alongside messages in the Chord view.
 
-When an in-progress answer is also a timeline entry, its ID is the same as the
-preview and its completed entry; render it once. Retry/stop/error/session reset
-must reconcile to native truth. A preview does not establish final-body evidence
-or admission. See [sentence replies](sentence-replies.md).
+When the provider emits a preview and its corresponding in-progress or completed
+entry, it must supply the same authoritative source ID; the host cannot infer
+that association from text or time. A duplicate preview and message with the same
+ID is rendered once. Pi's intended completed-only integration does not require a
+preview-to-entry mapping; the App fake does not prove that integration is deployed.
+Retry/stop/error/session reset must reconcile to native truth. A preview does not
+establish final-body evidence or admission. See [sentence replies](sentence-replies.md).
 
-## Timeline updates and recovery
+## Reply projection and history recovery
 
-An agent image slot carries `imageState: "preparing" | "ready" | "failed" |
-"unknown"`. Its ID and position stay stable. `ready` requires exactly one
-available `ImageRef`; other states contain no images. Unknown means the host
-cannot verify the result, not that generation is still running.
+The shared host projects an ordinary assistant source as its original `text` and
+ordered `ends` offsets in UTF-16 code units. Each segment is the range from the
+previous end (or zero) to the next end. The source text is retained once, including
+any unpublished tail or trailing whitespace; the client renders the supplied
+ranges and does not derive its own boundaries. `ends` may be empty. Ordinary
+complete LF/CRLF lines publish as they arrive, while explicitly started multiline
+blocks are buffered; a final unfinished line is emitted at completion. Blank-only
+tails do not create bubbles. A non-leading-pipe `A | B` line is immediate, and
+later Setext or reference definitions do not revise prior lines.
 
-The authenticated chat socket may publish `{ type: "timeline", sessionId,
-change }`, where `change` is `{ type: "item", message: ChatMessage }` for an
-existing entry or `{ type: "structure" }` for insertion, removal or reordering.
-Backend notifications are emitted only after the changed projection can be read.
-The host sends them only to subscribed connections for the current session,
-rechecks authorization for each send, coalesces item updates, and converts
-oversized pending batches to structural invalidation. Socket congestion or send
-failure closes the channel. `openChat` receives these through its required fourth
-callback as `{type:"change",update:{sessionId,change}}`; Chord resets produce
-`{type:"reset"}`. Clients update known IDs in place and never append an unknown
-item merely because it was pushed.
+An ordinary assistant source here has role `agent` and no `source`, `imageState`
+or `voice`; user, notice, external and media messages do not require reply ends.
+Raw backend input may omit `ends` because the host computes them. `openChat`
+requires and validates ends on delivered ordinary replies and previews: offsets
+must increase, stay within the source and not split a UTF-16 surrogate pair.
+Segment identity is scoped by session, authoritative source ID and ordinal. A
+single source remains a single paginated message even if it displays many segments.
 
-On structural invalidation, reconnect or reset, clients with loaded history read
-back from the current view cursor to their previously loaded boundary. If all
-history had been loaded, they read to the new null cursor. A single coordinator
-serializes history work and merges concurrent item updates; session changes
-discard stale results. Failed coordination retains the old entries and can be
-retried via `ChatController.retryHistory()`; `historySyncFailed` exposes failure.
-A scan is bounded by the loaded span plus newly displaced entries, not a
-fixed page count. No persistent synchronization revision or event replay is
-implied; continuity after a disconnect depends on this authoritative reread.
+For an active reply, the host protects already published text and boundaries;
+an unpublished tail or unfinished block may be rewritten and resegmented. A
+conflict with published segments or an overlapping completed source is rejected,
+not silently substituted. History is compared against overlapping current or
+initial view sources; the host cannot compare an absent source to an unknown
+older page. A rejected background change retains the last published view; command
+errors and unknown submission outcomes must not cause automatic resubmission.
+
+Backend `subscribe(changed)` delivers in-process changes to the shared host, which
+updates the existing Chord view. It is not a second wire channel. A provider sends
+absolute source messages and state, including an explicit `afterId` for a new or
+reordered message; larger structural changes may supply an ordered window and
+cursor. An update to an existing source keeps its position unless an anchor is
+given. The host computes reply ends and reports conflicts without publishing the
+conflicting view. Ordinary reply deltas do not require a fresh backend window,
+receipt lookup or media read.
+
+An explicit provider `{type: "error"}` means the host can no longer guarantee
+its view is current: it closes all of its connections with the existing reconnect
+signal. A source or projection conflict is reported while retaining the published
+view and connections. Closing observation does not cancel a dispatched submission;
+clients inspect its receipt or unknown outcome instead of resending it.
+
+The host subscribes before reading its initial view. Changes received while the
+read is pending are temporarily retained in order and applied before the first
+view is published; only adjacent updates of the same source without intervening
+structure or state are coalesced. A provider supplies an in-process session scope
+and sends a new scope with a session change, so late changes from the earlier
+lifetime are ignored even if the session ID later recurs. The initializer's
+optional abort signal cancels the initial `read` signal and closes the subscription
+on failure or cancellation. Temporary memory can grow with changes during a slow
+initial read; cancelling the provider's own work requires it to honor the signal. This
+handoff does not establish a global atomic snapshot across independent native,
+admission and media sources. Providers must ensure that applying the buffered
+changes to the initial read does not regress facts already included in that read,
+and must eventually deliver subsequent facts omitted from it. Their known
+ordering limits remain.
+
+There are no independent timeline item or structure frames and no
+automatic reread of already loaded historical items. Changes to media outside the
+live window therefore do not automatically update a loaded page. The current
+schema permits `imageState: "preparing" | "ready" | "failed" | "unknown"`;
+`ready` requires one available image and the other states have no images. `unknown`
+means the result cannot be verified. Providers must expose generated images in
+history only when complete and readable; the shared schema itself does not enforce
+that provider behavior.
+
+The Web controller retains loaded messages when the live window changes and can
+expose multiple gaps between retained old and new sources. A visible pending gap
+is filled on demand, at most one history page per `fillGap(id)` call, with no
+background full-history scan. Errors can be retried; a repeated cursor or reaching
+the end without the retained boundary leaves an unavailable gap. Empty pages with
+a new continuation cursor can advance. Session and connection changes fence late
+results; a normal continuous reconnect does not scan history.
+
+This relies on a provider's opaque `before` cursor yielding ordered, contiguous
+source pages, preserving source IDs and usable across a same-session reconnect;
+an expired cursor must fail explicitly. A page may be empty with a continuation;
+`before: null` denotes the end of that provider's range. The existing wire does
+not prove these properties or distinguish all remote pending/outcome records from
+durable history. The controller excludes locally known pending inputs from its
+overlap check, but cross-device unknown pending, retroactive materialization or
+provider page order differing from cursor order can still make continuity
+unprovable. No persistent coverage ledger, event replay or universal detection
+of such gaps is implied.
 
 ## Output image references
 

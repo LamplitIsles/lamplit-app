@@ -564,6 +564,16 @@
   font-size: 12px;
   background: var(--f7-bars-bg-color);
 }
+.companion-history-gap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--f7-text-color);
+  font-size: 12px;
+}
 .companion-media-pending {
   width: 112px;
   height: 112px;

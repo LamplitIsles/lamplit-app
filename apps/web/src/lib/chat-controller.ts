@@ -20,7 +20,6 @@ import {
   validate,
   type ChatView,
   type ChatMessage,
-  type ChatTimelineEvent,
   type Receipt,
   type Submission,
 } from "@lamplit/contracts";
@@ -74,6 +73,17 @@ export type LocalImagePreview = {
   attachmentId: string;
   previewUrl: string;
 };
+/** A visible discontinuity between retained sources; IDs locate its marker. */
+export type ChatHistoryGap = {
+  id: number;
+  afterId: string;
+  beforeId: string;
+  status: "pending" | "loading" | "error" | "unavailable";
+};
+type GapState = ChatHistoryGap & {
+  cursor: string | null;
+  visited: ReadonlySet<string>;
+};
 export class ChatController {
   view?: ChatView;
   older: ChatMessage[] = [];
@@ -113,13 +123,16 @@ export class ChatController {
   private retryFailures = 0;
   private retryable = true;
   private connectionGeneration = 0;
-  private historyLoaded = false;
-  private historyDirty = false;
-  private historyWork?: Promise<void>;
   private historyEpoch = 0;
   private historyLoadingToken?: symbol;
-  private historyPatches = new Map<string, ChatMessage>();
-  private historyPatchBytes = 0;
+  private gaps: GapState[] = [];
+  private nextGapId = 0;
+  private historySources = new Set<string>();
+  private unconfirmedInputs = new Set<string>();
+  /** `pending` may be triggered once when visible; `error` needs explicit retry. */
+  get historyGaps(): readonly ChatHistoryGap[] {
+    return this.gaps.map(({ cursor: _cursor, visited: _visited, ...gap }) => gap);
+  }
   historySyncFailed = false;
   private storageKey = "";
   private sessionGeneration = 0;
@@ -351,6 +364,12 @@ export class ChatController {
     this.closed = true;
     this.connected = false;
     this.connectionGeneration++;
+    this.historyEpoch++;
+    this.gaps = [];
+    this.historySources.clear();
+    this.unconfirmedInputs.clear();
+    this.historyLoadingToken = undefined;
+    this.loadingOlder = false;
     this.compactGeneration++;
     this.compactPending = false;
     for (const retire of this.retirements.values())
@@ -414,14 +433,12 @@ export class ChatController {
     this.pending = [];
     this.older = [];
     this.before = null;
-    this.historyLoaded = false;
-    this.historyDirty = false;
+    this.gaps = [];
+    this.historySources.clear();
+    this.unconfirmedInputs.clear();
     this.historyEpoch++;
-    this.historyWork = undefined;
     this.historyLoadingToken = undefined;
     this.loadingOlder = false;
-    this.historyPatches.clear();
-    this.historyPatchBytes = 0;
     this.historySyncFailed = false;
     for (const retire of this.retirements.values())
       retire({ reason: "observed" });
@@ -576,6 +593,41 @@ export class ChatController {
     this.hydrate(view.sessionId);
     const previous = this.view;
     const liveIds = new Set(view.messages.map((message) => message.id));
+    const oldIds = new Set(previous?.messages.map((message) => message.id));
+    const localPending = new Set(this.pending.map((item) => item.operationId));
+    const eligible = (message: ChatMessage) =>
+      !message.operationId ||
+      (!localPending.has(message.operationId) && !this.unconfirmedInputs.has(message.operationId));
+    const oldWindow = previous?.messages.filter(eligible) ?? [];
+    const newWindow = view.messages.filter(eligible);
+    // A shared item alone can be a long-lived pending input. A contiguous old
+    // suffix and new prefix gives the existing window a meaningful overlap.
+    const overlapAt = oldWindow.findIndex((message) => message.id === newWindow[0]?.id);
+    const overlap = overlapAt >= 0 && oldWindow.length - overlapAt <= newWindow.length &&
+      oldWindow.slice(overlapAt).every((message, index) => message.id === newWindow[index]?.id);
+    const sameWindow = previous !== undefined &&
+      JSON.stringify(previous) === JSON.stringify(view);
+    const previousTail = previous?.messages.findLast((message) => !liveIds.has(message.id) && eligible(message)) ??
+      (previous?.sessionId === view.sessionId
+        ? this.older.findLast((message) => !liveIds.has(message.id) && eligible(message))
+        : undefined);
+    const nextHead = view.messages.find((message) => !oldIds.has(message.id) && eligible(message));
+    if (
+      previous?.sessionId === view.sessionId &&
+      previousTail &&
+      nextHead &&
+      !sameWindow &&
+      !overlap
+    ) {
+      this.gaps.push({
+        id: ++this.nextGapId,
+        afterId: previousTail.id,
+        beforeId: nextHead.id,
+        cursor: view.before,
+        visited: new Set(view.before ? [view.before] : []),
+        status: view.before ? "pending" : "unavailable",
+      });
+    }
     const evicted = (
       previous?.sessionId === view.sessionId ? previous.messages : []
     ).filter((message) => !liveIds.has(message.id));
@@ -610,169 +662,14 @@ export class ChatController {
         this.changed();
       });
   }
-  private timeline(event: ChatTimelineEvent) {
-    if (event.type === "reset") {
-      this.historyPatches.clear();
-      this.historyPatchBytes = 0;
-      this.requestHistorySync();
-      return;
-    }
-    const { sessionId, change } = event.update;
-    if (this.view?.sessionId !== sessionId) return;
-    if (change.type === "structure") {
-      // The next authoritative history scan supersedes earlier item deltas;
-      // preserve any item updates that arrive after this notification.
-      this.historyPatches.clear();
-      this.historyPatchBytes = 0;
-      this.requestHistorySync();
-      return;
-    }
-    const message = change.message;
-    if (this.historyWork || this.loadingOlder) {
-      const bytes = new TextEncoder().encode(
-        JSON.stringify(message),
-      ).byteLength;
-      if (
-        this.historyPatches.size >= 100 ||
-        this.historyPatchBytes + bytes > 1024 * 1024
-      ) {
-        this.historyPatches.clear();
-        this.historyPatchBytes = 0;
-        this.historyDirty = true;
-      } else {
-        this.historyPatches.set(message.id, message);
-        this.historyPatchBytes += bytes;
-      }
-    }
-    const index = this.older.findIndex((item) => item.id === message.id);
-    if (index >= 0) {
-      this.older = this.older.map((item, i) => (i === index ? message : item));
-      this.changed();
-    } else if (this.view.messages.some((item) => item.id === message.id)) {
-      this.view = {
-        ...this.view,
-        messages: this.view.messages.map((item) =>
-          item.id === message.id ? message : item,
-        ),
-      };
-      this.changed();
-    }
-  }
-  private requestHistorySync() {
-    if (!this.historyLoaded && !this.older.length && !this.loadingOlder) return;
-    this.historyDirty = true;
-    if (!this.client || this.loadingOlder || this.historyWork) return;
-    const client = this.client,
-      sessionId = this.view?.sessionId,
-      epoch = this.historyEpoch;
-    const work = (async () => {
-      while (
-        this.historyDirty &&
-        this.client === client &&
-        this.historyEpoch === epoch &&
-        this.view?.sessionId === sessionId &&
-        !this.closed
-      ) {
-        this.historyDirty = false;
-        const view = this.view!;
-        const initialIds = view.messages
-          .map((message) => message.id)
-          .join("\0");
-        const boundary = this.older[0]?.id;
-        const throughEnd = this.before === null;
-        let cursor = view.before,
-          nextBefore = cursor,
-          found = !boundary;
-        let collected: ChatMessage[] = [];
-        const visited = new Set<string>();
-        try {
-          while (cursor) {
-            if (visited.has(cursor)) throw new Error("History cursor cycle");
-            visited.add(cursor);
-            const page = await client.history(cursor);
-            if (
-              this.client !== client ||
-              this.historyEpoch !== epoch ||
-              this.view?.sessionId !== sessionId ||
-              this.closed
-            )
-              return;
-            collected = [...page.messages, ...collected];
-            nextBefore = page.before;
-            if (
-              boundary &&
-              page.messages.some((message) => message.id === boundary)
-            )
-              found = true;
-            cursor = page.before;
-            if (!throughEnd && found) break;
-          }
-          if (
-            boundary &&
-            !found &&
-            !view.messages.some((message) => message.id === boundary)
-          )
-            throw new Error("History boundary unavailable");
-          if (
-            this.view!.before !== view.before ||
-            this.view!.messages.map((message) => message.id).join("\0") !==
-              initialIds
-          )
-            this.historyDirty = true;
-          if (this.historyDirty) continue;
-          const latest = new Set(
-            this.view!.messages.map((message) => message.id),
-          );
-          this.older = [
-            ...new Map(
-              collected
-                .filter((message) => !latest.has(message.id))
-                .map((message) => [
-                  message.id,
-                  this.historyPatches.get(message.id) ?? message,
-                ]),
-            ).values(),
-          ];
-          this.historyPatches.clear();
-          this.historyPatchBytes = 0;
-          this.before = nextBefore;
-          if (this.historySyncFailed && this.error === "加载历史失败，请重试。")
-            this.error = "";
-          this.historySyncFailed = false;
-          this.retireObserved();
-          this.updateRecovery();
-          this.save();
-          this.changed();
-        } catch {
-          if (
-            this.client === client &&
-            this.historyEpoch === epoch &&
-            this.view?.sessionId === sessionId &&
-            !this.closed
-          ) {
-            this.historyDirty = true;
-            this.historySyncFailed = true;
-            this.error = "加载历史失败，请重试。";
-            this.changed();
-          }
-          return;
-        }
-      }
-    })();
-    this.historyWork = work;
-    void work.finally(() => {
-      if (this.historyWork !== work || this.historyEpoch !== epoch) return;
-      this.historyWork = undefined;
-      if (
-        this.historyDirty &&
-        this.client &&
-        (!this.historySyncFailed || this.client !== client)
-      )
-        this.requestHistorySync();
-    });
-  }
   retryHistory() {
-    this.requestHistorySync();
+    void this.loadOlder();
+  }
+  private noteHistory(messages: ChatMessage[]) {
+    for (const message of messages) {
+      this.historySources.add(message.id);
+      if (message.operationId) this.unconfirmedInputs.delete(message.operationId);
+    }
   }
   private retireObserved() {
     const observed = new Map(
@@ -854,6 +751,8 @@ export class ChatController {
       this.fileOriginals.delete(p.operationId);
       this.verifiedFileRetries.delete(p.operationId);
       this.fileRetryCheckAfter.delete(p.operationId);
+      if (!this.historySources.has(message.id))
+        this.unconfirmedInputs.add(p.operationId);
       return false;
     });
   }
@@ -1203,11 +1102,11 @@ export class ChatController {
     this.closeStickers();
     this.client = undefined;
     this.historyEpoch++;
-    this.historyWork = undefined;
+    this.gaps = this.gaps.map((gap) =>
+      gap.status === "loading" ? { ...gap, status: "pending" } : gap,
+    );
     this.historyLoadingToken = undefined;
     this.loadingOlder = false;
-    this.historyPatches.clear();
-    this.historyPatchBytes = 0;
     this.changed();
     clearTimeout(this.timer);
     if (wasConnected && this.retryable && this.visible) void this.connect();
@@ -1233,10 +1132,6 @@ export class ChatController {
           if (generation === this.connectionGeneration)
             this.disconnected(error);
         },
-        (event) => {
-          if (!this.closed && generation === this.connectionGeneration)
-            this.timeline(event);
-        },
       );
       if (
         this.closed ||
@@ -1248,7 +1143,6 @@ export class ChatController {
       }
       this.client = client;
       this.connected = true;
-      this.requestHistorySync();
       this.retryFailures = 0;
       this.connecting = false;
       this.finalized.clear();
@@ -1753,14 +1647,6 @@ export class ChatController {
   }
   async loadOlder() {
     const epoch = this.historyEpoch;
-    if (this.historyWork) await this.historyWork;
-    if (this.historyEpoch !== epoch) return;
-    if (this.historyDirty) {
-      this.requestHistorySync();
-      if (this.historyWork) await this.historyWork;
-    }
-    if (this.historyEpoch !== epoch) return;
-    if (this.historyDirty) return;
     if (!this.client || !this.before || this.loadingOlder) return;
     const client = this.client,
       sessionId = this.view?.sessionId,
@@ -1773,35 +1659,118 @@ export class ChatController {
       if (
         this.client !== client ||
         this.view?.sessionId !== sessionId ||
-        this.historyEpoch !== epoch
+        this.historyEpoch !== epoch ||
+        this.closed
       )
         return;
+      const liveIds = new Set(this.view?.messages.map(message => message.id));
       this.older = [
         ...new Map(
-          [
-            ...page.messages.map(
-              (message) => this.historyPatches.get(message.id) ?? message,
-            ),
-            ...this.older,
-          ].map((m) => [m.id, m]),
+          [...page.messages, ...this.older]
+            .filter(message => !liveIds.has(message.id))
+            .map(message => [message.id, message]),
         ).values(),
       ];
-      this.historyPatches.clear();
-      this.historyPatchBytes = 0;
+      this.noteHistory(page.messages);
       this.retireObserved();
       this.save();
       this.updateRecovery();
       this.before = page.before;
-      this.historyLoaded = true;
+      this.historySyncFailed = false;
+      if (this.error === "加载历史失败，请重试。") this.error = "";
     } catch {
-      if (this.historyEpoch === epoch) this.error = "加载历史失败，请重试。";
+      if (!this.closed && this.historyEpoch === epoch && this.client === client) {
+        this.historySyncFailed = true;
+        this.error = "加载历史失败，请重试。";
+      }
     } finally {
       if (this.historyLoadingToken === token) {
         this.historyLoadingToken = undefined;
         this.loadingOlder = false;
         this.changed();
-        if (this.historyDirty) this.requestHistorySync();
       }
+    }
+  }
+  /** Read at most one page for this gap; never schedules another read. */
+  async fillGap(id: number) {
+    const gap = this.gaps.find((item) => item.id === id);
+    if (
+      !gap || gap.status === "loading" || gap.status === "unavailable" ||
+      !gap.cursor || !this.client || this.closed
+    ) return;
+    // Match the host's bounded concurrent history limit; expose overload for retry.
+    if (this.gaps.filter((item) => item.status === "loading").length >= 8) {
+      this.gaps = this.gaps.map((item) =>
+        item.id === id ? { ...item, status: "error" } : item,
+      );
+      this.changed();
+      return;
+    }
+    const client = this.client,
+      epoch = this.historyEpoch,
+      session = this.view?.sessionId;
+    const cursor = gap.cursor;
+    const update = (patch: Partial<GapState>) => {
+      this.gaps = this.gaps.map((item) => item.id === id ? { ...item, ...patch } : item);
+      this.changed();
+    };
+    update({ status: "loading" });
+    try {
+      const page = await client.history(cursor);
+      if (
+        this.closed || this.client !== client || this.historyEpoch !== epoch ||
+        this.view?.sessionId !== session ||
+        !this.gaps.some((item) => item.id === id && item.cursor === cursor && item.status === "loading")
+      ) return;
+      const anchor = this.older.findIndex((item) => item.id === gap.afterId);
+      if (anchor < 0) { update({ status: "error" }); return; }
+      const boundary = page.messages.findIndex((item) => item.id === gap.afterId);
+      if (new Set(page.messages.map((item) => item.id)).size !== page.messages.length) {
+        update({ status: "error" });
+        return;
+      }
+      const known = new Map(
+        [...this.older, ...(this.view?.messages ?? [])].map((item, index) => [item.id, index]),
+      );
+      const candidates = boundary < 0 ? page.messages : page.messages.slice(boundary + 1);
+      const fresh: ChatMessage[] = [];
+      let overlap = false,
+        lastKnown = anchor;
+      for (const item of candidates) {
+        const position = known.get(item.id);
+        if (position === undefined) {
+          if (overlap) { update({ status: "error" }); return; }
+          fresh.push(item);
+        } else {
+          if (position <= lastKnown) { update({ status: "error" }); return; }
+          overlap = true;
+          lastKnown = position;
+        }
+      }
+      if (boundary < 0 && (!page.before || gap.visited.has(page.before))) {
+        update({ status: "unavailable" });
+        return;
+      }
+      this.older = [...this.older.slice(0, anchor + 1), ...fresh, ...this.older.slice(anchor + 1)];
+      this.noteHistory(page.messages);
+      if (boundary >= 0) this.gaps = this.gaps.filter((item) => item.id !== id);
+      else this.gaps = this.gaps.map((item) => item.id === id
+        ? {
+            ...item,
+            beforeId: fresh[0]?.id ?? item.beforeId,
+            cursor: page.before,
+            visited: new Set([...item.visited, page.before!]),
+            status: "pending",
+          }
+        : item);
+      this.retireObserved();
+      this.updateRecovery();
+      this.save();
+      this.changed();
+    } catch {
+      if (!this.closed && this.client === client && this.historyEpoch === epoch &&
+        this.view?.sessionId === session && this.gaps.some((item) => item.id === id && item.status === "loading"))
+        update({ status: "error" });
     }
   }
 }

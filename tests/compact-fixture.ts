@@ -5,6 +5,7 @@ import {
   type ContextUsage,
   type Compaction,
 } from "../packages/contracts/src/index.ts";
+import type { ChatChange } from "../packages/contracts/src/server.ts";
 /** Test-owned fake native engine. The controls are also the actual-host runner interface. */
 export function compactFixture() {
   const images = imagesFixture();
@@ -17,9 +18,21 @@ export function compactFixture() {
     calls = 0,
     hold = false;
   let release: (() => void) | undefined;
-  const listeners = new Set<() => void>();
+  const listeners = new Set<{ fn: (change: ChatChange) => void; scope: symbol; sessionId: string }>();
   const changed = () => {
-    for (const fn of listeners) fn();
+    for (const listener of listeners) {
+      if (listener.sessionId !== sessionId) {
+        const oldScope = listener.scope, nextScope = Symbol("compact session"), nextSession = sessionId;
+        void backend.read().then(view => {
+          if (!listeners.has(listener) || listener.scope !== oldScope || view.sessionId !== nextSession) return;
+          listener.fn({ type: "session", scope: oldScope, nextScope, view });
+          listener.scope = nextScope;
+          listener.sessionId = nextSession;
+        });
+      } else listener.fn({ type: "update", scope: listener.scope, state: {
+        contextUsage: { ...contextUsage }, compaction: compaction && { ...compaction }, activeTurnId: busy ? "native-busy" : null,
+      } });
+    }
   };
   const begin = () => {
     compaction = { id: `compact-${++executions}`, status: "running" };
@@ -48,13 +61,17 @@ export function compactFixture() {
         });
       return { sessionId: input.sessionId, accepted: true };
     },
-    subscribe(fn: () => void) {
-      listeners.add(fn);
-      const off = images.backend.subscribe(fn);
-      return () => {
-        listeners.delete(fn);
-        off();
-      };
+    subscribe(fn: (change: ChatChange) => void) {
+      const listener = { fn, scope: Symbol("compact session"), sessionId };
+      listeners.add(listener);
+      const off = images.backend.subscribe(change => {
+        if (change.type === "update") fn({ ...change, scope: listener.scope, state: {
+          ...change.state, contextUsage: { ...contextUsage }, compaction: compaction && { ...compaction },
+          activeTurnId: busy ? "native-busy" : null,
+        } });
+        else if (change.type === "error") fn(change);
+      });
+      return { scope: listener.scope, close() { listeners.delete(listener); off.close(); } };
     },
   };
   const control = async (input: Record<string, unknown>) => {

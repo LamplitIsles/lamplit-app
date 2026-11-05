@@ -1,7 +1,7 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { keetFixture } from "./keet-fixture.ts";
 import { fixtureImage } from "./panels-fixture.ts";
 import { resolve } from "node:path";
@@ -26,7 +26,7 @@ const dmImage =
         ],
       }
     : {};
-const host = await createChatHost(fixture.backend, (e) => console.error(e));
+const host = await createUiTestHost(fixture.backend, (e) => console.error(e));
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -41,7 +41,7 @@ const server = external
         if (path === "/__test/keet-source-restoration") {
           const result = await fixture.control(await req.json());
           // Acknowledge only after the shared view has published the owned fixture change.
-          await host.refresh();
+          await host.publish();
           return Response.json(result);
         }
         if (path === "/api/chat/media/keet-image/original")

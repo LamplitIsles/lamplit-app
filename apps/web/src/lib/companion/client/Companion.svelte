@@ -123,6 +123,7 @@
     TimelineText,
     TimelineVoice,
   } from "../projection.js";
+  import { replySegments } from "../projection.js";
   import type {
     CompanionContinuityView,
     CompanionRecoveredDraft,
@@ -151,8 +152,6 @@
   } from "./preferences.js";
   import { companionHistoryChanges } from "../relationship-history.js";
   import type { CompanionHistoryChange } from "../domain.js";
-  import { lexMarkdown, cleanMarkdownProjection } from "./markdown-options.js";
-  import { replyChunks } from "../reply-chunks.js";
   import Markdown from "./Markdown.svelte";
   import Thinking from "./Thinking.svelte";
   import ConversationSearch from "./ConversationSearch.svelte";
@@ -220,9 +219,6 @@
   };
   export let onHistoryOpenChange: ((open: boolean) => void) | undefined;
   export let panelRevision = 0;
-  export let sentenceReplies = true;
-  export let onSentenceRepliesChange: (value: boolean) => void = () =>
-    undefined;
   export let appearance: CompanionAppearance = "system";
   export let onAppearanceChange: (
     appearance: CompanionAppearance,
@@ -641,24 +637,11 @@
     liveAnnouncement = { key: "recovery.restored" };
   }
 
-  function messageContentParts(
-    unit: TimelineMessageUnit,
-    splitSentences: boolean,
-  ): MessageContentPart[] {
+  function messageContentParts(unit: TimelineMessageUnit): MessageContentPart[] {
     const content = unit.items
       .flatMap((item) =>
-        splitSentences && unit.answer && item.kind === "text"
-          ? replyChunks(
-              item.text,
-              lexMarkdown,
-              cleanMarkdownProjection,
-              unit.streaming,
-            ).map((chunk) => ({
-              ...item,
-              id: `${item.id}:line:${chunk.start}`,
-              text: chunk.text,
-              markdownTokens: chunk.tokens,
-            }))
+        unit.answer && item.kind === "text"
+          ? replySegments(item, sessionId ?? "")
           : [item],
       )
       .filter(
@@ -1195,6 +1178,28 @@
 
   function connectViewport(node: HTMLElement): { destroy(): void } {
     return visibleViewport(node.parentElement!);
+  }
+
+  // A marker can move as pages are inserted. Track the visibility visit by gap
+  // identity so remounting it cannot turn one scroll into an unbounded scan.
+  const visitedHistoryGaps = new Set<number>();
+  function watchHistoryGap(node: HTMLElement, gap: NonNullable<CompanionProjection["historyGaps"]>[number]) {
+    let current = gap;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) {
+          visitedHistoryGaps.delete(current.id);
+        } else if (current.status === "pending" && !visitedHistoryGaps.has(current.id)) {
+          visitedHistoryGaps.add(current.id);
+          void actions.fillHistoryGap?.(current.id);
+        }
+      }
+    }, { root: node.closest(".companion-timeline") });
+    observer.observe(node);
+    return {
+      update(next: typeof gap) { current = next; },
+      destroy() { observer.disconnect(); },
+    };
   }
 
   function connectTimeline(node: HTMLElement): { destroy(): void } {
@@ -2813,6 +2818,20 @@
                     </div>
                   {/if}
                   {#each displayedProjection.messageUnits.filter((unit) => unit.items[0]?.kind !== "continuity") as unit (unit.id)}
+                    {#each (displayedProjection.historyGaps ?? []).filter((gap) => gap.beforeId === unit.sourceId) as gap (gap.id)}
+                      <div class="companion-history-gap" use:watchHistoryGap={gap} data-testid={`history-gap-${gap.id}`}>
+                        {#if gap.status === "loading"}
+                          <span role="status">{t("loading.progress")}</span>
+                        {:else if gap.status === "unavailable"}
+                          <span role="status">{t("history.gapUnavailable")}</span>
+                        {:else}
+                          {#if gap.status === "error"}<span role="alert">{t("history.gapFailed")}</span>{/if}
+                          <Button type="button" small tonal onClick={() => void actions.fillHistoryGap?.(gap.id)}>
+                            {t(gap.status === "error" ? "history.retry" : "history.gapMore")}
+                          </Button>
+                        {/if}
+                      </div>
+                    {/each}
                     {@const first = unit.items[0]}
                     {#if first?.kind === "notice"}
                       <div
@@ -2822,13 +2841,9 @@
                         <p>{noticeText(first, t)}</p>
                       </div>
                     {:else}
-                      {@const parts = messageContentParts(
-                        unit,
-                        sentenceReplies,
-                      )}
+                      {@const parts = messageContentParts(unit)}
                       {#each parts as part, partIndex (part.kind === "images" ? part.items[0].id : part.item.id)}
                         {@const independentMessage =
-                          sentenceReplies &&
                           unit.answer &&
                           part.kind === "item" &&
                           part.item.kind === "text"}
@@ -2962,7 +2977,6 @@
                                 {:else}
                                   <Markdown
                                     text={part.item.text}
-                                    tokens={part.item.markdownTokens}
                                     agentReply={unit.answer}
                                     {workspaceImages}
                                     workspaceImageScope={sessionId}
@@ -3650,12 +3664,6 @@
           <ListItem radio radioIcon="end" name="companion-appearance" value={option[0]}
             title={t(option[1] as CompanionLocaleKey)} checked={appearance === option[0]}
             onChange={() => onAppearanceChange(option[0] as CompanionAppearance)} />
-        {/each}
-        <ListItem groupTitle title={t("preferences.replyDisplay")} />
-        {#each [[true, "preferences.lines"], [false, "preferences.wholeReply"]] as option}
-          <ListItem radio radioIcon="end" name="companion-reply-display" value={String(option[0])}
-            title={t(option[1] as CompanionLocaleKey)} checked={sentenceReplies === option[0]}
-            onChange={() => onSentenceRepliesChange(option[0] as boolean)} />
         {/each}
         <ListItem groupTitle title={t("preferences.language")} />
         {#each [["zh", "中文"], ["en", "English"]] as option}

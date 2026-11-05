@@ -317,6 +317,8 @@ export const MessageSchema = Type.Object(
       Type.Literal("notice"),
     ]),
     text: Type.String(),
+    /** Required on delivered ordinary replies; raw backend input may omit these UTF-16 ends. */
+    ends: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }))),
     thinking: Type.Optional(Type.String()),
     createdAt: Type.Number(),
     operationId: NullableId,
@@ -352,25 +354,6 @@ export const MessageSchema = Type.Object(
     ],
   },
 );
-export const TimelineChangeSchema = Type.Union([
-  Type.Object(
-    { type: Type.Literal("item"), message: MessageSchema },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { type: Type.Literal("structure") },
-    { additionalProperties: false },
-  ),
-]);
-export const TimelineUpdateSchema = Type.Object(
-  { sessionId: Id, change: TimelineChangeSchema },
-  { additionalProperties: false },
-);
-export type TimelineChange = Static<typeof TimelineChangeSchema>;
-export type TimelineUpdate = Static<typeof TimelineUpdateSchema>;
-export type ChatTimelineEvent =
-  | { type: "change"; update: TimelineUpdate }
-  | { type: "reset" };
 export const PageSchema = Type.Object(
   {
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),
@@ -378,9 +361,9 @@ export const PageSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-/** Transient answer-only preview; omission removes the current generation attempt. */
+/** Transient answer-only preview; the host supplies its UTF-16 segment ends. */
 export const StreamingReplySchema = Type.Object(
-  { id: Id, turnId: NullableId, createdAt: Type.Number(), text: Type.String() },
+  { id: Id, turnId: NullableId, createdAt: Type.Number(), text: Type.String(), ends: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }))) },
   { additionalProperties: false },
 );
 export type StreamingReply = Static<typeof StreamingReplySchema>;

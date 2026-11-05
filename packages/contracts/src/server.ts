@@ -31,7 +31,6 @@ import {
   Chat,
   ViewSchema,
   PageSchema,
-  TimelineUpdateSchema,
   validateSubmission,
   validateReceipt,
   validateLookup,
@@ -39,10 +38,11 @@ import {
   validateId,
   validateRecovery,
   type ChatView,
+  type ChatMessage,
+  type StreamingReply,
   type HistoryPage,
   type Receipt,
   type Submission,
-  type TimelineUpdate,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -51,10 +51,29 @@ import {
   type CompactResult,
 } from "./compact.ts";
 import { decodeFrame, readCall, type WireSocket } from "./wire.ts";
+import { createReplyProjection } from "./reply-projection.ts";
+import { isReplySource } from "./reply-ranges.ts";
+
+/** A provider-defined, process-local session lifetime; never serialized. */
+export type ChatScope = symbol;
+/** Changes contain committed absolute facts in provider observation order.
+ * afterId is a visible source ID (null means first), never a native slot guess.
+ * Use a window when the existing visible order cannot be expressed by changes. */
+export type ChatChange =
+  | { type: "session"; scope: ChatScope; nextScope: ChatScope; view: ChatView }
+  | { type: "update"; scope: ChatScope;
+      messages?: Array<{ type: "upsert"; message: ChatMessage; afterId?: string | null } | { type: "remove"; id: string }>;
+      window?: { messages: ChatMessage[]; before: string | null };
+      state?: Partial<Pick<ChatView, "activeTurnId" | "name" | "before" | "capabilities" | "recovery" | "contextUsage" | "compaction">> & {
+        streamingReply?: StreamingReply | null;
+        replyCompletedTurnId?: string | null;
+      };
+    }
+  | { type: "error"; error: unknown };
 
 /** Engine adapters own durable admission and execution. Socket disposal never cancels them. */
 export interface ChatBackend extends PanelBackend, SearchBackend {
-  read(): Promise<ChatView>;
+  read(signal?: AbortSignal): Promise<ChatView>;
   compact(input: CompactInput): Promise<CompactResult>;
   history(before: string): Promise<HistoryPage>;
   submit(input: Submission): Promise<Receipt>;
@@ -63,7 +82,14 @@ export interface ChatBackend extends PanelBackend, SearchBackend {
   retryFailed(input: RetryFailed): Promise<Receipt>;
   deleteFailed(input: DeleteFailed): Promise<DeleteFailedResult>;
   stop(turnId: string): Promise<{ stopped: boolean }>;
-  subscribe(changed: (update?: TimelineUpdate) => void): () => void;
+  /** Install before read(); changes use absolute source values and delivery order.
+   * Startup changes are applied to the initial read in order: the provider must
+   * prevent them from regressing facts included in that read and eventually
+   * deliver subsequent facts the read did not include. This does not require a
+   * global atomic snapshot across independent sources.
+   * Use a fresh scope on each session lifetime, including a return to the same ID.
+   * Filter obsolete asynchronous results before delivery; close stops delivery. */
+  subscribe(changed: (change: ChatChange) => void): { scope: ChatScope; close(): void };
 }
 /** Bounded identity only; never contains state, calls, or codec dictionaries. */
 export interface ChatSubscription {
@@ -108,77 +134,144 @@ function readSubscription(value: unknown): ChatSubscription | null {
 export async function createChatHost(
   backend: ChatBackend,
   onError: (error: unknown) => void = console.error,
+  options: { signal?: AbortSignal } = {},
 ) {
-  const initial = validate(ViewSchema, await backend.read());
-  initial.recovery.forEach(validateRecovery);
-  const view = replicatedState(initial);
+  let replyProjection = createReplyProjection();
   const provider = new RemoteServiceProvider([Chat]);
-  let closed = false,
-    dirty = false;
-  type Waiter = { resolve(): void; reject(error: unknown): void };
-  let running = false;
-  let pending: Waiter[] = [],
-    active: Waiter[] = [];
-  const drain = async () => {
-    running = true;
-    try {
-      while (dirty && !closed) {
-        dirty = false;
-        // Only callers present before this read starts are covered by it.
-        active = pending;
-        pending = [];
-        try {
-          const next = validate(ViewSchema, await backend.read());
-          next.recovery.forEach(validateRecovery);
-          if (closed) return;
-          if (JSON.stringify(next) !== JSON.stringify(view.value))
-            view.change(BACKGROUND_CONTEXT, (draft) => {
-              draft.messages = next.messages;
-              if (next.streamingReply)
-                draft.streamingReply = next.streamingReply;
-              else delete draft.streamingReply;
-              if (next.replyCompletedTurnId !== undefined)
-                draft.replyCompletedTurnId = next.replyCompletedTurnId;
-              else delete draft.replyCompletedTurnId;
-              draft.before = next.before;
-              draft.activeTurnId = next.activeTurnId;
-              draft.name = next.name;
-              draft.sessionId = next.sessionId;
-              draft.capabilities = next.capabilities;
-              draft.recovery = next.recovery;
-              draft.contextUsage = next.contextUsage;
-              draft.compaction = next.compaction;
-            });
-          for (const waiter of active) waiter.resolve();
-        } catch (error) {
-          if (closed) return;
-          for (const waiter of active) waiter.reject(error);
-          try {
-            onError(error);
-          } catch {
-            // Error observers must not interrupt draining or strand later callers.
-          }
-        } finally {
-          active = [];
-        }
-      }
-    } finally {
-      running = false;
-    }
-  };
-  const invalidate = () => {
-    if (closed) return;
-    dirty = true;
-    if (!running) void drain();
-  };
-  const refresh = (): Promise<void> => {
-    if (closed) return Promise.resolve();
-    const result = new Promise<void>((resolve, reject) => {
-      pending.push({ resolve, reject });
+  let closed = false, sessionEpoch = 0, scope: ChatScope;
+  let view!: ReturnType<typeof replicatedState<ChatView>>;
+  const pending: ChatChange[] = [];
+  let starting = true;
+  let failStartup!: (error: unknown) => void;
+  const startupFailure = new Promise<never>((_, reject) => { failStartup = reject; });
+  void startupFailure.catch(() => {});
+  const report = (error: unknown) => { try { onError(error); } catch {} };
+  const publish = (source: ChatView, reset = false) => {
+    const checked = validate(ViewSchema, source);
+    checked.recovery.forEach(validateRecovery);
+    const projection = reset ? createReplyProjection() : replyProjection;
+    const next = projection.view(checked, reset ? undefined : view?.value);
+    if (reset) replyProjection = projection;
+    if (!view) { view = replicatedState(next); return; }
+    if (JSON.stringify(next) === JSON.stringify(view.value)) return;
+    view.change(BACKGROUND_CONTEXT, draft => {
+      draft.messages = next.messages;
+      if (next.streamingReply) draft.streamingReply = next.streamingReply;
+      else delete draft.streamingReply;
+      if (next.replyCompletedTurnId !== undefined) draft.replyCompletedTurnId = next.replyCompletedTurnId;
+      else delete draft.replyCompletedTurnId;
+      draft.before = next.before;
+      draft.activeTurnId = next.activeTurnId;
+      draft.name = next.name;
+      draft.sessionId = next.sessionId;
+      draft.capabilities = next.capabilities;
+      draft.recovery = next.recovery;
+      draft.contextUsage = next.contextUsage;
+      draft.compaction = next.compaction;
     });
-    invalidate();
-    return result;
   };
+  const apply = (base: ChatView, change: ChatChange, bootstrap: boolean): ChatView => {
+    if (change.type === "error") throw change.error;
+    if (change.scope !== scope) return base;
+    if (change.type === "session") {
+      if (change.nextScope === scope) throw new Error("Session scope must change");
+      scope = change.nextScope;
+      sessionEpoch++;
+      return change.view;
+    }
+    if (change.window && change.messages?.length) throw new Error("Conflicting message updates");
+    const preserveCompleted = (existing: ChatMessage | undefined, message: ChatMessage) => {
+      if (!bootstrap || !existing || !isReplySource(existing) || !isReplySource(message) || existing.textState === "streaming") return message;
+      if (message.textState !== "streaming") {
+        if (existing.text !== message.text) throw new Error("Reply source conflict: completed source changed");
+        return message;
+      }
+      const preserved = { ...message, text: existing.text };
+      if (existing.textState === undefined) delete preserved.textState;
+      else preserved.textState = existing.textState;
+      return preserved;
+    };
+    const next: ChatView = { ...base, ...change.state, messages: change.window
+      ? change.window.messages.map(message => preserveCompleted(base.messages.find(item => item.id === message.id), message))
+      : base.messages.slice() } as ChatView;
+    if (change.window) next.before = change.window.before;
+    if (change.state?.streamingReply === null) delete next.streamingReply;
+    if (change.state?.replyCompletedTurnId === null) delete next.replyCompletedTurnId;
+    for (const operation of change.messages ?? []) {
+      const index = next.messages.findIndex(item => item.id === (operation.type === "remove" ? operation.id : operation.message.id));
+      if (operation.type === "remove") {
+        if (index < 0 && !bootstrap) throw new Error("Unknown message to remove");
+        if (index >= 0) next.messages.splice(index, 1);
+        continue;
+      }
+      const message = preserveCompleted(next.messages[index], operation.message);
+      if (index >= 0) next.messages.splice(index, 1);
+      if (operation.afterId === undefined) {
+        if (index < 0) throw new Error("New message requires an ordering anchor");
+        next.messages.splice(index, 0, message);
+      } else {
+        const after = operation.afterId === null ? -1 : next.messages.findIndex(item => item.id === operation.afterId);
+        if (operation.afterId !== null && after < 0) throw new Error("Unknown message ordering anchor");
+        next.messages.splice(after + 1, 0, message);
+      }
+    }
+    return next;
+  };
+  const changed = (change: ChatChange) => {
+    if (closed) return;
+    if (starting) {
+      if (change.type === "error") { failStartup(change.error); return; }
+      // Coalesce repeated absolute text updates while an initial read is held.
+      const last = pending.at(-1);
+      if (last?.type === "update" && change.type === "update" && last.scope === change.scope &&
+          !last.window && !change.window && !last.state && !change.state &&
+          last.messages?.length === 1 && change.messages?.length === 1 &&
+          last.messages[0]?.type === "upsert" && change.messages[0]?.type === "upsert" &&
+          last.messages[0].message.id === change.messages[0].message.id && change.messages[0].afterId === undefined) {
+        pending[pending.length - 1] = { ...change, messages: [{ ...change.messages[0], afterId: last.messages[0].afterId }] };
+      } else pending.push(change);
+      return;
+    }
+    if (change.type === "error") {
+      closeHost();
+      report(change.error);
+      return;
+    }
+    const oldScope = scope, oldEpoch = sessionEpoch;
+    try {
+      const next = apply(view.value, change, false);
+      publish(next, scope !== oldScope);
+    } catch (error) { scope = oldScope; sessionEpoch = oldEpoch; report(error); }
+  };
+  let subscription: ReturnType<ChatBackend["subscribe"]> | undefined;
+  const signal = options.signal;
+  const initialRead = new AbortController();
+  let abort: (() => void) | undefined;
+  try {
+    if (signal?.aborted) throw new Error("Chat host initialization cancelled");
+    subscription = backend.subscribe(changed);
+    scope = subscription.scope;
+    const read = backend.read(initialRead.signal);
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => { initialRead.abort(); reject(new Error("Chat host initialization cancelled")); };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+    if (signal?.aborted) abort?.();
+    let initial = await Promise.race(signal ? [read, startupFailure, cancelled] : [read, startupFailure]);
+    for (const change of pending) initial = apply(initial, change, true);
+    publish(initial);
+    starting = false;
+    pending.length = 0;
+  } catch (error) {
+    closed = true;
+    initialRead.abort();
+    pending.length = 0;
+    subscription?.close();
+    provider.dispose();
+    throw error;
+  } finally {
+    if (abort) signal?.removeEventListener("abort", abort);
+  }
   const panels = Object.fromEntries(
     Object.entries(panelMethods).map(([method, schemas]) => [
       method,
@@ -212,9 +305,9 @@ export async function createChatHost(
     },
     async compact(input: CompactInput) {
       const value = validate(CompactInputSchema, input);
-      await refresh();
       if (value.sessionId !== view.value.sessionId)
         throw new Error("Wrong session");
+      const epoch = sessionEpoch;
       if (
         view.value.activeTurnId ||
         view.value.compaction?.status === "running"
@@ -224,31 +317,35 @@ export async function createChatHost(
         CompactResultSchema,
         await backend.compact(value),
       );
-      if (result.sessionId !== value.sessionId)
+      if (sessionEpoch !== epoch || result.sessionId !== value.sessionId)
         throw new Error("Wrong compact session");
-      await refresh();
       return result;
     },
     async history(before: string) {
-      return validate(PageSchema, await backend.history(validateId(before)));
+      // Retain only the request's starting view; pages without an overlapping
+      // source cannot be ordered from the backend's existing contract.
+      const initialView = view.value;
+      const epoch = sessionEpoch;
+      const page = validate(PageSchema, await backend.history(validateId(before)));
+      if (closed || sessionEpoch !== epoch || view.value.sessionId !== initialView.sessionId)
+        throw new Error("History session changed");
+      return replyProjection.history(page, view.value, initialView);
     },
     async submit(input: Submission) {
       const value = validateSubmission(input);
       const receipt = validateReceipt(await backend.submit(value));
       if (receipt.operationId !== value.operationId)
         throw new Error("Wrong operation receipt");
-      await refresh();
       return receipt;
     },
     async lookup(id: string) {
-      await refresh();
       const sessionId = view.value.sessionId;
+      const epoch = sessionEpoch;
       const receipt = validateLookup(await backend.lookup(validateId(id)));
       if (receipt && receipt.operationId !== id)
         throw new Error("Wrong operation receipt");
-      await refresh();
       if (
-        view.value.sessionId !== sessionId ||
+        sessionEpoch !== epoch || view.value.sessionId !== sessionId ||
         (receipt?.retryFiles && receipt.retryFiles.sessionId !== sessionId) ||
         (receipt?.retryImages && receipt.retryImages.sessionId !== sessionId)
       )
@@ -260,9 +357,9 @@ export async function createChatHost(
       if ("submission" in value) validateSubmission(value.submission);
       else if (value.retry.sessionId !== value.sessionId)
         throw new Error("Wrong retry session");
-      await refresh();
       if (value.sessionId !== view.value.sessionId)
         throw new Error("Wrong session");
+      const epoch = sessionEpoch;
       const receipt = validateLookup(await backend.finalizeSubmission(value));
       if (
         receipt &&
@@ -286,8 +383,7 @@ export async function createChatHost(
           receipt.retryFiles.sourceOperationId !== value.retry.operationId)
       )
         throw new Error("Wrong retry file mapping");
-      await refresh();
-      if (view.value.sessionId !== value.sessionId)
+      if (sessionEpoch !== epoch || view.value.sessionId !== value.sessionId)
         throw new Error("Wrong session");
       return receipt;
     },
@@ -295,9 +391,9 @@ export async function createChatHost(
       const value = validate(RetryFailedSchema, input);
       if (value.attemptId === value.operationId)
         throw new Error("Retry requires new attempt");
-      await refresh();
       if (value.sessionId !== view.value.sessionId)
         throw new Error("Wrong session");
+      const epoch = sessionEpoch;
       const receipt = validateReceipt(await backend.retryFailed(value));
       if (receipt.operationId !== value.attemptId)
         throw new Error("Wrong operation receipt");
@@ -313,126 +409,49 @@ export async function createChatHost(
           receipt.retryFiles.sourceOperationId !== value.operationId)
       )
         throw new Error("Wrong retry file mapping");
-      await refresh();
-      if (view.value.sessionId !== value.sessionId)
+      if (sessionEpoch !== epoch || view.value.sessionId !== value.sessionId)
         throw new Error("Wrong session");
       return receipt;
     },
     async deleteFailed(input) {
       const value = validate(DeleteFailedSchema, input);
-      await refresh();
       if (value.sessionId !== view.value.sessionId)
         throw new Error("Wrong session");
+      const epoch = sessionEpoch;
       const result = validate(
         DeleteFailedResultSchema,
         await backend.deleteFailed(value),
       );
       if (
-        result.sessionId !== value.sessionId ||
+        sessionEpoch !== epoch || result.sessionId !== value.sessionId ||
         result.operationId !== value.operationId
       )
         throw new Error("Wrong deletion acknowledgement");
-      await refresh();
       return result;
     },
     async stop(id: string) {
       const result = await backend.stop(validateId(id));
-      await refresh();
       return result;
     },
   });
-  let off: () => void;
   const connections = new Set<ReturnType<typeof connect>>();
-  let timelinePending:
-    | {
-        sessionId: string;
-        structure: boolean;
-        items: Map<string, TimelineUpdate>;
-        bytes: number;
-      }
-    | undefined;
-  let timelineRunning = false;
-  const drainTimeline = async () => {
-    timelineRunning = true;
-    try {
-      while (timelinePending && !closed) {
-        const batch = timelinePending;
-        timelinePending = undefined;
-        await refresh();
-        if (batch.sessionId !== view.value.sessionId) continue;
-        const updates: TimelineUpdate[] = batch.structure
-          ? [{ sessionId: batch.sessionId, change: { type: "structure" } }]
-          : [...batch.items.values()];
-        for (const update of updates)
-          for (const connection of connections) connection.timeline(update);
-      }
-    } catch (error) {
-      try {
-        onError(error);
-      } catch {
-        /* Delivery errors must still disconnect. */
-      }
-      for (const connection of connections) connection.disconnect();
-    } finally {
-      timelineRunning = false;
-      if (timelinePending && !closed) void drainTimeline();
-    }
-  };
-  try {
-    off = backend.subscribe((raw) => {
-      invalidate();
-      if (!raw) return;
-      try {
-        const update = structuredClone(validate(TimelineUpdateSchema, raw));
-        if (!timelinePending || timelinePending.sessionId !== update.sessionId)
-          timelinePending = {
-            sessionId: update.sessionId,
-            structure: false,
-            items: new Map(),
-            bytes: 0,
-          };
-        const batch = timelinePending;
-        if (update.change.type === "structure") {
-          batch.structure = true;
-          batch.items.clear();
-          batch.bytes = 0;
-        } else if (!batch.structure) {
-          const bytes = new TextEncoder().encode(
-            JSON.stringify(update),
-          ).byteLength;
-          if (batch.items.size >= 100 || batch.bytes + bytes > 1024 * 1024) {
-            batch.structure = true;
-            batch.items.clear();
-            batch.bytes = 0;
-          } else {
-            batch.items.set(update.change.message.id, update);
-            batch.bytes += bytes;
-          }
-        }
-        if (!timelineRunning) void drainTimeline();
-      } catch (error) {
-        try {
-          onError(error);
-        } catch {
-          /* Do not leave invalid subscribers connected. */
-        }
-        for (const connection of connections) connection.disconnect();
-      }
-    });
-  } catch (error) {
+  function closeHost() {
+    if (closed) return;
     closed = true;
+    replyProjection.clear();
+    subscription?.close();
+    for (const c of connections) c.disconnect();
     provider.dispose();
-    throw error;
   }
   function connect(
     socket: WireSocket,
     authorize: () => Promise<boolean>,
     options: ChatConnectionOptions = {},
   ) {
+    if (closed) throw new Error("Chat host closed");
     let disposed = false;
     const subscriptions = new Map<string, ServiceSubscription>();
     let subscription: ChatSubscription | null = null;
-    let timelineDirty = false;
     let incoming: Promise<void> = Promise.resolve();
     let activeHistory = 0;
     const enqueue = (work: () => Promise<void>) => {
@@ -545,14 +564,6 @@ export async function createChatHost(
           if (disposed) return;
           deliver({ type: "result", id, result });
           sub.activate();
-          if (timelineDirty) {
-            timelineDirty = false;
-            deliver({
-              type: "timeline",
-              sessionId: view.value.sessionId,
-              change: { type: "structure" },
-            });
-          }
           return;
         } else if (control?.type === "unsubscribe") {
           subscriptions.get(control.subscriptionId)?.close();
@@ -609,14 +620,6 @@ export async function createChatHost(
       }
     }
     const connection = {
-      timeline(update: TimelineUpdate) {
-        if (!subscriptions.size) return;
-        if (!subscription) {
-          timelineDirty = true;
-          return;
-        }
-        deliver({ type: "timeline", ...update });
-      },
       receive(raw: string) {
         return enqueue(async () => {
           let history = false;
@@ -687,20 +690,9 @@ export async function createChatHost(
     connections.add(connection);
     return connection;
   }
-  // Catch up the initial read/subscription window without delaying readiness.
-  invalidate();
   return {
     connect,
-    refresh,
-    close() {
-      if (closed) return;
-      closed = true;
-      for (const waiter of [...active, ...pending]) waiter.resolve();
-      pending = [];
-      off();
-      for (const c of connections) c.disconnect();
-      provider.dispose();
-    },
+    close: closeHost,
   };
 }
 

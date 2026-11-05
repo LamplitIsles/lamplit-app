@@ -1,7 +1,8 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
+import { imageHttp } from "../packages/contracts/src/server.ts";
 import { mediaUrl } from "../packages/contracts/src/index.ts";
 import { fixtureImage } from "./panels-fixture.ts";
 import { imagesFixture } from "./images-fixture.ts";
@@ -16,7 +17,7 @@ if (stickerPanelOnly && process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1")
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
 const fixture = imagesFixture();
-const host = await createChatHost(fixture.backend, (e) => console.error(e));
+const host = await createUiTestHost(fixture.backend, (e) => console.error(e));
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -85,7 +86,7 @@ try {
         (await context.request.post(controlUrl, { data: input })).json();
       await control({ action: "reset" });
       const state = await control({ action: "complete", count });
-      await host.refresh();
+      await host.publish();
       const page = await context.newPage();
       const errors = [],
         frames = [],

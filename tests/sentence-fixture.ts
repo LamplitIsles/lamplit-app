@@ -1,8 +1,11 @@
 import { fixtureBackend } from "./fixture.ts";
 import type {
   ChatMessage,
+  ChatView,
   StreamingReply,
 } from "../packages/contracts/src/index.ts";
+import { capabilities } from "../packages/contracts/src/index.ts";
+import type { ChatChange } from "../packages/contracts/src/server.ts";
 
 export const SENTENCE_PROMPT = "Test-owned sentence acceptance input";
 
@@ -18,7 +21,10 @@ export function sentenceFixture(profile = "default") {
   let replyCompletedTurnId: string | undefined;
   let attempt = 0;
   let executions = 0;
-  const listeners = new Set<() => void>();
+  let gapMessages: ChatMessage[] | undefined;
+  let gapHistoryCalls = 0;
+  let failNextGapPage = false;
+  const listeners = new Set<{ fn: (change: ChatChange) => void; scope: symbol; sessionId: string }>();
   const record = (
     id: string,
     text: string,
@@ -64,7 +70,28 @@ export function sentenceFixture(profile = "default") {
       case "reset":
         sessionId = "sentence-session";
         executions = 0;
+        gapMessages = undefined;
+        gapHistoryCalls = 0;
+        failNextGapPage = false;
         seed();
+        break;
+      case "gap-seed":
+        gapMessages = Array.from({ length: 65 }, (_, i) => record(`gap-${i}`, `消息 ${i}`, { createdAt: i }));
+        break;
+      case "gap-advance":
+        if (!gapMessages) throw new Error("Missing gap fixture");
+        gapMessages.push(...Array.from({ length: 60 }, (_, i) => record(`gap-${i + 65}`, `消息 ${i + 65}`, { createdAt: i + 65 })));
+        break;
+      case "gap-fail-next":
+        failNextGapPage = true;
+        break;
+      case "media-captions":
+        gapMessages = undefined;
+        messages = [
+          record("image-caption", "图片附带文字", { imageState: "failed" }),
+          record("voice-caption", "语音附带文字", { voice: { id: "a".repeat(64) } }),
+        ];
+        older = [];
         break;
       case "start":
         if (preview) throw new Error("Provider already held");
@@ -96,7 +123,7 @@ export function sentenceFixture(profile = "default") {
       case "complete":
         if (!preview) throw new Error("No held provider");
         messages.push(
-          record(`native-entry-${attempt}`, input.text ?? preview.text, {
+          record(preview.id, input.text ?? preview.text, {
             turnId: active,
             createdAt: preview.createdAt,
           }),
@@ -196,44 +223,61 @@ export function sentenceFixture(profile = "default") {
       default:
         throw new Error("Unknown sentence fixture action");
     }
-    listeners.forEach((fn) => fn());
+    const view = currentView();
+    for (const listener of listeners) {
+      if (listener.sessionId !== sessionId) {
+        const nextScope = Symbol("sentence session");
+        listener.fn({ type: "session", scope: listener.scope, nextScope, view });
+        listener.scope = nextScope;
+        listener.sessionId = sessionId;
+      } else listener.fn({ type: "update", scope: listener.scope,
+        window: { messages: view.messages, before: view.before },
+        state: { activeTurnId: view.activeTurnId, streamingReply: view.streamingReply ?? null,
+          replyCompletedTurnId: view.replyCompletedTurnId ?? null } });
+    }
     return {
       held: !!preview,
       generationId: preview?.id ?? null,
       executions,
       completed: input.action === "complete",
+      gapHistoryCalls,
     };
   };
+  function currentView(): ChatView {
+    return {
+      version: 2, name: "Mica", sessionId, activeTurnId: active,
+      contextUsage: { tokens: null, capacity: null }, compaction: null, capabilities, recovery: [],
+      messages: gapMessages ? gapMessages.slice(-30) : [...messages],
+      ...(replyCompletedTurnId === undefined ? {} : { replyCompletedTurnId }),
+      before: gapMessages ? (gapMessages.length > 30 ? String(gapMessages.length - 30) : null) : older.length ? "older" : null,
+      ...(preview ? { streamingReply: preview } : {}),
+    };
+  }
   return {
     control,
     backend: {
       ...base.backend,
       async read() {
-        return {
-          ...(await base.backend.read()),
-          sessionId,
-          messages: [...messages],
-          activeTurnId: active,
-          ...(replyCompletedTurnId === undefined
-            ? {}
-            : { replyCompletedTurnId }),
-          before: older.length ? "older" : null,
-          ...(preview ? { streamingReply: preview } : {}),
-        };
+        return currentView();
       },
       async stop(turnId: string) {
         if (turnId !== active) return { stopped: false };
         control({ action: "stop" });
         return { stopped: true };
       },
-      async history() {
+      async history(before: string) {
+        if (gapMessages) {
+          gapHistoryCalls++;
+          if (failNextGapPage) { failNextGapPage = false; throw new Error("test-owned gap failure"); }
+          const end = Number(before), start = Math.max(0, end - 30);
+          return { messages: gapMessages.slice(start, end), before: start ? String(start) : null };
+        }
         return { messages: [...older], before: null };
       },
-      subscribe(fn: () => void) {
-        listeners.add(fn);
-        return () => {
-          listeners.delete(fn);
-        };
+      subscribe(fn: (change: ChatChange) => void) {
+        const listener = { fn, scope: Symbol("sentence session"), sessionId };
+        listeners.add(listener);
+        return { scope: listener.scope, close() { listeners.delete(listener); } };
       },
     },
   };

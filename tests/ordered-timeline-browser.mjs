@@ -1,5 +1,6 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
+import { imageHttp } from "../packages/contracts/src/server.ts";
 import { imagesFixture } from "./images-fixture.ts";
 import { fixtureImage } from "./panels-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
@@ -43,12 +44,12 @@ const backend = {
   async retryFailed(input) {
     const result = await fixture.backend.retryFailed(input);
     trailing = [{ ...base, id: "after-retry", text: "重试后的回复" }];
-    await host.refresh();
+    await host.publish();
     await retryGate;
     return result;
   },
 };
-const host = await createChatHost(backend);
+const host = await createUiTestHost(backend);
 const channels = new Map();
 const server = Bun.serve({
   hostname: "127.0.0.1", port: 0,
@@ -57,12 +58,12 @@ const server = Bun.serve({
     if (path === "/api/chat/socket" && server.upgrade(request)) return;
     if (path === "/__test/finish-picture") {
       picture = { ...base, id: "picture", text: "", imageState: "ready", images: [{ attachmentId: "generated", name: "generated.png", mediaType: "image/png", availability: "available" }] };
-      await host.refresh();
+      await host.publish();
       return new Response("ok");
     }
     if (path === "/__test/unknown-picture") {
       picture = { ...base, id: "picture", text: "", imageState: "unknown" };
-      await host.refresh();
+      await host.publish();
       return new Response("ok");
     }
     if (path === "/__test/release-submit") { releaseSubmit(); return new Response("ok"); }
@@ -72,12 +73,12 @@ const server = Bun.serve({
     if (path === "/__test/release-retry") { releaseRetry(); return new Response("ok"); }
     if (path === "/__test/later-message") {
       trailing = [{ ...base, id: "later", text: "发送后的回复" }];
-      await host.refresh();
+      await host.publish();
       return new Response("ok");
     }
     if (path === "/__test/intervening-message") {
       trailing = [{ ...base, id: "intervening", text: "中间的回复" }];
-      await host.refresh();
+      await host.publish();
       return new Response("ok");
     }
     if (path === "/__test/mode-failed") { await fixture.control({ action: "mode", state: "failed" }); return new Response("ok"); }

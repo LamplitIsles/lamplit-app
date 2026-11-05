@@ -67,6 +67,13 @@ test("native compact over Chord: ownership, single admission, completion, stale 
         ? { ...view, contextUsage: { tokens: 12000, capacity: 100000 } }
         : view;
     },
+    subscribe(changed: Parameters<typeof fixture.backend.subscribe>[0]) {
+      return fixture.backend.subscribe(change => {
+        if (change.type === "update" && coalescedFreshUsage && change.state?.compaction?.status === "complete")
+          changed({ ...change, state: { ...change.state, contextUsage: { tokens: 12000, capacity: 100000 } } });
+        else changed(change);
+      });
+    },
   };
   const host = await createChatHost(backend, () => {});
   const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -114,7 +121,6 @@ test("native compact over Chord: ownership, single admission, completion, stale 
       new WebSocket(`ws://127.0.0.1:${server.port}`),
       () => {},
       () => {},
-      () => {},
     );
     try {
       await expect(
@@ -126,18 +132,15 @@ test("native compact over Chord: ownership, single admission, completion, stale 
 
     expect((await fixture.control({ action: "state" })).calls).toBe(0);
     await fixture.control({ action: "busy", enabled: true });
-    await host.refresh();
     await eventually(() => controller.view?.activeTurnId === "native-busy");
     await expect(controller.send("/compact")).rejects.toThrow();
     await fixture.control({ action: "busy", enabled: false });
-    await host.refresh();
     await eventually(() => !controller.view?.activeTurnId);
     await fixture.control({ action: "refuse", enabled: true });
     await expect(controller.send("/compact")).rejects.toThrow();
     expect(controller.pending).toEqual([]);
     await fixture.control({ action: "refuse", enabled: false });
     await fixture.control({ action: "usage", tokens: 80000, capacity: 100000 });
-    await host.refresh();
 
     await controller.send("/compact");
     await eventually(() => controller.view?.compaction?.status === "running");
@@ -147,24 +150,20 @@ test("native compact over Chord: ownership, single admission, completion, stale 
       [],
     );
     await fixture.control({ action: "finish" });
-    await host.refresh();
     await eventually(() => controller.view?.compaction?.status === "complete");
     expect(controller.view!.contextUsage).toEqual({
       tokens: null,
       capacity: 100000,
     });
     await fixture.control({ action: "usage", tokens: 10000, capacity: 100000 });
-    await host.refresh();
     await eventually(() => controller.view?.contextUsage.tokens === 10000);
 
     await fixture.control({ action: "usage", tokens: 80000, capacity: 100000 });
     await fixture.control({ action: "auto" });
-    await host.refresh();
     await eventually(() => controller.view?.compaction?.status === "running");
     expect(controller.view!.contextUsage.tokens).toBe(80000);
     coalescedFreshUsage = true;
     await fixture.control({ action: "finish" });
-    await host.refresh();
     await eventually(() => controller.view?.compaction?.status === "complete");
     // No later event, usage update or reload may be needed to show fresh tokens.
     expect(controller.view!.contextUsage).toEqual({
@@ -177,7 +176,6 @@ test("native compact over Chord: ownership, single admission, completion, stale 
       (view) => {
         initialUsage.tokens = view.contextUsage.tokens;
       },
-      () => {},
       () => {},
     );
     try {
@@ -194,7 +192,6 @@ test("native compact over Chord: ownership, single admission, completion, stale 
     );
     await eventually(() => controller.view?.compaction?.status === "running");
     await fixture.control({ action: "session", sessionId: "next" });
-    await host.refresh();
     await eventually(() => controller.view?.sessionId === "next");
     await fixture.control({ action: "release" });
     expect(await pending).toBe("stale");

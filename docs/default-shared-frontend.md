@@ -61,7 +61,7 @@ package includes all seven feature runners, route regression, their fixtures/hel
 (including `notification-permission.mjs` and the shared local/native
 `optimistic-send-browser.mjs`), the notification acceptance guide,
 licenses, source attribution and native-control docs. Its package pins Playwright;
-compiled contracts retain their declared Chord/TypeBox dependencies.
+compiled contracts retain their declared Chord, marked, and TypeBox dependencies.
 `identity.json` records exact committed source HEAD, fixed baseline, archive hash
 and manifest hashes. This is a candidate, not Owner approval. Both native workers
 remain blocked until Owner reviews and approves these exact complete bytes.

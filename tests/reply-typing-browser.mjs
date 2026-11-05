@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { sentenceFixture } from "./sentence-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
@@ -8,7 +8,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 
 // Owned DTO authority, real socket → controller → Partner → Companion DOM.
 const fixture = sentenceFixture();
-const host = await createChatHost(fixture.backend);
+const host = await createUiTestHost(fixture.backend);
 const channels = new Map();
 const assets = resolve("apps/web/build");
 const evidence =
@@ -21,7 +21,7 @@ const server = Bun.serve({
     const path = new URL(req.url).pathname;
     if (path === "/__test/control") {
       const result = fixture.control(await req.json());
-      await host.refresh();
+      await host.publish();
       return Response.json(result);
     }
     if (path === "/__test/disconnect") {

@@ -1,5 +1,6 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost, imageHttp } from "../packages/contracts/src/server.ts";
+import { imageHttp } from "../packages/contracts/src/server.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
 import { submissionsFixture } from "./submissions-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
@@ -11,7 +12,7 @@ const external = process.env.APP_ACCEPTANCE_URL;
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host needs test-owned submission control URL");
 const fixture = submissionsFixture();
-const host = await createChatHost(fixture.backend, () => {});
+const host = await createUiTestHost(fixture.backend, () => {});
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -23,7 +24,7 @@ const server = external
         const path = new URL(req.url).pathname;
         if (path === "/__test/submissions") {
           const result = await fixture.control(await req.json());
-          await host.refresh();
+          await host.publish();
           return Response.json(result);
         }
         if (path === "/api/chat/socket" && server.upgrade(req)) return;

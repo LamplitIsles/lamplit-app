@@ -1,4 +1,5 @@
 import { fixtureBackend } from "./fixture.ts";
+import type { ChatChange } from "../packages/contracts/src/server.ts";
 import {
   MessageSchema,
   validate,
@@ -10,9 +11,14 @@ export function keetFixture(imageProfile: "dm" | "text-only" = "dm") {
   const base = fixtureBackend();
   const live: ChatMessage[] = [];
   const older: ChatMessage[] = [];
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change: ChatChange) => void>();
+  const scope = Symbol("source fixture session");
   const changed = () => {
-    for (const fn of listeners) fn();
+    void base.backend.read().then(view => {
+      for (const fn of listeners) fn({ type: "update", scope,
+        window: { messages: [...live, ...view.messages].slice(-30), before: older.length ? "older-page" : null },
+        state: { activeTurnId: view.activeTurnId, recovery: view.recovery } });
+    });
   };
   const backend = {
     ...base.backend,
@@ -28,13 +34,13 @@ export function keetFixture(imageProfile: "dm" | "text-only" = "dm") {
       if (before !== "older-page") throw new Error("Invalid fixture cursor");
       return { messages: [...older], before: null };
     },
-    subscribe(listener: () => void) {
+    subscribe(listener: (change: ChatChange) => void) {
       listeners.add(listener);
-      const off = base.backend.subscribe(listener);
-      return () => {
+      const off = base.backend.subscribe(() => changed());
+      return { scope, close() {
         listeners.delete(listener);
-        off();
-      };
+        off.close();
+      } };
     },
   };
   return {

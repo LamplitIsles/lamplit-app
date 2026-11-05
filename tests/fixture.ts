@@ -7,7 +7,7 @@ import {
   type Receipt,
   type Submission,
 } from "../packages/contracts/src/index.ts";
-import type { ChatBackend } from "../packages/contracts/src/server.ts";
+import type { ChatBackend, ChatChange } from "../packages/contracts/src/server.ts";
 export function fixtureBackend() {
   let active: string | null = null;
   const messages: ChatMessage[] = [];
@@ -15,10 +15,12 @@ export function fixtureBackend() {
   const rejected = new Map<string, { input: Submission; receipt: Receipt }>();
   const deleted = new Set<string>();
   const retries = new Map<string, string>();
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change: ChatChange) => void>();
+  const scope = Symbol("fixture session");
   let executions = 0;
   const changed = () => {
-    for (const listener of listeners) listener();
+    for (const listener of listeners) listener({ type: "update", scope,
+      window: { messages: [...messages].slice(-30), before: null }, state: { activeTurnId: active } });
   };
   const receipt = (id: string): Receipt | null =>
     submissions.has(id)
@@ -162,7 +164,7 @@ export function fixtureBackend() {
     },
     subscribe(listener) {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return { scope, close() { listeners.delete(listener); } };
     },
   };
   return {

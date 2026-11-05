@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { postFixture } from "./post-fixture.ts";
 import { fixtureImage } from "./panels-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
@@ -11,7 +11,7 @@ const external = process.env.APP_ACCEPTANCE_URL;
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Native acceptance requires an owned control URL");
 const fixture = postFixture();
-const host = await createChatHost(fixture.backend, console.error);
+const host = await createUiTestHost(fixture.backend, console.error);
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -26,7 +26,7 @@ const server = external
           ?.includes("fixture-owner=1");
         if (path === "/__test/post-source-ui") {
           const result = await fixture.control(await req.json());
-          await host.refresh();
+          await host.publish();
           return Response.json(result);
         }
         if (path === "/__test/post-source-ui/disconnect") {

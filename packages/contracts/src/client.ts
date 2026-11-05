@@ -38,14 +38,12 @@ import {
   Chat,
   ViewSchema,
   PageSchema,
-  TimelineUpdateSchema,
   validateReceipt,
   validateLookup,
   validate,
   validateRecovery,
   validateSubmission,
   type ChatView,
-  type ChatTimelineEvent,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -53,6 +51,7 @@ import {
   type CompactInput,
 } from "./compact.ts";
 import { decodeFrame, sendFrame } from "./wire.ts";
+import { isReplySource, validateReplySource } from "./reply-ranges.ts";
 
 export class ChatConnectionError extends Error {
   constructor(
@@ -68,7 +67,6 @@ export async function openChat(
   socket: WebSocket,
   changed: (view: ChatView) => void,
   offline: (error: ChatConnectionError) => void,
-  timeline: (event: ChatTimelineEvent) => void,
 ) {
   await new Promise<void>((resolve, reject) => {
     if (socket.readyState === 1) return resolve();
@@ -167,7 +165,6 @@ export async function openChat(
           parseWireServiceProviderUpdate(raw),
         );
         listener(update, BACKGROUND_CONTEXT);
-        if (update.type === "reset") timeline({ type: "reset" });
       };
       listeners.set(subscriptionId, accept);
       try {
@@ -244,12 +241,6 @@ export async function openChat(
         )
           throw new Error("Unknown subscription");
         listeners.get(frame.subscriptionId)!(frame.update);
-      } else if (frame.type === "timeline") {
-        const { type: _type, ...raw } = frame;
-        timeline({
-          type: "change",
-          update: validate(TimelineUpdateSchema, raw),
-        });
       } else if (
         (frame.type === "result" || frame.type === "error") &&
         typeof frame.id === "string"
@@ -276,6 +267,8 @@ export async function openChat(
       try {
         const view = validate(ViewSchema, value);
         view.recovery.forEach(validateRecovery);
+        view.messages.forEach(message => validateReplySource(message, isReplySource(message)));
+        if (view.streamingReply) validateReplySource(view.streamingReply, true);
         changed(view);
       } catch {
         socket.close(1002, "Invalid view");
@@ -323,10 +316,12 @@ export async function openChat(
         return result;
       },
       async history(before: string) {
-        return validate(
+        const page = validate(
           PageSchema,
           await service.history(before, BACKGROUND_CONTEXT),
         );
+        page.messages.forEach(message => validateReplySource(message, isReplySource(message)));
+        return page;
       },
       async submit(input: import("./index.ts").Submission) {
         const receipt = validateReceipt(

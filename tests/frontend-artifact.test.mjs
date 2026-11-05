@@ -28,7 +28,17 @@ async function fixture() {
     "apps/web/build/index.html": "<script src='/assets/app.js'></script>",
     "apps/web/build/assets/app.js": "hello",
     "packages/contracts/dist/cfl-browser-host-auth.js": marker,
-    "packages/contracts/dist/client.js": "client",
+    "packages/contracts/dist/client.js": 'export const client = "client";',
+    "packages/contracts/dist/client.d.ts": "export declare const client: string;",
+    "packages/contracts/dist/cfl-browser-host-auth.d.ts": "export declare const CFL_BROWSER_HOST_AUTH_PROTOCOL: string;",
+    "packages/contracts/dist/server.js": 'export { replyChunks } from "./reply-chunks.js";',
+    "packages/contracts/dist/server.d.ts": 'export { replyChunks } from "./reply-chunks.js";',
+    "packages/contracts/dist/reply-chunks.js": 'import { Lexer } from "marked"; export const replyChunks = text => Lexer.lex(text);',
+    "packages/contracts/dist/reply-chunks.d.ts": "export declare function replyChunks(text: string): unknown[];",
+    "packages/contracts/dist/voice.js": 'export const voice = "voice";',
+    "packages/contracts/dist/voice.d.ts": "export declare const voice: string;",
+    "packages/contracts/dist/wire.js": 'export const wire = "wire";',
+    "packages/contracts/dist/wire.d.ts": "export declare const wire: string;",
     "packages/contracts/dist/index.js":
       'import { fixture } from "typebox"; export { fixture };',
     "packages/contracts/dist/index.d.ts":
@@ -77,10 +87,20 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
     "index.html",
   ]);
   expect(Object.keys(manifest.contracts).sort()).toEqual([
+    "dist/cfl-browser-host-auth.d.ts",
     "dist/cfl-browser-host-auth.js",
+    "dist/client.d.ts",
     "dist/client.js",
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/reply-chunks.d.ts",
+    "dist/reply-chunks.js",
+    "dist/server.d.ts",
+    "dist/server.js",
+    "dist/voice.d.ts",
+    "dist/voice.js",
+    "dist/wire.d.ts",
+    "dist/wire.js",
   ]);
   expect(Object.keys(manifest.licenses).sort()).toEqual([
     "NotoSansSC-OFL-1.1.txt",
@@ -177,8 +197,14 @@ test("independent npm package is reproducible, installable and matches every fro
   );
   expect(pkg.name).toBe("@lamplit/contracts");
   expect(pkg.exports["."].import).toBe("./dist/index.js");
+  expect(pkg.exports["./server"].import).toBe("./dist/server.js");
+  expect(pkg.exports["./reply-chunks"].import).toBe("./dist/reply-chunks.js");
+  for (const entry of Object.values(pkg.exports))
+    for (const path of Object.values(entry))
+      expect(await readFile(join(unpacked, "package", path))).toBeDefined();
   expect(pkg.dependencies).toEqual({
     "@earendil-works/chord": "1.0.0",
+    marked: "18.0.14",
     typebox: "1.3.34",
   });
   expect(pkg.license).toBe("Apache-2.0");
@@ -204,8 +230,9 @@ test("independent npm package is reproducible, installable and matches every fro
   // npm resolves the real declared versions using local, test-owned fixtures only.
   const consumer = join(root, "consumer");
   const chord = join(root, "chord");
+  const marked = join(root, "marked");
   const typebox = join(root, "typebox");
-  for (const dir of [consumer, chord, typebox]) await mkdir(dir);
+  for (const dir of [consumer, chord, marked, typebox]) await mkdir(dir);
   await writeFile(
     join(consumer, "package.json"),
     '{"private":true,"type":"module"}',
@@ -213,6 +240,14 @@ test("independent npm package is reproducible, installable and matches every fro
   await writeFile(
     join(chord, "package.json"),
     '{"name":"@earendil-works/chord","version":"1.0.0"}',
+  );
+  await writeFile(
+    join(marked, "package.json"),
+    '{"name":"marked","version":"18.0.14","type":"module","exports":"./index.js"}',
+  );
+  await writeFile(
+    join(marked, "index.js"),
+    'export class Lexer { static lex(text) { return [{ raw: text }]; } }',
   );
   await writeFile(
     join(typebox, "package.json"),
@@ -233,6 +268,7 @@ test("independent npm package is reproducible, installable and matches every fro
       "--no-package-lock",
       archive,
       chord,
+      marked,
       typebox,
     ],
     {
@@ -254,7 +290,7 @@ test("independent npm package is reproducible, installable and matches every fro
     [
       "--input-type=module",
       "-e",
-      'import { fixture } from "@lamplit/contracts"; if (fixture !== "installed") process.exit(1);',
+      'import { fixture } from "@lamplit/contracts"; import { replyChunks } from "@lamplit/contracts/reply-chunks"; import { replyChunks as fromServer } from "@lamplit/contracts/server"; if (fixture !== "installed" || replyChunks("a\\nb")[0].raw !== "a\\nb" || fromServer("x")[0].raw !== "x") process.exit(1);',
     ],
     { cwd: consumer, encoding: "utf8" },
   );

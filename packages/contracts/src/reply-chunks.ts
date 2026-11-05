@@ -199,3 +199,179 @@ export function replyChunks(
     };
   });
 }
+
+/** A stable slice of the original UTF-16 source. */
+export interface ReplySegment {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+/** The identity must come from the source authority, not text or timestamps. */
+export interface ReplySegmentIdentity {
+  sessionId: string;
+  sourceId: string;
+  attemptId: string;
+}
+
+export type ReplySegmentUpdate =
+  | { status: "ok"; segments: ReplySegment[] }
+  | { status: "conflict"; segments: ReplySegment[] }
+  | { status: "identity-changed"; segments: ReplySegment[] };
+
+type Block =
+  | { kind: "fence"; from: number; end: number; close: RegExp }
+  | { kind: "math"; from: number; end: number; close: string }
+  | { kind: "header" | "table" | "list"; from: number; end: number };
+type Snapshot = {
+  identity: ReplySegmentIdentity | undefined;
+  previous: string;
+  cursor: number;
+  searchFrom: number;
+  finished: boolean;
+  segments: ReplySegment[];
+  blankStart: number | undefined;
+  block: Block | undefined;
+};
+type Segmenter = {
+  update(next: ReplySegmentIdentity, source: string, complete: boolean): ReplySegmentUpdate;
+  /** Copy transient state for an atomic host view update. */
+  fork(): Segmenter;
+};
+function createSegmenter(snapshot?: Snapshot): Segmenter {
+  let identity = snapshot?.identity;
+  let previous = snapshot?.previous ?? "", cursor = snapshot?.cursor ?? 0, searchFrom = snapshot?.searchFrom ?? 0;
+  let finished = snapshot?.finished ?? false;
+  let segments: ReplySegment[] = snapshot?.segments.slice() ?? [];
+  let blankStart = snapshot?.blankStart;
+  let block = snapshot?.block && { ...snapshot.block };
+  const body = (line: string) => line.replace(/^ {0,3}(?:>[ \t]?)+/, "");
+  const blank = (line: string) => !hasContent(line);
+  const fence = (line: string) => body(line).match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+  const tableHeader = (line: string) => /^ {0,3}\|/.test(body(line));
+  const tableRow = (line: string) => body(line).includes("|");
+  const tableRule = (line: string) => /^ {0,3}\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$/.test(body(line)) || /^ {0,3}\|[ \t]*:?-{3,}:?[ \t]*\|[ \t]*$/.test(body(line));
+  const list = (line: string) => /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(body(line));
+  const sameIdentity = (a: ReplySegmentIdentity, b: ReplySegmentIdentity) =>
+    a.sessionId === b.sessionId && a.sourceId === b.sourceId && a.attemptId === b.attemptId;
+  const reset = (next: ReplySegmentIdentity) => {
+    identity = { ...next }; previous = ""; cursor = 0; searchFrom = 0;
+    finished = false; segments = []; blankStart = undefined; block = undefined;
+  };
+  const emit = (source: string, from: number, to: number, math = false) => {
+    const raw = source.slice(from, to);
+    if (math) {
+      if (hasContent(raw)) segments.push(Object.freeze({ start: from, end: to, text: raw }));
+    } else {
+      for (const chunk of replyChunks(raw))
+        segments.push(Object.freeze({ start: from + chunk.start, end: from + chunk.end, text: chunk.text }));
+    }
+  };
+  const line = (source: string, start: number, end: number) => {
+    const text = source.slice(start, end).replace(/\r?\n$/, "");
+    // A boundary line may end a table/list or reject a header; process that
+    // same line again outside the closed block.
+    if (block) {
+      const current = block;
+      if (current.kind === "fence" || current.kind === "math") {
+        current.end = end;
+        const closed = current.kind === "fence"
+          ? current.close.test(body(text)) : body(text).trim() === current.close;
+        if (closed) {
+          emit(source, current.from, end, current.kind === "math");
+          block = undefined;
+        }
+        return;
+      }
+      if (current.kind === "header" && tableRule(text)) {
+        block = { kind: "table", from: current.from, end };
+        return;
+      }
+      if (current.kind === "table" && !blank(text) && tableRow(text)) {
+        current.end = end;
+        return;
+      }
+      if (current.kind === "list" && !blank(text) && (list(text) || /^ {2,}\S/.test(body(text)))) {
+        current.end = end;
+        return;
+      }
+      emit(source, current.from, current.end);
+      block = undefined;
+    }
+    if (blank(text)) { blankStart ??= start; return; }
+    const from = blankStart ?? start;
+    blankStart = undefined;
+    const math = body(text).match(/^ {0,3}(\$\$|\\\[)[ \t]*$/);
+    if (math) {
+      block = { kind: "math", from, end, close: math[1] === "$$" ? "$$" : "\\]" };
+      return;
+    }
+    const open = fence(text);
+    if (open) {
+      const marker = open[1]!, char = marker[0]!;
+      block = { kind: "fence", from, end,
+        close: new RegExp(`^ {0,3}${char === "`" ? "`" : "~"}{${marker.length},}[ \\t]*$`) };
+      return;
+    }
+    if (tableHeader(text)) { block = { kind: "header", from, end }; return; }
+    if (list(text)) { block = { kind: "list", from, end }; return; }
+    emit(source, from, end);
+  };
+  const check = (next: ReplySegmentIdentity, source: string, complete: boolean): ReplySegmentUpdate["status"] => {
+    if (identity && !sameIdentity(identity, next)) return "identity-changed";
+    if (finished && (!complete || source !== previous)) return "conflict";
+    const publishedEnd = segments.at(-1)?.end ?? 0;
+    if (source.slice(0, publishedEnd) !== previous.slice(0, publishedEnd)) return "conflict";
+    return "ok";
+  };
+  return {
+    fork() {
+      return createSegmenter({ identity, previous, cursor, searchFrom, finished, segments, blankStart, block });
+    },
+    update(next: ReplySegmentIdentity, source: string, complete: boolean): ReplySegmentUpdate {
+      const status = check(next, source, complete);
+      if (status === "identity-changed") return { status, segments: [] };
+      if (status === "conflict") return { status, segments: segments.slice() };
+      if (!identity) reset(next);
+      if (finished) return { status: "ok", segments: segments.slice() };
+      if (!source.startsWith(previous)) {
+        // A block or blank tail may already have consumed lines without emitting.
+        cursor = segments.at(-1)?.end ?? 0;
+        searchFrom = cursor;
+        blankStart = undefined;
+        block = undefined;
+      }
+      while (cursor < source.length) {
+        const lf = source.indexOf("\n", searchFrom);
+        if (lf < 0 && !complete) { searchFrom = source.length; break; }
+        const end = lf < 0 ? source.length : lf + 1;
+        line(source, cursor, end);
+        cursor = end;
+        searchFrom = cursor;
+      }
+      previous = source;
+      if (complete) {
+        if (block) emit(source, block.from, block.end, block.kind === "math");
+        block = undefined;
+        finished = true;
+      }
+      return { status: "ok", segments: segments.slice() };
+    },
+  };
+}
+
+/**
+ * One short-lived projection bound to the first identity. A changed identity
+ * is rejected without disclosing the old segments; the caller creates a new
+ * projection and fences obsolete updates. The unpublished tail can be
+ * rewritten; changes to published segments are rejected. The caller owns
+ * disposal.
+ */
+export function createReplySegmenter(): Segmenter {
+  return createSegmenter();
+}
+
+/** Project a complete source without retaining incremental state. */
+export function stableReplySegments(source: string, complete: boolean): ReplySegment[] {
+  return createReplySegmenter().update({ sessionId: "", sourceId: "", attemptId: "" }, source, complete).segments;
+}

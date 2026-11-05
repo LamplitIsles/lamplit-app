@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   createChatHost,
   type ChatSubscription,
+  type ChatChange,
 } from "../packages/contracts/src/server.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
 import type { ChatView } from "../packages/contracts/src/index.ts";
@@ -42,6 +43,7 @@ test("original openChat socket accepts gap reset, future deltas and lookup witho
   let name = "before",
     listeners = 0,
     calls = 0;
+  let notify: (change: ChatChange) => void = () => {}, scope: symbol;
   const backend = {
     ...fixture.backend,
     async read() {
@@ -51,13 +53,12 @@ test("original openChat socket accepts gap reset, future deltas and lookup witho
       calls++;
       return fixture.backend.lookup(id);
     },
-    subscribe(changed: () => void) {
+    subscribe(changed: (change: ChatChange) => void) {
       listeners++;
       const off = fixture.backend.subscribe(changed);
-      return () => {
-        listeners--;
-        off();
-      };
+      scope = off.scope;
+      notify = changed;
+      return { scope, close() { listeners--; off.close(); notify = () => {}; } };
     },
   };
   let host = await serverApi.createChatHost(backend);
@@ -113,7 +114,6 @@ test("original openChat socket accepts gap reset, future deltas and lookup witho
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     (view) => views.push(structuredClone(view)),
     () => {},
-    () => {},
   );
   try {
     expect(views.at(-1)?.name).toBe("before");
@@ -138,7 +138,7 @@ test("original openChat socket accepts gap reset, future deltas and lookup witho
       saved!.subscriptionId,
     );
     name = "future";
-    await host.refresh();
+    notify({ type: "update", scope: scope!, state: { name } });
     await until(() => views.at(-1)?.name === "future");
     expect(calls).toBe(1);
     expect(fixture.executions).toBe(0);

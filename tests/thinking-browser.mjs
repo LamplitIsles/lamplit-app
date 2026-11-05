@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { thinkingFixture } from "./thinking-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
@@ -10,7 +10,7 @@ const external = process.env.APP_ACCEPTANCE_URL;
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Native acceptance requires a test-owned control URL");
 const fixture = thinkingFixture();
-const host = await createChatHost(fixture.backend, console.error);
+const host = await createUiTestHost(fixture.backend, console.error);
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -22,7 +22,7 @@ const server = external
         const path = new URL(req.url).pathname;
         if (path === "/__test/collapsed-thinking") {
           const result = fixture.control(await req.json());
-          await host.refresh();
+          await host.publish();
           return Response.json(result);
         }
         if (path === "/__test/collapsed-thinking/disconnect") {

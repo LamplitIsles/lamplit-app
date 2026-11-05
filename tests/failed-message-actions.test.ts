@@ -39,7 +39,6 @@ test("actual socket contract fences delayed admission, preserves rejection after
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     () => {},
     () => {},
-    () => {},
   );
   const sessionId = "fixture-session";
   const originalClient = client;
@@ -53,7 +52,6 @@ test("actual socket contract fences delayed admission, preserves rejection after
     // Receive is serialized per carrier; reconcile while submit is held.
     client = await openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
-      () => {},
       () => {},
       () => {},
     );
@@ -109,7 +107,6 @@ test("actual socket contract fences delayed admission, preserves rejection after
     host = await createChatHost(fixture.backend, () => {});
     client = await openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
-      () => {},
       () => {},
       () => {},
     );

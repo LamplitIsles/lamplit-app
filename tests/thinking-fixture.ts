@@ -1,4 +1,5 @@
 import { fixtureBackend } from "./fixture.ts";
+import type { ChatChange } from "../packages/contracts/src/server.ts";
 import {
   MessageSchema,
   validate,
@@ -10,8 +11,16 @@ export function thinkingFixture() {
   const base = fixtureBackend();
   const live: ChatMessage[] = [];
   const older: ChatMessage[] = [];
-  const listeners = new Set<() => void>();
-  const changed = () => listeners.forEach((fn) => fn());
+  const scope = Symbol("thinking fixture session");
+  const listeners = new Set<(change: ChatChange) => void>();
+  const changed = () =>
+    listeners.forEach((fn) =>
+      fn({
+        type: "update",
+        scope,
+        window: { messages: [...live], before: older.length ? "older" : null },
+      }),
+    );
   return {
     backend: {
       ...base.backend,
@@ -26,10 +35,13 @@ export function thinkingFixture() {
         if (before !== "older") throw new Error("Invalid fixture cursor");
         return { messages: [...older], before: null };
       },
-      subscribe(fn: () => void) {
+      subscribe(fn: (change: ChatChange) => void) {
         listeners.add(fn);
-        return () => {
-          listeners.delete(fn);
+        return {
+          scope,
+          close() {
+            listeners.delete(fn);
+          },
         };
       },
     },

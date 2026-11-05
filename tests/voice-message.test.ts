@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { MessageSchema, PageSchema, validate, type ChatView } from "../packages/contracts/src/index.ts";
-import { createChatHost } from "../packages/contracts/src/server.ts";
+import { createChatHost, type ChatChange } from "../packages/contracts/src/server.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
 import { fixtureBackend } from "./fixture.ts";
 
@@ -16,11 +16,12 @@ test("voice references survive publication, history and reconnect", async () => 
   const fixture = fixtureBackend();
   const voice = { id: "voice-message", role: "agent" as const, text: "", createdAt: 1, operationId: null, turnId: "turn", voice: { id: "a".repeat(64) } };
   let messages: ChatView["messages"] = [];
-  let changed = () => {};
+  const scope = Symbol("voice session");
+  let changed: (change: ChatChange) => void = () => {};
   const backend = { ...fixture.backend,
     async read() { return { ...await fixture.backend.read(), messages }; },
     async history() { return { messages: [voice], before: null }; },
-    subscribe(listener: () => void) { changed = listener; return () => {}; },
+    subscribe(listener: (change: ChatChange) => void) { changed = listener; return { scope, close() { changed = () => {}; } }; },
   };
   let host = await createChatHost(backend);
   const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -33,10 +34,10 @@ test("voice references survive publication, history and reconnect", async () => 
     },
   });
   let view: ChatView | undefined;
-  const connect = () => openChat(new WebSocket(`ws://127.0.0.1:${server.port}`), value => { view = value; }, () => {}, () => {});
+  const connect = () => openChat(new WebSocket(`ws://127.0.0.1:${server.port}`), value => { view = value; }, () => {});
   let client = await connect();
   try {
-    messages = [voice]; changed();
+    messages = [voice]; changed({ type: "update", scope, window: { messages, before: null } });
     const deadline = Date.now() + 3000;
     while (!view?.messages.length && Date.now() < deadline) await Bun.sleep(10);
     expect(view?.messages).toEqual([voice]);

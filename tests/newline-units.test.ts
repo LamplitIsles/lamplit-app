@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { replyChunks } from "../apps/web/src/lib/companion/reply-chunks.ts";
+import "./marked-test-resolver.ts";
+const { replyChunks } = await import("../packages/contracts/src/reply-chunks.ts");
 
 for (const [source, expected] of [
   ["第一句。第二句。", ["第一句。第二句。"]],

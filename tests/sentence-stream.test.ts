@@ -3,7 +3,7 @@ import { ChatController } from "../apps/web/src/lib/chat-controller.ts";
 import { CompanionNotifications } from "../apps/web/src/lib/companion/client/notifications.ts";
 import {
   initialPreferences,
-  SENTENCE_STORAGE_KEY,
+  LANGUAGE_STORAGE_KEY,
   writePreference,
 } from "../apps/web/src/lib/companion/client/preferences.ts";
 import { ViewSchema, validate } from "../packages/contracts/src/index.ts";
@@ -110,11 +110,9 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     controller.start();
     await until(() => controller.connected);
     fixture.control({ action: "start", text: "First" });
-    await host.refresh();
     await until(() => controller.view?.streamingReply?.text === "First");
     const id = controller.view!.streamingReply!.id;
     fixture.control({ action: "advance", text: "First sentence. Second" });
-    await host.refresh();
     await until(
       () => controller.view?.streamingReply?.text === "First sentence. Second",
     );
@@ -138,7 +136,6 @@ test("socket refresh grows/removes preview atomically, controller discards disco
       action: "body-complete",
       text: "First sentence. Second completed.",
     });
-    await host.refresh();
     await until(
       () =>
         controller.view?.messages.some(
@@ -161,10 +158,8 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     await until(() => controller.connected);
     expect(controller.view?.replyCompletedTurnId).toBe(turn!);
     fixture.control({ action: "evidence" });
-    await host.refresh();
     await until(() => controller.view?.replyCompletedTurnId === undefined);
     fixture.control({ action: "finish-execution" });
-    await host.refresh();
     await until(() => controller.view?.activeTurnId === null);
     expect(controller.view?.streamingReply).toBeUndefined();
     expect(
@@ -178,7 +173,6 @@ test("socket refresh grows/removes preview atomically, controller discards disco
     );
     expect(errors).toEqual([]);
     fixture.control({ action: "start", text: "Discard on close" });
-    await host.refresh();
     await until(() => !!controller.view?.streamingReply);
     controller.close();
     expect(controller.view?.streamingReply).toBeUndefined();
@@ -193,7 +187,7 @@ test("socket refresh grows/removes preview atomically, controller discards disco
   }
 });
 
-test("sentence preference defaults on and tolerates unavailable storage", () => {
+test("language preference tolerates unavailable storage", () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const storage = new Map<string, string>();
   try {
@@ -204,17 +198,16 @@ test("sentence preference defaults on and tolerates unavailable storage", () => 
         setItem: (key: string, value: string) => storage.set(key, value),
       },
     });
-    expect(initialPreferences().sentenceReplies).toBe(true);
-    writePreference(SENTENCE_STORAGE_KEY, "false");
-    expect(initialPreferences().sentenceReplies).toBe(false);
+    writePreference(LANGUAGE_STORAGE_KEY, "zh");
+    expect(initialPreferences().language).toBe("zh");
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
       get() {
         throw new Error("Unavailable storage");
       },
     });
-    expect(initialPreferences().sentenceReplies).toBe(true);
-    expect(() => writePreference(SENTENCE_STORAGE_KEY, "false")).not.toThrow();
+    expect(() => initialPreferences()).not.toThrow();
+    expect(() => writePreference(LANGUAGE_STORAGE_KEY, "en")).not.toThrow();
   } finally {
     if (previous) Object.defineProperty(globalThis, "localStorage", previous);
     else Reflect.deleteProperty(globalThis, "localStorage");

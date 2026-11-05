@@ -1,12 +1,12 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { fixtureBackend } from "./fixture.ts";
 
 const fixture = fixtureBackend();
-const host = await createChatHost(fixture.backend);
+const host = await createUiTestHost(fixture.backend);
 const sockets = new Map();
 const allSockets = new Set();
 let calls = 0,
@@ -111,7 +111,7 @@ try {
     operationId: crypto.randomUUID(),
     text: "fresh live update",
   });
-  await host.refresh();
+  await host.publish();
   await page.clock.runFor(100);
   await expect(
     page.getByText("fresh live update", { exact: true }),

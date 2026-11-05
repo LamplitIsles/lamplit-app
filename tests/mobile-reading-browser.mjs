@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect, devices } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { thinkingFixture } from "./thinking-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
@@ -9,7 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 if (process.env.APP_ACCEPTANCE_URL || process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("This runner supports only the isolated App fixture");
 const fixture = thinkingFixture();
-const host = await createChatHost(fixture.backend, console.error);
+const host = await createUiTestHost(fixture.backend, console.error);
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = Bun.serve({
@@ -19,7 +19,7 @@ const server = Bun.serve({
     const path = new URL(req.url).pathname;
     if (path === "/__test/mobile-reading-layout") {
       const result = fixture.control(await req.json());
-      await host.refresh();
+      await host.publish();
       return Response.json(result);
     }
     if (path === "/__test/mobile-reading-layout/disconnect") {

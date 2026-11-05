@@ -378,8 +378,7 @@ test("import and Human favorite creation use bounded inputs and the commit guard
 
 test("sticker references survive Chord submission, refresh and history without a second execution", async () => {
   const { imagesFixture } = await import("./images-fixture.ts");
-  const { createChatHost } =
-    await import("../packages/contracts/src/server.ts");
+  const { createUiTestHost } = await import("./ui-test-host.ts");
   const { openChat } = await import("../packages/contracts/src/client.ts");
   const fixture = imagesFixture();
   let admitted: unknown;
@@ -393,7 +392,7 @@ test("sticker references survive Chord submission, refresh and history without a
     operationId: stage.operationId,
     turnId: "t",
   };
-  const host = await createChatHost({
+  const host = await createUiTestHost({
     ...fixture.backend,
     async submit(input) {
       if (admitted && JSON.stringify(admitted) !== JSON.stringify(input))
@@ -451,14 +450,13 @@ test("sticker references survive Chord submission, refresh and history without a
       view = v;
     },
     () => {},
-    () => {},
   );
   try {
     const input = { operationId: stage.operationId, text: "", images: [image] };
     expect((await client.submit(input)).state).toBe("submitted");
     expect((await client.submit(input)).state).toBe("submitted");
     expect(executions).toBe(1);
-    await host.refresh();
+    await host.publish();
     const end = Date.now() + 3000;
     while (!view?.messages.length && Date.now() < end) await Bun.sleep(10);
     expect(view?.messages[0]?.images).toEqual([image]);
@@ -622,7 +620,6 @@ test("failed sticker retry and reimport keep the sent version in real socket his
   const connect = () =>
     openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
-      () => {},
       () => {},
       () => {},
     );

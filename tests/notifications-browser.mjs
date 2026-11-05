@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { fixtureBackend } from "./fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { resolve } from "node:path";
@@ -17,7 +17,7 @@ const message = (id, role = "agent", text = "private reply") => ({
   operationId: null,
   turnId: "turn",
 });
-const host = await createChatHost({
+const host = await createUiTestHost({
   ...fixture.backend,
   async read() {
     return {
@@ -87,7 +87,7 @@ try {
     messages = [message("baseline")];
     sessionId = "notifications";
     before = "older";
-    await host.refresh();
+    await host.publish();
     const context = await browser.newContext({
       viewport: { width: 1280, height: 844 },
       locale: "zh-CN",
@@ -173,7 +173,7 @@ try {
     expect((await state()).requests).toBe(shouldRequest ? 1 : 0);
     const refresh = async (next) => {
       messages = next;
-      await host.refresh();
+      await host.publish();
       // A new marker in each live snapshot acknowledges observation without sleeps.
       const marker = message(
         `marker-${crypto.randomUUID()}`,
@@ -181,7 +181,7 @@ try {
         `ack-${crypto.randomUUID()}`,
       );
       messages = [...messages, marker];
-      await host.refresh();
+      await host.publish();
       await expect(page.getByText(marker.text, { exact: true })).toHaveCount(1);
     };
     if (mode !== "default") {

@@ -13,13 +13,23 @@ export interface TimelineText {
   /** Durable source kind used by the Chat target. */
   origin?: "user" | "steering";
   text: string;
-  /** Optional display-only Markdown tokens with shared source context. */
-  markdownTokens?: import("marked").Token[];
+  /** UTF-16 ends of the reply segments published by the Chat host. */
+  ends?: readonly number[];
   pending?: boolean;
   /** Whether this submission was admitted while an earlier reply was active. */
   waitsForCurrentReply?: boolean;
   time?: number;
   replyTo?: string;
+}
+
+/** Present the host's segments without deriving new boundaries in the client. */
+export function replySegments(item: TimelineText, sessionId: string): TimelineText[] {
+  let start = 0;
+  return (item.ends ?? []).map((end, ordinal) => {
+    const text = item.text.slice(start, end);
+    start = end;
+    return { ...item, id: JSON.stringify([sessionId, item.id, ordinal]), text };
+  });
 }
 
 export interface TimelineImage {
@@ -89,6 +99,8 @@ export type TimelineItem =
 export interface TimelineMessageUnit {
   /** Stable render identity. */
   id: string;
+  /** Original source identity, including when a local preview owns the row ID. */
+  sourceId?: string;
   side: MessageSide;
   /** Source-order content; consecutive images are collapsed by the view. */
   items: readonly TimelineItem[];
@@ -114,6 +126,7 @@ export interface CompanionProjection {
   items: readonly TimelineItem[];
   /** Canonical grouped presentation projection for the Companion transcript. */
   messageUnits: readonly TimelineMessageUnit[];
+  historyGaps?: readonly { id: number; afterId: string; beforeId: string; status: "pending" | "loading" | "error" | "unavailable" }[];
   pendingCount: number;
   running: boolean;
   /** Final reply body is known complete while execution may still be running. */

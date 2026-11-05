@@ -1,6 +1,6 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
 import {
-  createChatHost,
   imageHttp,
   fileHttp,
 } from "../packages/contracts/src/server.ts";
@@ -52,7 +52,7 @@ const backend = {
     );
   },
 };
-const host = await createChatHost(backend, (e) => console.error(e));
+const host = await createUiTestHost(backend, (e) => console.error(e));
 const channels = new Map();
 const assets = resolve("apps/web/build");
 const server = Bun.serve({
@@ -64,7 +64,7 @@ const server = Bun.serve({
       request.headers.get("cookie")?.includes("fixture-owner=1") === true;
     if (path === "/__test/session") {
       currentSession = (await request.json()).sessionId;
-      await host.refresh();
+      await host.publish();
       return Response.json({ sessionId: currentSession });
     }
     if (path === "/api/chat/socket") {
@@ -559,13 +559,13 @@ try {
   await capacityContext.close();
   failFileUpload = false;
   currentSession = "fixture-session";
-  await host.refresh();
+  await host.publish();
   const retryAttempt = crypto.randomUUID();
   const sourceOperation = crypto.randomUUID();
   const oldRef = { attachmentId: "original_file", name: "original.txt", mediaType: "text/plain", size: 1, availability: "available" };
   const observedRef = { ...oldRef, attachmentId: "unverified_file", name: "unverified.txt" };
   raceMessage = { id: "observed-retry", operationId: retryAttempt, role: "user", text: "retry", createdAt: Date.now(), turnId: null, files: [observedRef] };
-  await host.refresh();
+  await host.publish();
   const raceContext = await browser.newContext({ locale: "zh-CN" });
   await raceContext.addInitScript(denyNativeNotifications);
   await raceContext.addInitScript(({ retryAttempt, sourceOperation, oldRef }) => {
@@ -582,7 +582,7 @@ try {
   await raceContext.close();
   raceMessage = undefined;
   enabled = false;
-  await host.refresh();
+  await host.publish();
   const context = await browser.newContext({ locale: "zh-CN" });
   await context.addInitScript(denyNativeNotifications);
   const page = await context.newPage();

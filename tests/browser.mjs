@@ -1,7 +1,7 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { fixtureBackend } from "./fixture.ts";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
@@ -25,18 +25,18 @@ const backend = {
   async submit(input) {
     if (!input.text.startsWith("hello-")) return fixture.backend.submit(input);
     delayedInput = input;
-    await host.refresh();
+    await host.publish();
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const receipt = await fixture.backend.submit(input);
     setTimeout(() => {
       if (delayedInput?.operationId === input.operationId)
         delayedInput = undefined;
-      void host.refresh();
+      void host.publish();
     }, 1000);
     return receipt;
   },
 };
-const host = await createChatHost(external ? fixture.backend : backend);
+const host = await createUiTestHost(external ? fixture.backend : backend);
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external

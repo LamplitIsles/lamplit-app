@@ -173,7 +173,6 @@ test("healthy idle has zero RPC beyond initialization; live updates and domain e
       messages = v.messages.length;
     },
     () => offline++,
-    () => {},
   );
   try {
     const initial = h.calls;
@@ -185,7 +184,6 @@ test("healthy idle has zero RPC beyond initialization; live updates and domain e
       operationId: crypto.randomUUID(),
       text: "live after idle",
     });
-    await h.host.refresh();
     await until(() => messages === 1);
     expect(messages).toBe(1);
     expect(h.opens).toBe(1);
@@ -204,7 +202,6 @@ test("silent blackhole demand deadline invalidates once; send failure also inval
     socket,
     () => {},
     () => offline++,
-    () => {},
   );
   try {
     const initial = h.calls;
@@ -222,7 +219,6 @@ test("silent blackhole demand deadline invalidates once; send failure also inval
       freshSocket,
       () => {},
       () => offline++,
-      () => {},
     );
     freshSocket.send = () => {
       throw new Error("send unavailable");

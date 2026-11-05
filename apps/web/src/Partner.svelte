@@ -25,7 +25,6 @@
     writePreference,
     LANGUAGE_STORAGE_KEY,
     APPEARANCE_STORAGE_KEY,
-    SENTENCE_STORAGE_KEY,
     type CompanionLanguage,
     type CompanionAppearance,
   } from "./lib/companion/client/preferences.ts";
@@ -44,7 +43,6 @@
   const preferences = initialPreferences();
   let language = $state<CompanionLanguage>(preferences.language);
   let appearance = $state<CompanionAppearance>(preferences.appearance);
-  let sentenceReplies = $state(preferences.sentenceReplies);
   let systemDark = $state(preferences.systemDark);
   const scheme = $derived(resolveScheme(appearance, systemDark));
   const t = $derived(companionTranslate(language));
@@ -73,6 +71,7 @@
           connected: controller.connected,
           before: controller.before,
           loadingOlder: controller.loadingOlder,
+          historyGaps: controller.historyGaps,
           historySyncFailed: controller.historySyncFailed,
           error: controller.error,
           errorCode: controller.errorCode,
@@ -128,7 +127,8 @@
       const mediaId = m.imageState ? `${m.id}:image:` : undefined;
       return {
         id: unitId,
-        answer: m.role === "agent" && !m.source,
+        sourceId: m.id,
+        answer: m.role === "agent" && !m.source && !m.imageState && !m.voice,
         streaming: m.textState === "streaming",
         thinking: m.role === "agent" ? m.thinking : undefined,
         alarm: m.source?.kind === "reminder",
@@ -202,6 +202,7 @@
                   side:
                     m.role === "user" && !m.source ? "outgoing" : "incoming",
                   text: m.text,
+                  ...(m.ends ? { ends: m.ends } : {}),
                 },
               ]
             : []),
@@ -358,7 +359,7 @@
       }
     const preview = chatState?.connected ? view?.streamingReply : undefined;
     if (preview?.text && !unique.some((message) => message.id === preview.id)) {
-      const key = `preview:${preview.id}`;
+      const key = preview.id;
       const position = units.findIndex(
         (unit) => (unit.time ?? 0) > preview.createdAt,
       );
@@ -375,6 +376,7 @@
             kind: "text",
             side: "incoming",
             text: preview.text,
+            ends: preview.ends,
           },
         ],
       });
@@ -384,6 +386,7 @@
     return {
       items: units.flatMap((u) => u.items),
       messageUnits: units,
+      historyGaps: chatState?.historyGaps ?? [],
       pendingCount: chatState?.pending.length ?? 0,
       running: !!view?.activeTurnId,
       replyCompleted:
@@ -501,6 +504,7 @@
     loadEarlierHistory: () => controller.loadRelationshipHistory(),
     stop: () => controller.stop(),
     loadOlder: () => controller.loadOlder(),
+    fillHistoryGap: (id) => controller.fillGap(id),
   };
   onMount(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
@@ -609,11 +613,6 @@
   {t}
   locale={language}
   {appearance}
-  {sentenceReplies}
-  onSentenceRepliesChange={(value) => {
-    sentenceReplies = value;
-    writePreference(SENTENCE_STORAGE_KEY, String(value));
-  }}
   panelRevision={chatState?.panelRevision ?? 0}
   history={{
     status: chatState?.relationshipStatus ?? "loading",

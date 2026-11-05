@@ -1,69 +1,45 @@
 # Source-line reply messages
 
-Spec: FlickNote #4150 (atomic streaming source lines), #4105; acceptance profile #4128; research #4103. #4085/#4086 describe the historical first delivery.
+Current implementation: FlickNote #60. Historical specifications and acceptance
+records below describe earlier implementations.
 
-Ordinary companion answers display as independent messages at their **source LF or
-CRLF line breaks** by default. Multiple sentences on one source line stay together;
-CSS wrapping does not create a message. Consecutive blank lines produce no empty
-messages, but all original whitespace remains in the source spans. Entirely blank replies
-produce no display row while their preserved source remains untouched. While generation continues, an unfinished source line stays hidden until its LF
-arrives (including CRLF received in separate updates). Each completed line appears
-in that update; no punctuation, reveal queue, pacing timer or fake typing is used.
-Completion reveals the exact remaining tail once, even without a final newline.
-Stop/failure discard the preview; reconnect reconstructs it from current authority,
-and session changes cannot reveal a previous reply's held text. Whole reply mode
-continues to show the current full preview immediately.
-Settings → Appearance and language → Reply display switches between Source lines
-and Whole reply, immediately and across reloads. Local storage failure leaves the
-current page usable. History and older pages use the same projection.
+The shared chat host projects each ordinary assistant reply as its original source
+text plus ordered UTF-16 `ends`. A complete ordinary LF or CRLF source line becomes
+visible immediately. Explicitly started multiline Markdown structures, such as
+fenced code and leading-pipe tables, remain buffered until complete; an unfinished
+final tail is published at completion. Blank-only tails do not create a bubble.
+An ordinary `A | B` line is published immediately: a later table separator does
+not revise it. Setext headings and reference definitions supplied later likewise
+do not rewrite an already published segment.
 
-Every display message has a visible Framework7 avatar and footer using the source
-reply's timestamp. Long-press Copy takes only that message's exact Markdown source
-span; Whole reply copies the complete source. Thinking appears once; images keep
-their original order and association. Display splitting adds no durable records or
-notifications. User, Keet, Matrix, reminder and notice bodies are excluded; search
-remains the complete-record reader.
+View and history use the same host projection. Web slices the supplied source at
+those ends; it does not derive reply boundaries. A displayed segment's identity is
+its session, authoritative source ID, and ordinal. This identity is shared by
+preview and final only when the backend supplies the same authoritative source ID.
+Pi is planned to provide completed native entries without streaming preview; that
+cross-repository integration remains separate from App fake verification.
 
-Marked 18.0.14 and the installed renderer's KaTeX extension identify necessary
-structure. Lists (including nesting), fences, tables and block math stay intact;
-ordinary lines after them resume splitting. Quoted prose lines retain quote depth.
-A completed inline span crossing lines protects only those lines, including
-paired inline HTML through its closing tag (with nested pairs and void tags).
-The following source line resumes normal splitting. An unfinished
-span protects the current tail until closure. An introduction on its own source
-line remains separate from the following list, including introductions ending in
-a colon. No punctuation, abbreviation, language heuristic or character threshold
-creates message boundaries.
+The original source remains available once per source record, including whitespace
+outside visible segments. Copy on an individual bubble uses that bubble's source
+slice. User input, external messages, media and notices retain their own behavior.
+There is no Whole reply/Source lines preference or independent timeline wire.
+The client validates projected reply ends; the raw backend is not required to
+calculate them. Marked is a direct contracts dependency; the server's existing
+incremental segmenter and Web Markdown rendering have separate responsibilities.
 
-Offsets are UTF-16 source boundaries mapped through normalized CRLF. Copy spans
-are separate from render tokens, which share the full source's reference links.
-Quote render wrappers never enter Copy or persistence. Tokens still use
-SvelteMarkdown's URL/attribute sanitation and our unsupported-HTML renderer. Whole
-mode uses that same renderer contract. No public protocol or persistence changed.
+History continuation and reconnect gaps use the existing paginated history
+interface. When the controller cannot establish a continuous retained range, it
+exposes a gap for user-interface-driven, one-page-at-a-time reconciliation; an
+unavailable cursor or missing boundary must remain visible as unresolved. This
+is not a guarantee that cross-device pending items, retroactive changes or differing
+provider history order can be detected from the existing wire.
 
-Installed `@humanspeak/svelte-markdown` 1.8.5 supports `string | Token[]` and exports
-IncrementalParser. A full Marked parse owns source boundaries, shared references and
-paragraph/inline semantics. Projection clips that original tree before a fresh
-public IncrementalParser cleans the projected tokens, supplied through a Marked
-block extension rather than lexing each fragment as a new document. Cleaned HTML
-may normalize tags, attributes and lengths; its render tree never drives source
-offsets. This preserves continuation-line semantics and exact Copy spans.
-Unsupported HTML still displays through the existing escaped-tag renderer, with
-the same URL/attribute sanitation. Each Markdown
-instance retains only its previous identical render-token value to keep inner DOM
-nodes stable; comparison includes resolved reference links, so late definitions
-still update the visible link. Single-dollar math cannot span source lines in the
-installed extension; ordinary dollar amounts do not protect following lines.
-Supported multiline `\(...\)` and block math retain their token spans. The source-line presentation parses only the complete-line preview prefix, then
-applies the same Markdown grouping and renderer cleanup as history. Partial next-line
-syntax cannot change that visible prefix. Lists, fences and other necessary
-structures remain grouped as complete source lines accumulate. Copy of a visible
-message contains only its displayed source span; hidden tail text remains solely in
-the authoritative preview until revealed. Final/history parsing uses the complete
-source. No streaming state machine or global render cache was added. Research #4103's former natural-language boundary recommendation
-was superseded by the user's source-newline clarification in #4105. SentenceX,
-sentence-splitter, remend and streaming-markdown are unnecessary for this policy;
-no dependency, WASM initialization or NLP layer was added.
+## Historical delivery and acceptance records (legacy)
+
+The following sections document the earlier #4156/#4150 acceptance profile and
+frozen artifact workflow. References to Whole reply mode, client-side splitting,
+old fixture commands or past acceptance do not describe the current #60 protocol
+and are not evidence that its current cross-repository integration has passed.
 
 ## Reply typing and finality (#4156)
 

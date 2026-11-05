@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { WORKSPACE_IMAGE_PATH } from "../packages/contracts/src/index.ts";
 import { fixtureBackend } from "./fixture.ts";
 import { fixtureImage } from "./panels-fixture.ts";
@@ -40,7 +40,7 @@ const message = {
   operationId: null,
   turnId: "turn",
 };
-const host = await createChatHost({
+const host = await createUiTestHost({
   ...fixture.backend,
   async read() {
     return {
@@ -164,7 +164,7 @@ try {
     older = false;
     missing = true;
     sessionId = `workspace-${width}`;
-    await host.refresh();
+    await host.publish();
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       locale: "zh-CN",
@@ -270,7 +270,7 @@ try {
     });
     // Capability removal destroys current images immediately and cannot request workspace paths.
     enabled = false;
-    await host.refresh();
+    await host.publish();
     await expect(images).toHaveCount(0);
     const before = requests.length;
     await expect(
@@ -288,15 +288,15 @@ try {
     // Same paths in a new session are remounted under the new host capability.
     enabled = true;
     sessionId += "-new";
-    await host.refresh();
+    await host.publish();
     await decoded(6);
     streaming = true;
     streamText = "![live](plots/live.png)\n";
     sessionId += "-stream";
-    await host.refresh();
+    await host.publish();
     await decoded(1);
     streamText = source + "\n";
-    await host.refresh();
+    await host.publish();
     await decoded(6);
     await page.screenshot({
       path: `${evidence}/streaming-${width}.png`,
@@ -304,7 +304,7 @@ try {
     });
     streaming = false;
     older = true;
-    await host.refresh();
+    await host.publish();
     await page.reload();
     await page
       .getByRole("button", { name: "查看更早的消息", exact: true })
@@ -321,7 +321,7 @@ try {
     await page.goto(new URL("/gone", url).href);
     await expect(images).toHaveCount(0);
     const afterTeardown = requests.length;
-    await host.refresh();
+    await host.publish();
     expect(requests.length).toBe(afterTeardown);
     expect(errors).toEqual([]);
     results.push({

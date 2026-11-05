@@ -63,7 +63,6 @@ test("a timed-out history read leaves other calls and the connection usable", as
     () => {
       offline = true;
     },
-    () => {},
   );
   const originalTimer = globalThis.setTimeout;
   try {
@@ -313,7 +312,6 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
     () => {
       offline = true;
     },
-    () => {},
   );
   try {
     const input = { operationId: crypto.randomUUID(), text: "first" };
@@ -333,7 +331,6 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
     host.close();
     host = await createChatHost(fixture.backend, (e) => errors.push(e));
     await fixture.complete();
-    await host.refresh();
     client = await openChat(
       new WebSocket(`ws://127.0.0.1:${server.port}`),
       (v) => {
@@ -342,7 +339,6 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
       () => {
         offline = true;
       },
-      () => {},
     );
     await eventually(
       () => view?.messages.filter((m) => m.role === "agent").length === 1,

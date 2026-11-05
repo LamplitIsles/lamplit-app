@@ -207,7 +207,6 @@ test("shared search/read validate both boundaries; oversized UTF-8 result and fa
     () => {
       offline = true;
     },
-    () => {},
   );
   try {
     const cards = await client.search({ query: " 灯塔 " });

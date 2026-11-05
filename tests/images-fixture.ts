@@ -14,6 +14,7 @@ import {
 } from "../packages/contracts/src/index.ts";
 import type {
   ChatBackend,
+  ChatChange,
   ImageBackend,
 } from "../packages/contracts/src/server.ts";
 import { panelsFixture, fixtureImage } from "./panels-fixture.ts";
@@ -24,7 +25,8 @@ export const imageLimits: ImageLimits = {
   maxMessageImageBytes: 24_000_000,
 };
 export function imagesFixture() {
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change: ChatChange) => void>();
+  const scope = Symbol("image fixture session");
   const panels = panelsFixture();
   const uploads = new Map<string, { input: ImageUpload; refs: ImageRef[] }>();
   const media = new Map<string, ImageUpload["images"][number]>();
@@ -40,7 +42,9 @@ export function imagesFixture() {
     disabled = false,
     failUpload = false;
   const changed = () => {
-    for (const fn of listeners) fn();
+    for (const fn of listeners) fn({ type: "update", scope,
+      window: { messages: messages.slice(-15), before: messages.length > 15 ? messages.at(-15)!.id : null },
+      state: { activeTurnId: active, recovery: [...recovery], capabilities: { ...capabilities, images: disabled ? false : imageLimits } } });
   };
   const imageBackend: ImageBackend = {
     async upload(input) {
@@ -379,7 +383,7 @@ export function imagesFixture() {
     },
     subscribe(fn) {
       listeners.add(fn);
-      return () => listeners.delete(fn);
+      return { scope, close() { listeners.delete(fn); } };
     },
   };
   const control = async (input: Record<string, unknown>) => {

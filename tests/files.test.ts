@@ -767,7 +767,6 @@ test("paginated history transports available and missing file references", async
     new WebSocket(`ws://127.0.0.1:${server.port}`),
     () => {},
     () => {},
-    () => {},
   );
   try {
     expect(await client.history("cursor")).toEqual({

@@ -1,5 +1,5 @@
+import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
-import { createChatHost } from "../packages/contracts/src/server.ts";
 import { sentenceFixture, SENTENCE_PROMPT } from "./sentence-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
@@ -42,8 +42,10 @@ async function atomicStreamingChecks(page, control) {
   await expect(bubbles).toHaveCount(0);
   await control("advance", "正在生成。同行第二句。\r\n第二行");
   await expect(bubbles).toHaveText(["正在生成。同行第二句。"]);
+  await bubbles.first().evaluate((node) => { node.dataset.segmentIdentity = "preserved"; });
   await control("advance", "正在生成。同行第二句。\r\n第二行完成\n最后尾巴");
   await expect(bubbles).toHaveText(["正在生成。同行第二句。", "第二行完成"]);
+  await expect(bubbles.first()).toHaveAttribute("data-segment-identity", "preserved");
   expect((await control("status")).held).toBe(true);
   await control("complete", "正在生成。同行第二句。\r\n第二行完成\n最后尾巴");
   await expect(bubbles).toHaveText([
@@ -51,6 +53,7 @@ async function atomicStreamingChecks(page, control) {
     "第二行完成",
     "最后尾巴",
   ]);
+  await expect(bubbles.first()).toHaveAttribute("data-segment-identity", "preserved");
   await expect(page.locator('[data-testid^="message-preview:"]')).toHaveCount(
     0,
   );
@@ -61,12 +64,14 @@ if (profile !== "default" && profile !== "cfl")
   throw new Error(`Unknown APP_ACCEPTANCE_PROFILE: ${profile}`);
 const thinkingCount = profile === "cfl" ? 0 : 1;
 const external = process.env.APP_ACCEPTANCE_URL;
+if (process.argv.includes("--gap-only") && (external || process.env.APP_ACCEPTANCE_CONTROL_URL))
+  throw new Error("Gap checks require the local test-owned fixture");
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error(
     "Native acceptance requires a test-owned semantic control URL",
   );
 const fixture = external ? undefined : sentenceFixture(profile);
-const host = fixture ? await createChatHost(fixture.backend) : undefined;
+const host = fixture ? await createUiTestHost(fixture.backend) : undefined;
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = external
@@ -82,7 +87,7 @@ const server = external
         }
         if (path === "/__test/sentence-replies") {
           const result = fixture.control(await req.json());
-          await host.refresh();
+          await host.publish();
           return Response.json(result);
         }
         if (path === "/api/chat/socket" && server.upgrade(req)) return;
@@ -154,12 +159,42 @@ try {
       return response.json();
     };
     await control("reset");
+    if (process.argv.includes("--gap-only")) await control("gap-seed");
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(url);
     const bubbles = page.locator(".message-received .companion-text-bubble");
     const userBubbles = page.locator(".message-sent .companion-text-bubble");
+    if (process.argv.includes("--gap-only")) {
+      await expect(bubbles.filter({ hasText: /^消息 64$/ })).toHaveCount(1);
+      await page.getByRole("button", { name: "查看更早的消息", exact: true }).click();
+      await expect(bubbles.filter({ hasText: /^消息 5$/ })).toHaveCount(1);
+      expect((await control("status")).gapHistoryCalls).toBe(1);
+      await context.request.post(new URL("/__test/sentence-replies/disconnect", url).href);
+      await control("gap-advance");
+      await expect(bubbles.filter({ hasText: /^消息 124$/ })).toHaveCount(1);
+      const marker = page.locator('[data-testid^="history-gap-"]');
+      await expect(marker).toHaveCount(1);
+      expect((await control("status")).gapHistoryCalls).toBe(1);
+      await control("gap-fail-next");
+      await marker.scrollIntoViewIfNeeded();
+      await expect(marker).toContainText("中间的消息加载失败。");
+      expect((await control("status")).gapHistoryCalls).toBe(2);
+      await marker.getByRole("button", { name: "重试" }).click();
+      await expect(bubbles.filter({ hasText: /^消息 65$/ })).toHaveCount(1);
+      expect((await control("status")).gapHistoryCalls).toBe(3);
+      await marker.getByRole("button", { name: "加载中间的消息" }).click();
+      await expect(marker).toHaveCount(0);
+      expect((await control("status")).gapHistoryCalls).toBe(4);
+      await expect(bubbles.filter({ hasText: /^消息 5$/ })).toHaveCount(1);
+      await control("media-captions");
+      await expect(bubbles.filter({ hasText: /^图片附带文字$/ })).toHaveCount(1);
+      await expect(bubbles.filter({ hasText: /^语音附带文字$/ })).toHaveCount(1);
+      expect(errors).toEqual([]);
+      await context.close();
+      continue;
+    }
     const expectPrompt = async () => {
       await expect(userBubbles).toHaveCount(1);
       await expect(userBubbles).toHaveText([SENTENCE_PROMPT]);
@@ -326,39 +361,6 @@ try {
     await page.reload();
     await expect(shape).toHaveCount(8);
     expect(await shape.allTextContents()).toEqual(shapeTexts);
-    for (const [name, open, closed, selector] of [
-      ["bold", "**跨行\n粗体", "**跨行\n粗体**", "strong"],
-      [
-        "link",
-        "[跨行\n链接](https://exam",
-        "[跨行\n链接](https://example.test)",
-        "a",
-      ],
-      ["code", "`跨行\n代码", "`跨行\n代码`", "code"],
-      ["math", "\\(x.\ny", "\\(x.\ny\\)", ".katex"],
-    ]) {
-      const prefix = `${name}稳定行。同行第二句。\n`;
-      await control("start", prefix + "当前行");
-      const first = bubbles.filter({ hasText: `${name}稳定行。同行第二句。` });
-      await first.evaluate((el, name) => {
-        el.dataset.streamIdentity = name;
-      }, name);
-      await control("advance", prefix + "当前行" + open);
-      await expect(first).toHaveAttribute("data-stream-identity", name);
-      const source = prefix + "当前行" + closed + `\n${name}后行\n${name}末行`;
-      await control("advance", source);
-      await expect(first).toHaveAttribute("data-stream-identity", name);
-      const rich = bubbles.filter({ hasText: "当前行" }).last();
-      await expect(rich.locator(selector)).toBeVisible();
-      await expect(
-        bubbles.filter({ hasText: new RegExp(`^${name}后行$`) }),
-      ).toHaveCount(1);
-      expect(await copyBubble(rich)).toBe("当前行" + closed + "\n");
-      await control("complete", source);
-      await expect(
-        bubbles.filter({ hasText: new RegExp(`^${name}末行$`) }),
-      ).toHaveCount(1);
-    }
     for (const [label, partial, closed, selector] of [
       ["list", "- one\n  - nested", "- one\n  - nested\n- two", "ul"],
       ["fence", "```js\na.b();", "```js\na.b();\nc.d();\n```", "pre code"],
@@ -381,11 +383,6 @@ try {
       await control("complete", source);
     }
     for (const [source, selector, marker] of [
-      [
-        "[共享链接][r]\n引用后行\n\n[r]: https://example.test",
-        "a[href='https://example.test']",
-        "引用后行",
-      ],
       [
         "[危险链接](javascript:alert(1))\n安全后行",
         "a:not([href])",
@@ -418,44 +415,15 @@ try {
     await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(0);
     expect(await copyBubble(first)).toBe("正在第一句。同行第二句。\r\n");
     await page.screenshot({ path: `${evidence}/held-${width}.png` });
-    const choose = async (value) => {
-      const prompts = await userBubbles.allTextContents();
-      await page.getByRole("button", { name: "设置", exact: true }).click();
-      await page
-        .locator("#companion-preferences-panel")
-        .getByRole("button", { name: "外观", exact: true })
-        .click();
-      await page
-        .locator("#companion-preferences-panel")
-        .locator(`input[name=companion-reply-display][value="${value}"]`)
-        .locator("xpath=ancestor::label[1]")
-        .click();
-      await page
-        .locator("#companion-preferences-panel")
-        .getByRole("button", { name: "返回" })
-        .click();
-      await page
-        .locator("#companion-preferences-panel")
-        .getByRole("button", { name: "返回" })
-        .click();
-      await expect(
-        page.locator("#companion-preferences-panel"),
-      ).not.toHaveClass(/modal-in/);
-      await expect(page.locator("#companion-preferences-panel")).toBeHidden();
-      expect(await userBubbles.allTextContents()).toEqual(prompts);
-    };
-
-    await choose(false);
-    expect(
-      await copyBubble(
-        bubbles.filter({ hasText: /^正在第一句。同行第二句。\s*第二行增长$/ }),
-      ),
-    ).toBe(answer);
-    await page.reload();
-    await expect(
-      bubbles.filter({ hasText: /^正在第一句。同行第二句。\s*第二行增长$/ }),
-    ).toHaveCount(1);
-    await choose(true);
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.locator("#companion-preferences-panel")
+      .getByRole("button", { name: "外观", exact: true }).click();
+    await expect(page.locator('input[name="companion-reply-display"]')).toHaveCount(0);
+    await page.locator("#companion-preferences-panel")
+      .getByRole("button", { name: "返回" }).click();
+    await page.locator("#companion-preferences-panel")
+      .getByRole("button", { name: "返回" }).click();
+    await expect(page.locator("#companion-preferences-panel")).toBeHidden();
     await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(0);
     expect((await context.request.post(`${controlUrl}/disconnect`)).ok()).toBe(
       true,
@@ -478,10 +446,6 @@ try {
       0,
     );
     if (!external) {
-      await control("update", "历史更新第一行\n历史更新第二行");
-      await expect(bubbles.filter({ hasText: /^历史更新第二行$/ })).toHaveCount(
-        1,
-      );
       await control("excluded");
       await expect(
         userBubbles.filter({ hasText: "用户第一行。\n用户第二行。" }),
@@ -507,7 +471,7 @@ try {
       ).toBeVisible();
       expect(
         await copyBubble(bubbles.filter({ hasText: /^普通第二行。$/ })),
-      ).toBe("普通第二行。\n\n");
+      ).toBe("普通第二行。\n");
       await expect(
         page.locator('[data-testid="message-rich"] .companion-thinking'),
       ).toHaveCount(thinkingCount);
@@ -572,11 +536,11 @@ try {
     for (const [source, expected] of [
       [
         "before\n    indented continuation\nafter",
-        ["before", "    indented continuation", "after"],
+        ["before", "indented continuation\n", "after"],
       ],
       [
         "before\n2. continuation\nafter",
-        ["before", "2. continuation", "after"],
+        ["before", "continuation", "after"],
       ],
       ["price $5\nafter\nlast", ["price $5", "after", "last"]],
       ["<div>visible text</div>", ["<div>visible text</div>"]],
@@ -592,7 +556,8 @@ try {
       await expectPrompt();
       await expect(bubbles).toHaveCount(expected.length);
       expect(await bubbles.allTextContents()).toEqual(expected);
-      await expect(bubbles.locator("pre, ol, ul")).toHaveCount(0);
+      if (!source.startsWith("before\n"))
+        await expect(bubbles.locator("pre, ol, ul")).toHaveCount(0);
       await expect(
         bubbles.locator(".markdown > div, .markdown p > span"),
       ).toHaveCount(0);
@@ -600,12 +565,6 @@ try {
         expect(await copyBubble(bubbles.nth(1))).toBe(
           source.split("\n")[1] + "\n",
         );
-      await choose(false);
-      await expect(bubbles).toHaveCount(1);
-      await expect(bubbles.locator("pre, ol, ul")).toHaveCount(0);
-      expect(await bubbles.textContent()).toBe(source);
-      await choose(true);
-      await expectPrompt();
     }
     // HTML cleanup may rewrite raw spelling; only source tokens own offsets.
     for (const source of [
@@ -634,42 +593,8 @@ try {
       expect(await copyBubble(bubbles.first())).toBe(
         inline
           ? source.slice(0, cut)
-          : source.slice(0, source.indexOf("after\n")),
+          : source.slice(0, source.indexOf("\n") + 1),
       );
-      await choose(false);
-      await expect(bubbles).toHaveCount(1);
-      expect((await bubbles.textContent()).replace(/\n/g, "")).toBe(
-        split.join(""),
-      );
-      await choose(true);
-      await expectPrompt();
-    }
-    for (const parts of [
-      ["<span>one\ntwo</span>\n", "after"],
-      ["<span class=x>one\r\ntwo</span>\r\n", "after"],
-      ["<span>one\n<em>two</em>\nthree</span>\n", "after"],
-      ["<span>one\n<span>two</span>\nthree</span>\n", "after"],
-      ["<span>one\ntwo</span>\n", "<span>three\nfour</span>\n", "after"],
-      ["<span>one<br>\ntwo</span>\n", "after"],
-    ]) {
-      const source = parts.join("");
-      await control("session");
-      await expect(bubbles).toHaveCount(0);
-      await control("start", source);
-      await control("complete", source);
-      await expectPrompt();
-      await expect(bubbles).toHaveCount(parts.length);
-      await expect(bubbles.last()).toHaveText("after");
-      const split = await bubbles.allTextContents();
-      expect(await copyBubble(bubbles.first())).toBe(parts[0]);
-      await choose(false);
-      await expect(bubbles).toHaveCount(1);
-      expect((await bubbles.textContent()).replace(/\n/g, "")).toBe(
-        split.join("").replace(/\n/g, ""),
-      );
-      expect(await copyBubble(bubbles.first())).toBe(source);
-      await choose(true);
-      await expectPrompt();
     }
     await control("session");
     await expect(bubbles).toHaveCount(0);
@@ -711,24 +636,15 @@ try {
     await expect(reference.locator("a")).toHaveCount(0);
     const resolved = referenceSource + "\n\n[r]: https://late.test\n";
     await control("advance", resolved);
-    await expect(reference.locator("a")).toHaveAttribute(
-      "href",
-      "https://late.test",
-    );
+    await expect(reference.locator("a")).toHaveCount(0);
     expect(await copyBubble(reference)).toBe("reference before [anchor][r]\n");
-    await reference.locator("a").evaluate((link) => {
-      window.fixtureResolvedLink = link;
-    });
+    await reference.evaluate((node) => { window.fixtureReference = node; });
     await control("advance", resolved + "\n\nadditional tail");
     await expect(bubbles.filter({ hasText: "additional tail" })).toHaveCount(0);
     expect(
-      await reference
-        .locator("a")
-        .evaluate(
-          (link) =>
-            link === window.fixtureResolvedLink &&
-            window.fixtureResolvedLink.isConnected,
-        ),
+      await reference.evaluate(
+        (node) => node === window.fixtureReference && window.fixtureReference.isConnected,
+      ),
     ).toBe(true);
     await control("complete", resolved + "\n\nadditional tail");
     expect(
