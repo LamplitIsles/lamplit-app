@@ -1,3 +1,4 @@
+export * from "./a2ui.ts";
 export * from "./appearance.ts";
 export * from "./search.ts";
 import type { SearchBackend } from "./search.ts";
@@ -14,6 +15,7 @@ import {
 } from "./files.ts";
 export * from "./stickers.ts";
 export * from "./workspace-images.ts";
+export * from "./workspace-media.ts";
 export * from "./compact.ts";
 import {
   ContextUsageSchema,
@@ -319,6 +321,8 @@ export const MessageSchema = Type.Object(
       Type.Union([Type.Literal("streaming"), Type.Literal("complete")]),
     ),
     voice: Type.Optional(VoiceRefSchema),
+    /** Untrusted UI is validated per message with validateA2UISurface. */
+    ui: Type.Optional(Type.Unknown()),
     source: Type.Optional(MessageSourceSchema),
     id: Id,
     role: Type.Union([
@@ -337,6 +341,18 @@ export const MessageSchema = Type.Object(
   {
     additionalProperties: false,
     allOf: [
+      {
+        if: { required: ["ui"] },
+        then: {
+          properties: { role: { const: "agent" }, text: { const: "" } },
+          not: { anyOf: [
+            { required: ["source"] }, { required: ["voice"] },
+            { required: ["images"] }, { required: ["files"] },
+            { required: ["imageState"] }, { required: ["textState"] },
+            { required: ["ends"] },
+          ] },
+        },
+      },
       {
         if: { required: ["imageState"] },
         then: {

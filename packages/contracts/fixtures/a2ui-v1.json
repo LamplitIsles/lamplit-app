@@ -1,0 +1,140 @@
+{
+  "version": "1.0",
+  "createSurface": {
+    "surfaceId": "example",
+    "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+    "components": [
+      {
+        "id": "root",
+        "component": "Column",
+        "children": [
+          "title",
+          "image",
+          "icon",
+          "video",
+          "audio",
+          "row",
+          "list",
+          "card",
+          "tabs",
+          "modal",
+          "divider"
+        ]
+      },
+      {
+        "id": "title",
+        "component": "Text",
+        "text": {
+          "@path": "/title"
+        }
+      },
+      {
+        "id": "image",
+        "component": "Image",
+        "url": "https://example.invalid/image.png",
+        "description": "Example image"
+      },
+      {
+        "id": "icon",
+        "component": "Icon",
+        "name": "star"
+      },
+      {
+        "id": "video",
+        "component": "Video",
+        "url": "https://example.invalid/video.mp4",
+        "accessibility": {
+          "label": "Example video"
+        }
+      },
+      {
+        "id": "audio",
+        "component": "AudioPlayer",
+        "url": "https://example.invalid/audio.mp3",
+        "description": "Example audio"
+      },
+      {
+        "id": "row",
+        "component": "Row",
+        "children": [
+          "row-text"
+        ]
+      },
+      {
+        "id": "row-text",
+        "component": "Text",
+        "text": "Row"
+      },
+      {
+        "id": "list",
+        "component": "List",
+        "children": [
+          "list-text"
+        ]
+      },
+      {
+        "id": "list-text",
+        "component": "Text",
+        "text": "List"
+      },
+      {
+        "id": "card",
+        "component": "Card",
+        "child": "card-text"
+      },
+      {
+        "id": "card-text",
+        "component": "Text",
+        "text": "Card"
+      },
+      {
+        "id": "tabs",
+        "component": "Tabs",
+        "tabs": [
+          {
+            "title": "First",
+            "child": "tab-text"
+          }
+        ]
+      },
+      {
+        "id": "tab-text",
+        "component": "Text",
+        "text": "Tab"
+      },
+      {
+        "id": "modal",
+        "component": "Modal",
+        "trigger": "button",
+        "content": "modal-text"
+      },
+      {
+        "id": "button",
+        "component": "Button",
+        "child": "button-text",
+        "action": {
+          "event": {
+            "name": "open_modal"
+          }
+        }
+      },
+      {
+        "id": "button-text",
+        "component": "Text",
+        "text": "Open"
+      },
+      {
+        "id": "modal-text",
+        "component": "Text",
+        "text": "Modal"
+      },
+      {
+        "id": "divider",
+        "component": "Divider"
+      }
+    ],
+    "dataModel": {
+      "title": "Example surface"
+    }
+  }
+}

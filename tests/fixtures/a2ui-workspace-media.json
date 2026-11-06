@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "createSurface": {
+    "surfaceId": "workspace-media",
+    "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+    "components": [
+      { "id": "root", "component": "Column", "children": ["image", "audio", "video"] },
+      { "id": "image", "component": "Image", "url": "workspace:images%2F%E7%81%AF%20%E5%85%89.png", "description": "Image" },
+      { "id": "audio", "component": "AudioPlayer", "url": "workspace:music%2F%2520.wav", "description": "Audio" },
+      { "id": "video", "component": "Video", "url": "workspace:video%2Fclip.mp4", "posterUrl": "workspace:images%2Fposter.jpg" }
+    ]
+  }
+}

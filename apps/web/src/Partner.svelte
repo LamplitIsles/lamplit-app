@@ -128,7 +128,7 @@
       return {
         id: unitId,
         sourceId: m.id,
-        answer: m.role === "agent" && !m.source && !m.imageState && !m.voice,
+        answer: m.role === "agent" && !m.source && !m.imageState && !m.voice && m.ui === undefined,
         streaming: m.textState === "streaming",
         thinking: m.role === "agent" ? m.thinking : undefined,
         alarm: m.source?.kind === "reminder",
@@ -205,6 +205,9 @@
                   ...(m.ends ? { ends: m.ends } : {}),
                 },
               ]
+            : []),
+          ...(m.ui !== undefined
+            ? [{ id: `${m.id}:ui:`, messageKey: unitId, kind: "ui" as const, side: "incoming" as const, payload: m.ui }]
             : []),
           ...(m.voice
             ? [

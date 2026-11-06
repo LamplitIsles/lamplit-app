@@ -1,3 +1,4 @@
+import { boundA2UIInMessages } from "./a2ui.ts";
 import {
   validateSearchInput,
   validateSearchResult,
@@ -265,7 +266,7 @@ export async function openChat(
     await binding.ready(BACKGROUND_CONTEXT);
     unsubscribe = service.view.subscribe((value) => {
       try {
-        const view = validate(ViewSchema, value);
+        const view = validate(ViewSchema, boundA2UIInMessages(value));
         view.recovery.forEach(validateRecovery);
         view.messages.forEach(message => validateReplySource(message, isReplySource(message)));
         if (view.streamingReply) validateReplySource(view.streamingReply, true);
@@ -318,7 +319,9 @@ export async function openChat(
       async history(before: string) {
         const page = validate(
           PageSchema,
-          await service.history(before, BACKGROUND_CONTEXT),
+          boundA2UIInMessages(
+            await service.history(before, BACKGROUND_CONTEXT),
+          ),
         );
         page.messages.forEach(message => validateReplySource(message, isReplySource(message)));
         return page;

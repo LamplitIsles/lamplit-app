@@ -8,6 +8,10 @@ Terms for the shared chat experience across agent engines.
 The ordered conversation shown to the Human, including both participants' messages and in-progress content. The same conversation content retains its order when read later in history.
 _Avoid_: Tool transcript, messages grouped by media type
 
+**Chat interface（聊天界面消息）**:
+A structured interface sent by the companion as part of the conversation. It occupies a position in the chat timeline and remains associated with the same conversation when read later.
+_Avoid_: tool transcript, separate conversation
+
 **Current relationship（当前关系）**:
 The companion's present closeness and signature, distinct from the emotions recorded at particular relationship moments.
 _Avoid_: A past emotion as a lasting relationship status

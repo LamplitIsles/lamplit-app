@@ -1,3 +1,4 @@
+import { boundA2UIInMessages } from "./a2ui.ts";
 import {
   validateSearchInput,
   validateSearchResult,
@@ -147,7 +148,7 @@ export async function createChatHost(
   void startupFailure.catch(() => {});
   const report = (error: unknown) => { try { onError(error); } catch {} };
   const publish = (source: ChatView, reset = false) => {
-    const checked = validate(ViewSchema, source);
+    const checked = validate(ViewSchema, boundA2UIInMessages(source));
     checked.recovery.forEach(validateRecovery);
     const projection = reset ? createReplyProjection() : replyProjection;
     const next = projection.view(checked, reset ? undefined : view?.value);
@@ -326,7 +327,10 @@ export async function createChatHost(
       // source cannot be ordered from the backend's existing contract.
       const initialView = view.value;
       const epoch = sessionEpoch;
-      const page = validate(PageSchema, await backend.history(validateId(before)));
+      const page = validate(
+        PageSchema,
+        boundA2UIInMessages(await backend.history(validateId(before))),
+      );
       if (closed || sessionEpoch !== epoch || view.value.sessionId !== initialView.sessionId)
         throw new Error("History session changed");
       return replyProjection.history(page, view.value, initialView);

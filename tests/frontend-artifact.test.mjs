@@ -20,6 +20,7 @@ async function fixture() {
   for (const dir of [
     "apps/web/build/assets",
     "packages/contracts/dist",
+    "packages/contracts/fixtures",
     "docs",
     "docs/licenses",
   ])
@@ -27,6 +28,12 @@ async function fixture() {
   for (const [path, content] of Object.entries({
     "apps/web/build/index.html": "<script src='/assets/app.js'></script>",
     "apps/web/build/assets/app.js": "hello",
+    "apps/web/build/a2ui.html": '<script type="module" src="/assets/a2ui.js"></script><link rel="stylesheet" href="/assets/a2ui.css">',
+    "apps/web/build/assets/a2ui.js": "export const surface = true;",
+    "apps/web/build/assets/a2ui.css": ".surface { display: block; }",
+    "packages/contracts/dist/workspace-media.js": 'export const workspaceMediaUrl = () => "test";',
+    "packages/contracts/dist/workspace-media.d.ts": "export declare function workspaceMediaUrl(): string;",
+    "packages/contracts/fixtures/a2ui-v1.json": '{"testOnly":true}',
     "packages/contracts/dist/cfl-browser-host-auth.js": marker,
     "packages/contracts/dist/client.js": 'export const client = "client";',
     "packages/contracts/dist/client.d.ts": "export declare const client: string;",
@@ -83,6 +90,9 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
   );
   expect(manifest.revision).toBe(sha);
   expect(Object.keys(manifest.browser).sort()).toEqual([
+    "a2ui.html",
+    "assets/a2ui.css",
+    "assets/a2ui.js",
     "assets/app.js",
     "index.html",
   ]);
@@ -101,6 +111,8 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
     "dist/voice.js",
     "dist/wire.d.ts",
     "dist/wire.js",
+    "dist/workspace-media.d.ts",
+    "dist/workspace-media.js",
   ]);
   expect(Object.keys(manifest.licenses).sort()).toEqual([
     "NotoSansSC-OFL-1.1.txt",
@@ -127,6 +139,18 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
   expect(await readFile(join(extracted, "browser/assets/app.js"), "utf8")).toBe(
     "hello",
   );
+  const a2ui = await readFile(join(extracted, "browser/a2ui.html"), "utf8");
+  for (const pattern of [/src="\/([^" ]+\.js)"/, /href="\/([^" ]+\.css)"/]) {
+    const referenced = a2ui.match(pattern)?.[1];
+    expect(referenced).toBeDefined();
+    expect(manifest.browser[referenced]).toBe(
+      createHash("sha256")
+        .update(await readFile(join(extracted, "browser", referenced)))
+        .digest("hex"),
+    );
+  }
+  expect(Object.keys(manifest.contracts).some(path => path.includes("fixtures/"))).toBe(false);
+
   expect(
     await readFile(join(extracted, "licenses/chord-1.0.0-MIT.txt"), "utf8"),
   ).toBe(
@@ -199,9 +223,28 @@ test("independent npm package is reproducible, installable and matches every fro
   expect(pkg.exports["."].import).toBe("./dist/index.js");
   expect(pkg.exports["./server"].import).toBe("./dist/server.js");
   expect(pkg.exports["./reply-chunks"].import).toBe("./dist/reply-chunks.js");
-  for (const entry of Object.values(pkg.exports))
-    for (const path of Object.values(entry))
-      expect(await readFile(join(unpacked, "package", path))).toBeDefined();
+  expect(pkg.exports["./fixtures/a2ui-v1.json"]).toBeUndefined();
+  expect(pkg.files).not.toContain("fixtures");
+  for (const entry of Object.values(pkg.exports)) {
+    expect(typeof entry).toBe("object");
+    for (const path of Object.values(entry)) {
+      expect(path).toMatch(/^\.\/dist\/[a-z0-9-]+\.(?:js|d\.ts)$/);
+      const relative = path.slice(2);
+      const frontendBytes = await readFile(join(front, "contracts", relative));
+      expect(await readFile(join(unpacked, "package", relative))).toEqual(
+        frontendBytes,
+      );
+      expect(manifest.contracts[relative]).toBe(
+        createHash("sha256").update(frontendBytes).digest("hex"),
+      );
+    }
+  }
+  expect(
+    Object.keys(manifest.contracts).every((path) => path.startsWith("dist/")),
+  ).toBe(true);
+  expect(
+    execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }),
+  ).not.toContain("fixtures/");
   expect(pkg.dependencies).toEqual({
     "@earendil-works/chord": "1.0.0",
     marked: "18.0.14",
@@ -226,6 +269,14 @@ test("independent npm package is reproducible, installable and matches every fro
     expect(await readFile(join(unpacked, "package", path))).toEqual(
       await readFile(join(front, "contracts", path)),
     );
+  for (const name of ["workspace-media.js", "workspace-media.d.ts"]) {
+    const path = `dist/${name}`;
+    expect(manifest.contracts[path]).toBeDefined();
+    expect(await readFile(join(unpacked, "package", path))).toEqual(
+      await readFile(join(front, "contracts", path)),
+    );
+  }
+
 
   // npm resolves the real declared versions using local, test-owned fixtures only.
   const consumer = join(root, "consumer");

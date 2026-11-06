@@ -51,6 +51,14 @@ export interface TimelineImage {
   time?: number;
 }
 
+export interface TimelineUI {
+  id: string;
+  messageKey: string;
+  kind: "ui";
+  side: "incoming";
+  payload: unknown;
+}
+
 export interface TimelineVoice {
   id: string;
   projectionKey?: string;
@@ -92,6 +100,7 @@ export type TimelineItem =
   | TimelineImage
   | TimelineFile
   | TimelineVoice
+  | TimelineUI
   | TimelineNotice
   | TimelineContinuityRecord;
 

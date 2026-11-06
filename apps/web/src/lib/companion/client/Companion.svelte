@@ -121,6 +121,7 @@
     TimelineNotice,
     TimelineText,
     TimelineVoice,
+    TimelineUI,
   } from "../projection.js";
   import { replySegments } from "../projection.js";
   import type {
@@ -151,6 +152,7 @@
   } from "./preferences.js";
   import { companionHistoryChanges } from "../relationship-history.js";
   import type { CompanionHistoryChange } from "../domain.js";
+  import A2UISurface from "../a2ui/Surface.svelte";
   import Markdown from "./Markdown.svelte";
   import Thinking from "./Thinking.svelte";
   import ConversationSearch from "./ConversationSearch.svelte";
@@ -330,7 +332,7 @@
   }
   interface ContentPart {
     kind: "item";
-    item: TimelineText | TimelineImage | TimelineVoice | TimelineFile;
+    item: TimelineText | TimelineImage | TimelineVoice | TimelineFile | TimelineUI;
   }
   type MessageContentPart = ImagePart | ContentPart;
   let lightbox: ImagePreviewTarget | undefined;
@@ -605,11 +607,13 @@
           | TimelineText
           | TimelineImage
           | TimelineVoice
-          | TimelineFile =>
+          | TimelineFile
+          | TimelineUI =>
           item.kind === "text" ||
           item.kind === "image" ||
           item.kind === "voice" ||
-          item.kind === "file",
+          item.kind === "file" ||
+          item.kind === "ui",
       );
     if (unit.side === "outgoing") {
       const images = content.filter(
@@ -2945,6 +2949,8 @@
                                   <span role="status">{t("file.missing")}</span>
                                 {/if}
                               </button>
+                            {:else if part.item.kind === "ui"}
+                              <A2UISurface payload={part.item.payload} {locale} />
                             {:else if part.item.kind === "voice"}
                               {@const item = part.item}
                               {@const playback =

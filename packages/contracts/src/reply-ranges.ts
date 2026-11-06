@@ -2,7 +2,9 @@ import type { ChatMessage } from "./index.ts";
 
 /** The host projects ordinary assistant replies, not user, external or media records. */
 export function isReplySource(message: ChatMessage): boolean {
-  return message.role === "agent" && message.source === undefined && message.imageState === undefined && message.voice === undefined;
+  return message.role === "agent" && message.source === undefined &&
+    message.imageState === undefined && message.voice === undefined &&
+    message.ui === undefined;
 }
 
 /** Validate source-relative UTF-16 ends before a consumer slices the source. */

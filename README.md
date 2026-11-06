@@ -233,3 +233,13 @@ reading cap. Code and wide tables scroll locally. Only long timeline reminders
 use a two-line expand/collapse preview; copy keeps full original text and the
 scheduled-reminder drawer stays unchanged. See [reading layout and immutable
 focused acceptance](docs/mobile-reading-layout.md).
+
+### Structured chat interfaces
+
+The Companion can render a constrained A2UI 1.0 Candidate surface as a chat
+message. The same Svelte renderer is built into the web timeline and the
+`/a2ui.html` embedded entry for a native host. Media may refer to HTTPS URLs;
+only local tab, media and modal interactions are supported. The renderer does
+not send actions or input to the agent. An invalid or unsupported surface is
+shown as unavailable without hiding the rest of the conversation. The CFL host
+and ETOS client must use the matching shared contract and app build.
