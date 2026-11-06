@@ -82,6 +82,16 @@ await (async () => {
       /<script type="module" crossorigin src="([^"]+)/,
     )?.[1];
     assert.ok(entry);
+    const stylesheet = html.match(
+      /<link rel="stylesheet" crossorigin href="([^"]+)/,
+    )?.[1];
+    assert.ok(stylesheet);
+    const style = document.createElement("style");
+    style.textContent = await readFile(
+      resolve("apps/web/build", "." + stylesheet),
+      "utf8",
+    );
+    document.head.append(style);
     await import(pathToFileURL(resolve("apps/web/build", "." + entry)).href);
     const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
@@ -118,11 +128,23 @@ await (async () => {
     fixture.createSurface.components
       .find((item) => item.id === "tabs")
       .tabs.push({ title: "Second", child: "tab-second" });
-    fixture.createSurface.components.push({
-      id: "tab-second",
-      component: "Text",
-      text: "Second content",
-    });
+    fixture.createSurface.components.push(
+      {
+        id: "tab-second",
+        component: "Column",
+        children: ["tab-second-text", "tab-second-image"],
+      },
+      {
+        id: "tab-second-text",
+        component: "Text",
+        text: "Second content",
+      },
+      {
+        id: "tab-second-image",
+        component: "Image",
+        url: "https://example.invalid/tab.png",
+      },
+    );
     win.a2uiHost.show(fixture, { locale: "en" });
     await settle();
     assert.ok(document.body.textContent.includes("Bound title"));
@@ -208,6 +230,12 @@ await (async () => {
     );
     const tabs = [...document.querySelectorAll('[role="tab"]')];
     assert.equal(tabs.length, 2);
+    const firstPanel = document.querySelector('[role="tabpanel"]');
+    assert.ok(firstPanel?.textContent.includes("Tab"));
+    assert.equal(getComputedStyle(firstPanel).display, "flex");
+    assert.equal(getComputedStyle(firstPanel).position, "static");
+    assert.equal(getComputedStyle(firstPanel).width, "auto");
+    assert.equal(getComputedStyle(firstPanel).height, "auto");
     tabs[1].click();
     await settle();
     assert.ok(
@@ -215,6 +243,15 @@ await (async () => {
         .querySelector('[role="tabpanel"]')
         ?.textContent.includes("Second content"),
     );
+    const secondPanel = document.querySelector('[role="tabpanel"]');
+    assert.equal(getComputedStyle(secondPanel).display, "flex");
+    assert.ok(secondPanel.querySelector("img"));
+    tabs[0].click();
+    await settle();
+    assert.ok(firstPanel.textContent.includes("Tab"));
+    assert.equal(firstPanel.querySelector("img"), null);
+    tabs[1].click();
+    await settle();
     const open = [...document.querySelectorAll("button")].find(
       (button) => button.textContent.trim() === "Open",
     );

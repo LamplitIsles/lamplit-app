@@ -127,6 +127,20 @@
     --a2ui-color-surface-raised: var(--f7-card-bg-color);
     --a2ui-color-border: var(--f7-bars-border-color);
   }
+  /* svelte-a2ui's tab panel shares its class with Framework7's side panel. */
+  .a2ui-surface :global(.a2ui-tabs > .panel[role="tabpanel"]) {
+    display: flex !important;
+    position: static;
+    width: auto;
+    height: auto;
+    z-index: auto;
+    transform: none;
+    background: transparent;
+    transition: none;
+  }
+  .a2ui-surface :global(.a2ui-tabs > .panel[role="tabpanel"]::after) {
+    content: none;
+  }
   .a2ui-unavailable {
     opacity: 0.7;
     font-size: 0.875rem;
