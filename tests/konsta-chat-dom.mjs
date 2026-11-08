@@ -175,10 +175,7 @@ assert.equal(
   0,
 );
 assert.equal(document.querySelectorAll(".companion-bottom-nav button").length, 5);
-assert.equal(document.querySelector(".companion-microphone")?.disabled, true);
-assert.ok(
-  document.querySelector(".companion-microphone")?.getAttribute("aria-label"),
-);
+assert.equal(document.querySelector(".companion-microphone"), null);
 assert.equal(
   document.querySelector('[data-testid="companion-voice-unavailable-status"]'),
   null,

@@ -107,8 +107,6 @@ export interface CompanionBridgeProps {
   /** Host-advertised image capability and intake limits; absent means unavailable. */
   imageLimits?: ImageAttachmentLimits;
   fileLimits?: FileLimits;
-  /** Recording availability from the same-origin voice capability endpoint. */
-  voiceCapability?: "loading" | "available" | "unavailable";
   continuity?: CompanionContinuityView;
   recoveredDraft?: CompanionRecoveredDraft;
   history?: CompanionHistoryView;

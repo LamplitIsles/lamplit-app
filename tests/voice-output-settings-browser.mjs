@@ -23,7 +23,6 @@ try {
     let voicesEmpty = false;
     let keyPosts = 0;
     let voicePages = [];
-    await page.route("**/api/voice/settings", (route) => route.fulfill({ status: 404 }));
     await page.route("**/api/tts/settings", async (route) => {
       if (route.request().method() === "POST") {
         selectionPosts++;
@@ -178,13 +177,12 @@ try {
     await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     await page.route("**/api/tts/settings", (route) => route.fulfill({ status }));
-    await page.route("**/api/voice/settings", (route) => route.fulfill({ json: { region: "beijing", configured: false } }));
     await page.goto(`http://127.0.0.1:${server.port}/`);
     const capabilityProbe = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/tts/settings" && response.status() === status);
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await capabilityProbe;
     const settings = page.locator(".settings-screen");
-    await expect(settings.getByRole("button", { name: "语音输入", exact: true })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "语音输入", exact: true })).toHaveCount(0);
     await expect(settings.getByRole("button", { name: "语音输出", exact: true })).toHaveCount(0);
     await context.close();
   }

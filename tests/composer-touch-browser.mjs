@@ -49,6 +49,7 @@ try {
     { name: "tab_hold", selector: ".companion-nav-item", delay: 600 },
     { name: "emoji_tap", selector: ".companion-stickers", delay: 80 },
     { name: "input_tap", selector: "#companion-textarea", delay: 80 },
+    { name: "input_hold", selector: "#companion-textarea", delay: 700 },
   ].filter(
     ({ name }) =>
       !process.env.APP_TOUCH_CASE || process.env.APP_TOUCH_CASE === name,
@@ -73,7 +74,7 @@ try {
     });
     const page = await context.newPage();
     await page.goto(origin);
-    await expect(page.getByRole("button", { name: "开始录音" })).toBeEnabled();
+    await expect(page.locator(".companion-microphone")).toHaveCount(0);
     const target = page.locator(scenario.selector).first();
     await expect(target).toBeVisible();
     const box = await target.boundingBox();
@@ -87,19 +88,23 @@ try {
     });
     await page.waitForTimeout(scenario.delay);
     const during = await composer.boundingBox();
-    expect(Math.abs(during.width - before.width), scenario.name).toBeLessThan(
-      0.5,
-    );
-    expect(Math.abs(during.height - before.height), scenario.name).toBeLessThan(
-      0.5,
-    );
+    if (!scenario.name.startsWith("input_")) {
+      expect(Math.abs(during.width - before.width), scenario.name).toBeLessThan(0.5);
+      expect(Math.abs(during.height - before.height), scenario.name).toBeLessThan(0.5);
+    }
     await cdp.send("Input.dispatchTouchEvent", {
       type: "touchEnd",
       touchPoints: [],
     });
-    if (scenario.name === "input_tap") {
+    if (scenario.name.startsWith("input_")) {
+      // Native long-press selection need not focus; a subsequent tap must.
+      if (scenario.name === "input_hold") await target.tap();
       await expect(page.locator("#companion-textarea")).toBeFocused();
       await expect(page.locator(".companion-bottom-nav")).toBeHidden();
+      const shell = page.locator(".companion-composer");
+      await expect(shell).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(shell).toHaveCSS("box-shadow", "none");
+      await expect(shell).toHaveCSS("backdrop-filter", "none");
       await expect(page.locator(".companion-stickers")).toHaveAttribute(
         "aria-hidden",
         "true",

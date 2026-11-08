@@ -329,36 +329,10 @@ try {
     const bubble = link.locator(
       "xpath=ancestor::div[contains(@class, 'companion-text-bubble')]",
     );
-    await bubble.click({ button: "right" });
-    const menu = page.locator(".companion-action-menu.k-popover");
-    await expect(menu).toBeVisible();
-    await expect(
-      menu.getByRole("button", { name: "复制", exact: true }),
-    ).toBeVisible();
-    await page.keyboard.press("Escape");
+    expect(await bubble.evaluate((el) => el.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    ))).toBe(true);
     await expect(page.locator(".companion-action-menu")).toHaveCount(0);
-    await bubble.scrollIntoViewIfNeeded();
-    const bounds = await bubble.boundingBox();
-    await page.mouse.move(bounds.x + 5, bounds.y + bounds.height / 2);
-    await page.mouse.down();
-    await expect(menu).toBeVisible();
-    await page.mouse.up();
-    await expect(menu).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".companion-action-menu")).toHaveCount(0);
-    await bubble.focus();
-    await bubble.press("Shift+F10");
-    await expect(menu).toBeVisible();
-    await page.keyboard.press("Tab");
-    await expect(menu).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".companion-action-menu")).toHaveCount(0);
-    await expect(bubble).toBeFocused();
-    await bubble.press("ContextMenu");
-    await expect(menu).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".companion-action-menu")).toHaveCount(0);
-    await expect(bubble).toBeFocused();
     await page.getByRole("button", { name: "设置" }).click();
     const settings = page.locator("#companion-preferences-panel");
     await expect(settings).toBeVisible();

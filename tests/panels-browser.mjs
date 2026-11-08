@@ -81,7 +81,6 @@ try {
       hasTouch: width === 390,
       locale: "zh-CN",
       acceptDownloads: true,
-      permissions: ["microphone"],
       httpCredentials: process.env.APP_ACCEPTANCE_USERNAME
         ? {
             username: process.env.APP_ACCEPTANCE_USERNAME,
@@ -94,13 +93,6 @@ try {
     const page = await context.newPage();
     const errors = [];
     const albumMetadata = [];
-    let voiceBytes = 0;
-    page.on("websocket", (socket) => {
-      if (socket.url().includes("/api/voice/stream"))
-        socket.on("framesent", ({ payload }) => {
-          if (typeof payload !== "string") voiceBytes += payload.length;
-        });
-    });
     page.on("websocket", (socket) =>
       socket.on("framereceived", ({ payload }) => {
         try {
@@ -374,14 +366,7 @@ try {
           )
           .last(),
       ).toBeVisible();
-      const mic = page.locator(".companion-microphone");
-      await mic.click();
-      await expect(mic).toHaveAttribute("data-state", "recording");
-      await expect.poll(() => voiceBytes).toBeGreaterThan(0);
-      await mic.click();
-      await expect(input).toHaveValue(
-        process.env.APP_ACCEPTANCE_TRANSCRIPT ?? "recognized final",
-      );
+      await expect(page.locator(".companion-microphone")).toHaveCount(0);
     }
     await page.reload();
     await expect(input).toBeVisible();

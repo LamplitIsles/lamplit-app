@@ -20,14 +20,11 @@ try {
     page.on("pageerror", (error) => errors.push(String(error)));
     let model = "gpt-6.1-sol",
       fast = true;
-    let voice = { region: "beijing", configured: false };
-    let voiceGets = 0,
-      release,
-      pending = false,
-      ambiguous = false;
-    await page.route("**/api/voice/capability", (route) =>
-      route.fulfill({ json: { available: voice.configured } }),
-    );
+    let voiceInputRequests = 0;
+    await page.route("**/api/voice/**", (route) => {
+      voiceInputRequests++;
+      return route.fulfill({ status: 404 });
+    });
     await page.route("**/api/chat/models", async (route) => {
       if (route.request().method() === "POST") {
         const body = route.request().postDataJSON();
@@ -43,24 +40,6 @@ try {
         },
       });
     });
-    await page.route("**/api/voice/settings", async (route) => {
-      if (route.request().method() === "GET") voiceGets++;
-      if (route.request().method() === "POST") {
-        const body = route.request().postDataJSON();
-        expect(body.region).toBe("singapore");
-        if (ambiguous) {
-          expect(body.apiKey).toBe("replacement-key");
-          return route.abort("failed");
-        }
-        expect(body.apiKey).toBe("synthetic-key");
-        pending = true;
-        await new Promise((resolve) => {
-          release = resolve;
-        });
-        voice = { region: body.region, configured: true };
-      }
-      await route.fulfill({ json: voice });
-    });
     await page.goto(`http://127.0.0.1:${server.port}/`);
     const draft = page.locator("#companion-textarea");
     await expect(draft).toBeVisible();
@@ -69,9 +48,7 @@ try {
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(settings.getByRole("button", { name: "外观" })).toBeVisible();
     await expect(settings.getByRole("button", { name: "模型" })).toBeVisible();
-    await expect(
-      settings.getByRole("button", { name: "语音输入" }),
-    ).toBeVisible();
+    await expect(settings.getByRole("button", { name: "语音输入" })).toHaveCount(0);
     await page.screenshot({ path: `${evidence}/${width}-home.png` });
     await settings.getByRole("button", { name: "外观" }).click();
     await expect(settings.getByText("主题", { exact: true })).toBeVisible();
@@ -84,38 +61,9 @@ try {
     await radio.locator("xpath=ancestor::label[1]").click();
     await expect(radio).toBeChecked();
     await settings.getByRole("button", { name: "返回" }).click();
-    await expect(
-      settings.getByRole("button", { name: "语音输入" }),
-    ).toBeVisible();
-    await settings.getByRole("button", { name: "语音输入" }).click();
-    await settings.locator("#voice-region").selectOption("singapore");
-    await settings.locator("#voice-key").fill("synthetic-key");
-    await settings.getByRole("button", { name: "保存", exact: true }).click();
-    await expect.poll(() => pending).toBe(true);
-    await expect(settings.locator("#voice-key")).toBeDisabled();
-    const before = voiceGets;
-    await page.goBack();
+    await expect(settings.getByRole("button", { name: "语音输入" })).toHaveCount(0);
     await page.goBack();
     await expect(draft).toHaveValue("保留草稿");
-    await page.getByRole("button", { name: "设置", exact: true }).click();
-    await settings.getByRole("button", { name: "语音输入" }).click();
-    await expect(settings.locator("#voice-key")).toBeDisabled();
-    expect(voiceGets).toBe(before);
-    release();
-    await expect(settings.locator("#voice-key")).toBeEnabled();
-    await expect(settings.locator("#voice-key")).toHaveValue("");
-    await expect(settings.locator("#voice-region")).toHaveValue("singapore");
-    await page.screenshot({ path: `${evidence}/${width}-voice.png` });
-    ambiguous = true;
-    await settings.locator("#voice-key").fill("replacement-key");
-    await settings.getByRole("button", { name: "保存", exact: true }).click();
-    await expect(settings.getByRole("alert")).toContainText("尚未确认设置");
-    ambiguous = false;
-    await settings.getByRole("button", { name: "刷新" }).click();
-    await expect(settings.locator("#voice-key")).toHaveValue("");
-    await page.goBack();
-    await page.goBack();
-    await expect(page.getByRole("button", { name: "开始录音" })).toBeEnabled();
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await settings.getByRole("button", { name: "外观" }).click();
     await settings
@@ -135,6 +83,7 @@ try {
       })
       .toBe(true);
     await page.screenshot({ path: `${evidence}/${width}-dark.png` });
+    expect(voiceInputRequests).toBe(0);
     expect(errors).toEqual([]);
     await context.close();
   }
@@ -177,6 +126,10 @@ try {
   await direct.goBack();
   await expect(directDraft).toBeVisible();
   expect(new URL(direct.url()).pathname).toBe("/");
+  // Old bookmarks lead to settings rather than an inaccessible recording page.
+  await direct.goto(`http://127.0.0.1:${server.port}/#settings/voice`);
+  await expect(directScreen.getByRole("button", { name: "外观" })).toBeVisible();
+  await expect(directScreen.getByRole("button", { name: "语音输入" })).toHaveCount(0);
   await directContext.close();
 
   const context = await browser.newContext({
@@ -188,18 +141,10 @@ try {
   await page.route("**/api/chat/models", (route) =>
     route.fulfill({ status: 404 }),
   );
-  await page.route("**/api/voice/settings", (route) =>
-    route.fulfill({ status: 404 }),
-  );
   await page.goto(`http://127.0.0.1:${server.port}/`);
-  const unsupported = Promise.all([
-    page.waitForResponse((response) =>
-      response.url().endsWith("/api/chat/models"),
-    ),
-    page.waitForResponse((response) =>
-      response.url().endsWith("/api/voice/settings"),
-    ),
-  ]);
+  const unsupported = page.waitForResponse((response) =>
+    response.url().endsWith("/api/chat/models"),
+  );
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await unsupported;
   const screen = page.locator(".settings-screen");

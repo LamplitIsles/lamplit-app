@@ -28,13 +28,6 @@
     type CompanionLanguage,
     type CompanionAppearance,
   } from "./lib/companion/client/preferences.ts";
-  import {
-    VOICE_CAPABILITY_PATH,
-    validateVoiceCapability,
-  } from "@lamplit/contracts/voice";
-  let voiceCapability = $state<"loading" | "available" | "unavailable">(
-    "loading",
-  );
   let revision = $state(0);
   let backgroundVersion = $state(0);
   let refreshBackgrounds = $state<() => Promise<boolean>>(async () => false);
@@ -536,29 +529,6 @@
       }
     };
     void refreshBackgrounds();
-    let voiceRequest = 0;
-    const refreshVoiceCapability = () => {
-      const current = ++voiceRequest;
-      void fetch(VOICE_CAPABILITY_PATH, {
-        signal: abort.signal,
-        cache: "no-store",
-      })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Voice unavailable");
-          const capability = validateVoiceCapability(await response.json());
-          if (!abort.signal.aborted && current === voiceRequest)
-            voiceCapability = capability.available ? "available" : "unavailable";
-        })
-        .catch(() => {
-          if (!abort.signal.aborted && current === voiceRequest)
-            voiceCapability = "unavailable";
-        });
-    };
-    refreshVoiceCapability();
-    window.addEventListener(
-      "companion-voice-settings-changed",
-      refreshVoiceCapability,
-    );
     const notifications = new CompanionNotifications(window, document, () => ({
       title: profile?.companionName || controller.view?.name || "Lamplit",
       body: t("notifications.newMessage"),
@@ -585,10 +555,6 @@
       abort.abort();
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("online", recover);
-      window.removeEventListener(
-        "companion-voice-settings-changed",
-        refreshVoiceCapability,
-      );
       window.removeEventListener("pageshow", recover);
       document.removeEventListener("pointerdown", recover);
       document.removeEventListener("keydown", recover);
@@ -652,7 +618,6 @@
     : undefined}
   onHistoryOpenChange={undefined}
   sessionId={chatState?.view?.sessionId}
-  {voiceCapability}
   identity={{
     companionName: profile?.companionName || chatState?.view?.name || "Lamplit",
     companionAvatar: profile?.companionAvatar,

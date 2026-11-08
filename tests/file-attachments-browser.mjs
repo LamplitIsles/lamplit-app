@@ -316,6 +316,31 @@ try {
       }
       await page.screenshot({ path: `${evidence}/long-file-history-390.png` });
     }
+    // Browser photo and camera choices must not leak across A→B→A.
+    for (const label of ["照片", "拍照"]) {
+      await composer.blur();
+      await add.click();
+      const [staleImagePicker] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        page.getByRole("button", { name: label, exact: true }).click(),
+      ]);
+      for (const sessionId of ["other-session", "fixture-session"]) {
+        await composer.fill(`pending ${sessionId}`);
+        await context.request.post(`http://127.0.0.1:${server.port}/__test/session`, { data: { sessionId } });
+        await expect(composer).toHaveValue("");
+      }
+      await staleImagePicker.setFiles({ name: "stale.png", mimeType: "image/png", buffer: Buffer.from(fixtureImage) });
+      await expect(page.locator(".companion-image-draft-preview img")).toHaveCount(0);
+      await composer.blur();
+      await add.click();
+      const [freshImagePicker] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        page.getByRole("button", { name: label, exact: true }).click(),
+      ]);
+      await freshImagePicker.setFiles({ name: "fresh.png", mimeType: "image/png", buffer: Buffer.from(fixtureImage) });
+      await expect(page.locator(".companion-image-draft-preview img")).toHaveCount(1);
+      await page.getByRole("button", { name: "移除图片", exact: true }).click();
+    }
     await add.click();
     const [stalePicker] = await Promise.all([
       page.waitForEvent("filechooser"),

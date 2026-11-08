@@ -179,9 +179,9 @@ try {
       };
       const choose = page.locator("#companion-image-library");
       const drafts = page.locator(".companion-image-draft-preview img");
-      await choose.setInputFiles(Array(6).fill(file));
+      await pickImages(choose, Array(6).fill(file));
       await expect(drafts).toHaveCount(6);
-      await choose.setInputFiles(file);
+      await pickImages(choose, file);
       await expect(page.getByTestId("input-error")).toBeVisible();
       await expect(drafts).toHaveCount(6);
       expect(errors).toEqual([]);
@@ -382,7 +382,7 @@ try {
       mimeType: "image/png",
       buffer: Buffer.from(image, "base64"),
     };
-    await choose.setInputFiles(file);
+    await pickImages(choose, file);
     await expect(drafts).toHaveCount(1);
     await expect
       .poll(() => drafts.first().evaluate((img) => img.naturalWidth))
@@ -398,12 +398,12 @@ try {
     expect((await input.boundingBox()).width).toBeGreaterThan(0);
     await expect(input).toBeEditable();
     const nativeLimits = (await control({ action: "state" })).limits;
-    await choose.setInputFiles(
+    await pickImages(choose,
       Array.from({ length: nativeLimits.maxImagesPerMessage }, () => file),
     );
     await expect(drafts).toHaveCount(1); // atomic intake rejects count overflow
     await expect(page.getByTestId("input-error")).toBeVisible();
-    await choose.setInputFiles({
+    await pickImages(choose, {
       name: "oversized.png",
       mimeType: "image/png",
       buffer: Buffer.alloc(nativeLimits.maxImageBytes + 1),
@@ -448,7 +448,7 @@ try {
     expect(uploads).toEqual([]);
     await input.fill("");
     if (width === 320) {
-      await choose.setInputFiles(file);
+      await pickImages(choose, file);
       await expect(drafts).toHaveCount(2);
       expect((await drafts.nth(1).boundingBox()).y).toBe(
         (await drafts.first().boundingBox()).y,
@@ -506,7 +506,7 @@ try {
     expect([401, 403, 404]).toContain(denied.status());
     await guest.close();
     await input.fill("图片与文字");
-    await choose.setInputFiles(file);
+    await pickImages(choose, file);
     await input.press("Enter");
     await expect
       .poll(async () => (await control({ action: "state" })).submissions.length)
@@ -606,7 +606,7 @@ try {
     // Pre-admission failure retains the File and editable text; no execution.
     await control({ action: "uploadFailure", enabled: true });
     await input.fill("上传失败保留");
-    await choose.setInputFiles(file);
+    await pickImages(choose, file);
     const beforeFailure = (await control({ action: "state" })).submissions
       .length;
     await input.press("Enter");
@@ -760,7 +760,7 @@ try {
       await route.fulfill({ response });
     });
     await input.fill("较早上传失败");
-    await choose.setInputFiles(file);
+    await pickImages(choose, file);
     await input.press("Enter");
     await uploadRequest;
     await input.fill("随后文字发送");
@@ -821,7 +821,7 @@ try {
     // Dark scoped reference after reload uses the retained theme settings.
     await control({ action: "disabled", enabled: false });
     await page.reload();
-    await choose.setInputFiles([file, file]);
+    await pickImages(choose, [file, file]);
     await expect(page.locator("html")).toHaveClass(/dark/);
     await page.screenshot({
       path: `${evidence}/attachment-dark-${width}.png`,
@@ -882,4 +882,10 @@ try {
   for (const ws of channels.keys()) ws.terminate();
   server?.unref();
   void server?.stop(true);
+}
+
+// Match the hidden picker's click before delivering the selected files.
+async function pickImages(input, files) {
+  await input.dispatchEvent("click");
+  await input.setInputFiles(files);
 }

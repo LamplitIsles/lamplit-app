@@ -345,9 +345,9 @@
 .ios #dsh-companion.dark .companion-header-actions {
   color: #fff;
 }
-.ios.dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
-.ios .dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
-.ios #dsh-companion.dark :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar) {
+.ios.dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar, .companion-glass-bubble),
+.ios .dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar, .companion-glass-bubble),
+.ios #dsh-companion.dark :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar, .companion-glass-bubble) {
   box-shadow:
     inset 0 0 0 0.5px rgb(255 255 255 / 0.12),
     inset 0 1px 4px rgb(255 255 255 / 0.08);
@@ -448,10 +448,39 @@
   overflow-wrap: anywhere;
   min-width: 0;
 }
+.companion-glass-message-surface {
+  background: transparent;
+  padding: 0;
+}
+.companion-glass-bubble {
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 16px;
+  border-radius: 16px;
+  touch-action: auto;
+}
+.ios #dsh-companion .companion-row.incoming .companion-glass-bubble {
+  background: rgb(229 229 234 / 0.78);
+}
+.ios #dsh-companion .companion-row.outgoing .companion-glass-bubble {
+  background: color-mix(in srgb, var(--k-color-primary, #007aff) 20%, rgb(255 255 255 / 0.88));
+}
+.ios.dark #dsh-companion .companion-row.incoming .companion-glass-bubble,
+.ios .dark #dsh-companion .companion-row.incoming .companion-glass-bubble,
+.ios #dsh-companion.dark .companion-row.incoming .companion-glass-bubble {
+  background: rgb(37 37 37 / 0.88);
+}
+.ios.dark #dsh-companion .companion-row.outgoing .companion-glass-bubble,
+.ios .dark #dsh-companion .companion-row.outgoing .companion-glass-bubble,
+.ios #dsh-companion.dark .companion-row.outgoing .companion-glass-bubble {
+  background: color-mix(in srgb, var(--k-color-primary, #007aff) 35%, rgb(20 20 20 / 0.92));
+}
 .companion-text-bubble {
   white-space: normal;
   touch-action: auto;
-  -webkit-touch-callout: none;
+  -webkit-touch-callout: default;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -696,6 +725,16 @@
 #dsh-companion[data-composer-keyboard-open] .companion-bottom-nav {
   display: none;
 }
+/* Mobile editing keeps the input itself while hiding the surrounding glass. */
+:is(.ios, .md) #dsh-companion[data-composer-keyboard-open] .companion-composer.messagebar,
+#dsh-companion[data-composer-keyboard-open] .companion-composer.messagebar {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: var(--companion-edit-backdrop, none);
+  padding: 0 0 var(--companion-bottom-safe-area);
+}
 #dsh-companion .companion-bottom-nav .k-toolbar {
   padding: 0;
 }
@@ -752,6 +791,9 @@
   pointer-events: auto;
   width: max-content;
   max-width: calc(100vw - 16px);
+}
+.companion-message-overlay.compact[style*="--compact-menu-left"] .companion-action-menu {
+  left: var(--compact-menu-left) !important;
 }
 .companion-compact-actions {
   display: flex;
@@ -843,19 +885,19 @@
   background: transparent;
 }
 #dsh-companion .companion-konsta-messagebar .k-glass {
-  background: var(--companion-voice-background, var(--k-color-md-light-surface));
+  background: var(--k-color-md-light-surface);
 }
 .dark #dsh-companion .companion-konsta-messagebar .k-glass,
 .dark#dsh-companion .companion-konsta-messagebar .k-glass {
-  background: var(--companion-voice-background, var(--k-color-md-dark-surface-1));
+  background: var(--k-color-md-dark-surface-1);
 }
 .ios #dsh-companion .companion-konsta-messagebar .k-glass {
-  background: var(--companion-voice-background, #fff);
+  background: #fff;
 }
 .ios.dark #dsh-companion .companion-konsta-messagebar .k-glass,
 .ios .dark #dsh-companion .companion-konsta-messagebar .k-glass,
 .ios #dsh-companion.dark .companion-konsta-messagebar .k-glass {
-  background: var(--companion-voice-background, rgb(255 255 255 / 0.1));
+  background: rgb(255 255 255 / 0.1);
 }
 #dsh-companion .companion-konsta-messagebar .k-glass {
   min-width: 0;
@@ -880,28 +922,6 @@
 .ios #dsh-companion.dark .companion-konsta-messagebar .k-glass:focus-within {
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.14);
 }
-#dsh-companion .companion-konsta-messagebar .k-glass[data-voice-hold] {
-  --companion-voice-background: linear-gradient(to bottom, #dce9ff, #9fc3fa);
-}
-#dsh-companion .companion-konsta-messagebar .k-glass[data-voice-cancel] {
-  --companion-voice-background: linear-gradient(to bottom, #fce6e6, #efb1b1);
-}
-.companion-voice-hold-hint {
-  display: none;
-  position: absolute;
-  inset: 0 52px 0 16px;
-  align-items: center;
-  color: #243b60;
-  font-size: 14px;
-  pointer-events: none;
-}
-.k-glass[data-voice-hold] .companion-voice-hold-hint {
-  display: flex;
-}
-#dsh-companion .k-glass[data-voice-hold] textarea,
-#dsh-companion .k-glass[data-voice-hold] .companion-composer-preview {
-  opacity: 0;
-}
 #dsh-companion .companion-konsta-messagebar textarea {
   box-sizing: border-box;
   margin: 0;
@@ -912,7 +932,6 @@
   min-height: 48px;
   max-height: 144px;
   padding: 16px;
-  padding-inline-end: 60px;
   border: 0;
   border-radius: var(--radius-3xl, 24px);
   line-height: 1rem;
@@ -933,7 +952,6 @@
   height: 48px !important;
   white-space: nowrap;
   overflow: hidden;
-  touch-action: none;
 }
 #dsh-companion:not([data-composer-expanded]) .companion-konsta-messagebar textarea:not(:placeholder-shown) {
   color: transparent;
@@ -941,7 +959,7 @@
 }
 .companion-composer-preview {
   position: absolute;
-  inset-inline: 16px 60px;
+  inset-inline: 16px;
   top: 50%;
   transform: translateY(-50%);
   overflow: hidden;
@@ -982,17 +1000,6 @@
   display: grid;
   place-items: center;
 }
-#dsh-companion .companion-konsta-messagebar .companion-microphone {
-  order: 0;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  margin-inline-start: -56px;
-  position: relative;
-  box-sizing: border-box;
-  padding: 6px;
-  background-clip: content-box;
-}
 #dsh-companion .companion-konsta-messagebar .companion-stickers {
   order: 2;
 }
@@ -1008,7 +1015,7 @@
 }
 #dsh-companion[data-composer-expanded] .companion-konsta-messagebar :is(
   .companion-stickers,
-  .companion-attach:not(.companion-voice-cancel)
+  .companion-attach
 ) {
   width: 0;
   min-width: 0;
@@ -1034,8 +1041,7 @@
   min-width: 200px;
 }
 .companion-command-suggestions,
-.companion-continuity-status,
-.companion-voice-input-state {
+.companion-continuity-status {
   padding: 8px 12px;
   font-size: 12px;
 }
@@ -1165,18 +1171,6 @@
   );
   right: 12px;
   z-index: 2;
-}
-.companion-copy-toast {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: var(--f7-toast-border-radius);
-  background: var(--f7-toast-bg-color);
-  color: var(--f7-toast-text-color);
-  z-index: 100;
-  pointer-events: none;
 }
 .companion-context-summary {
   margin: 0;
@@ -1505,15 +1499,7 @@
   display: flex;
   justify-content: space-between;
 }
-.companion-voice-input-state {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.companion-voice-input-error {
-  color: var(--f7-color-red);
-}
-.companion-microphone-recording {
+.companion-input-error {
   color: var(--f7-color-red);
 }
 .companion-chat-background {

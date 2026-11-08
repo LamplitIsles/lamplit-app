@@ -66,13 +66,6 @@ async function fixture() {
       "utf8",
     ),
     "docs/licenses/skeleton-elements-4.0.1-MIT.txt": "skeleton notice fixture",
-    "docs/licenses/capacitor-community-media-9.1.0-MIT.txt": await readFile(
-      new URL(
-        "../docs/licenses/capacitor-community-media-9.1.0-MIT.txt",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
     font: "font license",
   }))
     await writeFile(join(root, path), content);
@@ -120,7 +113,6 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
   ]);
   expect(Object.keys(manifest.licenses).sort()).toEqual([
     "NotoSansSC-OFL-1.1.txt",
-    "capacitor-community-media-9.1.0-MIT.txt",
     "chord-1.0.0-MIT.txt",
     "konsta-5.5.0-MIT.txt",
     "lamplit-app-Apache-2.0.txt",
@@ -165,17 +157,6 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
     await readFile(join(extracted, "licenses/konsta-5.5.0-MIT.txt"), "utf8"),
   ).toBe(
     await readFile(join(root, "docs/licenses/konsta-5.5.0-MIT.txt"), "utf8"),
-  );
-  expect(
-    await readFile(
-      join(extracted, "licenses/capacitor-community-media-9.1.0-MIT.txt"),
-      "utf8",
-    ),
-  ).toBe(
-    await readFile(
-      join(root, "docs/licenses/capacitor-community-media-9.1.0-MIT.txt"),
-      "utf8",
-    ),
   );
   expect(
     await readFile(

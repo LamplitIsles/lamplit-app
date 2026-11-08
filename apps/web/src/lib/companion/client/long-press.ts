@@ -5,7 +5,6 @@ export function longPress(
   node: HTMLElement,
   options: {
     run(node: HTMLElement, source: "keyboard" | "mouse" | "touch"): void;
-    selectable?: boolean;
   },
 ) {
   // Framework7 9.2 leaves the first hold pending when a stationary second finger lands.
@@ -102,9 +101,7 @@ export function longPress(
     }, f7.params.touch?.tapHoldDelay ?? 450);
   };
   node.addEventListener("pointerdown", down);
-  const select = (event: Event) => {
-    if (!options.selectable) event.preventDefault();
-  };
+  const select = (event: Event) => event.preventDefault();
   document.addEventListener("touchstart", start, {
     capture: true,
     passive: true,

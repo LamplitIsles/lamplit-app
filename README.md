@@ -19,16 +19,14 @@ optimistic message while its exact operation is looked up, without automatic rep
 appearing during generation when the backend provides an in-progress reply. Multiline
 Markdown blocks remain together; completion reveals the final tail. Each display message has its own
 visible avatar, source time and local long-press Copy. History and complete-only arrivals show all
-text immediately; preserved messages remain unchanged. See [sentence replies](docs/sentence-replies.md). Streaming voice
-input adds final recognized text to an editable composer draft. Relationship history, date-based Markdown diaries, session albums and pending
+text immediately; preserved messages remain unchanged. See [sentence replies](docs/sentence-replies.md). Existing voice messages remain playable. Relationship history, date-based Markdown diaries, session albums and pending
 reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
 use the same native contract. Album browsing and saving originals work independently;
 hosts that advertise file support can also receive general file attachments. TTS
 and native releases remain outside this app. The shared app is the direct default
 frontend: standalone `/`, hosted `/chat`, with root-relative assets and no `/slice` alias.
 
-The composer places voice, stickers and attachments to the right of the
-input. Enter sends the draft (Shift+Enter inserts a line break). The sticker
+The composer places stickers and attachments beside the text input. Enter sends the draft (Shift+Enter inserts a line break). The sticker
 panel supports name/tag search, pack browsing and Human favorites. Tapping a
 sticker sends it separately without consuming a draft; holding it previews the
 original animation and name. Sticker thumbnails are cached for the current
@@ -65,13 +63,13 @@ bun tests/notifications-browser.mjs
 ```
 
 Browser acceptance uses an isolated Chrome context and a test-owned fake backend.
-Chrome must be installed, or set `APP_ACCEPTANCE_BROWSER` to a test-owned
-Playwright Chromium executable. Notification checks use a recording native API
+The composer touch fixture requires installed Chrome; other runners can use a
+test-owned Playwright Chromium executable through `APP_ACCEPTANCE_BROWSER`. Notification checks use a recording native API
 fake; other runners deny notifications without requesting real permission. It covers
 mobile/desktop rendering, completed replies,
-connection recovery, refresh and stop. Voice checks use Chrome’s synthetic
-microphone and fake speech, including streaming PCM and responsive failure/cancel
-states. Engine integration tests live with each backend and use fake providers or
+connection recovery, refresh and stop. The local composer touch fixture checks
+that tapping and holding do not request microphone access; it does not test a
+native host or physical iPhone. Engine integration tests live with each backend and use fake providers or
 a fake official app-server.
 
 See [backend integration](docs/integration.md), [protocol](docs/protocol.md), and
@@ -105,31 +103,21 @@ guarantee. There is no Web Push, delivery after closure/suspension, or mobile su
 See [notification acceptance](docs/desktop-companion-notifications.md) for the
 physical Mac Safari checklist. Linux fake-API checks do not prove OS display.
 
-## Voice input
+## Voice messages
 
-Recording availability comes from the authenticated `/api/voice/capability`
-endpoint. When unavailable, text chat stays usable. Start recording with the
-microphone, finish with the stop control, or discard it with cancel. Only the final
-transcript enters the saved draft selection; edit it and explicitly send when
-ready. A draft exceeding the chat text limit remains editable until shortened.
-Cancel, failure and disconnect release microphone resources and keep the draft.
-Navigation/session change also releases capture and invalidates old results; the
-existing session draft lifecycle still applies. Recording requires a secure browser context and
-actual 16 kHz AudioWorklet capture; there is no batch fallback, interim preview,
-automatic send or audio persistence.
-
-The text/voice, panels, images/recovery, quiet compaction and search features have
-merged after joint isolated Pi/workerd and CFL/Node acceptance with fake providers
-(FlickNote #3062/#3096/#3119/#3142). The canonical-root candidate requires fresh
-same-artifact native/platform acceptance after Owner approval. Live providers,
-physical devices and deployment remain separate verification.
+The App supports playback of existing assistant voice messages and voice-output
+settings when provided by the host. Recording, speech-to-text and audio input
+streaming are not available in the App. The public voice input contract remains
+available for existing host compatibility. Earlier text/voice, panels, images,
+compaction and search acceptance with fake providers (FlickNote #3062/#3096/
+#3119/#3142) is historical evidence; current artifacts need their own acceptance.
 
 ## Companion panels
 
 Open the companion profile to browse relationship history, diary, album and
 reminders. Each panel has loading, empty and retry states; diary entries distinguish
 missing and oversized content, and unavailable images stay marked. Panel failures
-do not block text chat or voice drafts. Opening, refresh, chat completion and
+do not block text chat. Opening, refresh, chat completion and
 reconnect reload only the visible panel and relationship summary. There is no
 background polling. Switching panels or sessions invalidates older requests.
 
@@ -187,13 +175,12 @@ See [search contract and native fixture](docs/conversation-search.md).
 
 ## Complete artifact and native acceptance
 
-[Default frontend acceptance](docs/default-shared-frontend.md) documents all seven
-feature runners and the route regression, new external text/voice controls, exact
-native fixture operations,
+[Default frontend acceptance](docs/default-shared-frontend.md) documents the
+feature runners, local composer touch regression, external text controls, native fixture operations,
 root/hosted asset and PWA boundaries, and verification limits. After committing
 verified source, `bun run prepare:default` exports one browser/contracts/all-runner
 archive with source HEAD and per-file hashes into ignored
-`.scratch/default-shared-frontend/candidate`. Owner must approve these exact bytes
+`.scratch/native-durable-submissions/candidate`. Owner must approve these exact bytes
 before native workers start; both hosts use the identical archive without rebuilding.
 Historical feature artifacts stay unchanged. Production adjacent-checkout build
 and host procedures are in [integration](docs/integration.md); platform management,

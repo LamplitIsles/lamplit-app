@@ -54,7 +54,7 @@ existing authenticated same-origin HTTP boundary; authorize each request and
 avoid redirects to foreign origins. Do not send bytes through WebSocket or add
 new storage. The app validates paths, deduplicates IDs, groups by the viewer's
 local day/week and opens/saves the original. Browser save fetches authenticated
-bytes; native save retains the existing Capacitor Media album flow. Browsing is
+bytes for browser download. Browsing is
 independent of the chat snapshot's `images: false` sending capability.
 
 Reminders preserve `id`, optional `title`, `message`, UTC epoch-ms `nextAt`, and
@@ -79,7 +79,7 @@ The four panels, archive search and image sending are connected; TTS remains
 outside the app. Opening, manual refresh, completed chat turns and reconnect refresh
 the visible panel and relationship summary; there is no polling or whole-library
 replication. Connection/session/request generations prevent late responses from
-replacing a newer panel. Relationship loading/failure never gates chat or voice.
+replacing a newer panel. Relationship loading/failure never gates chat or voice-message playback.
 
 ## Current acceptance and native fixtures
 
@@ -91,7 +91,7 @@ The canonical-root candidate requires fresh exact-artifact native acceptance;
 local fixture checks do not claim native scheduler, filesystem/auth or live proof.
 
 Native hosts use test-owned native stores/configs, fake model/official app-server
-and ASR, with all SQLite/R2/workspace/Codex-home paths owned by the test. Backend
+with all SQLite/R2/workspace/Codex-home paths owned by the test. Backend
 fixtures must record actual launch/seeding commands and reviewed HEADs; never use
 live TOML, `.dev.vars`, storage, installed real engines or model credentials.
 
@@ -104,8 +104,8 @@ too-large third diary entry, pending reminders, and a persisted reminder-source
 message. For filesystem admission also seed a non-date Markdown file, a multibyte
 128 KiB entry and one byte over it; native tests must prove confinement, sorting,
 cursor scope and the >60s/<=60s scheduler rule with test clocks. Fake model replies
-must contain `fixture reply`, and fake ASR returns `recognized final`. Alternative
-reply/transcript values can be supplied through the environment below.
+must contain `fixture reply`. An alternative reply value can be supplied through
+the environment below.
 
 With those real hosts running, execute from app:
 
@@ -127,10 +127,9 @@ interval (`everyMinutes=5`), exposes `everySeconds=300` and retains its native
 The current complete handoff pins browser/contracts and every runner to one
 committed source HEAD; verify its archive and per-file manifests before/after.
 
-Set `APP_ACCEPTANCE_REPLY` (regular expression) and `APP_ACCEPTANCE_TRANSCRIPT`
-(exact string) if the fake providers use different fixed text. External mode tests
-the actual host's public RPC, metadata/image bytes, application source, completed
-reply and real browser microphone-to-draft path; it skips local fixture failure
+Set `APP_ACCEPTANCE_REPLY` (regular expression) if the fake provider uses different
+fixed text. External mode tests the actual host's public RPC, metadata/image bytes,
+application source and completed reply; it skips local fixture failure
 injection. Backend native tests must cover their own error/empty/retry, stale
 session, revoked auth, persistence and scheduling behavior. Recheck the expanded
 web manifests after each host run and record their hashes, reviewed backend HEADs,

@@ -22,6 +22,14 @@ const host = await createUiTestHost({
           turnId: "selection-turn",
         },
         {
+          id: "sent-selection",
+          role: "user",
+          text: "短消息",
+          createdAt: 2,
+          operationId: null,
+          turnId: "sent-turn",
+        },
+        {
           id: "image-selection",
           role: "agent",
           text: "",
@@ -97,16 +105,8 @@ try {
   await context.route("**/*", (route) =>
     route.request().url().startsWith(origin) ? route.continue() : route.abort(),
   );
-  await context.addInitScript(() =>
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: async (value) => {
-          window.__copiedText = value;
-        },
-      },
-    }),
-  );
+  if (process.env.APP_GLASS_DARK === "1")
+    await context.addInitScript(() => localStorage.setItem("her.companion.appearance", "dark"));
   const page = await context.newPage();
   await page.goto(origin);
   const bubble = page
@@ -114,6 +114,9 @@ try {
     .filter({ hasText: "这是一段需要复制的文字" });
   await expect(bubble).toBeVisible();
   const box = await bubble.boundingBox();
+  const glass = bubble.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' companion-glass-bubble ')]");
+  await expect(glass).toHaveCount(1);
+  expect(await glass.evaluate((node) => getComputedStyle(node).touchAction)).toBe("auto");
   const cdp = await context.newCDPSession(page);
   const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await cdp.send("Input.dispatchTouchEvent", {
@@ -121,33 +124,26 @@ try {
     touchPoints: [point],
   });
   const menu = page.getByTestId("message-action-menu");
-  await expect(
-    menu.getByRole("button", { name: "复制", exact: true }),
-  ).toBeVisible();
+  await page.waitForTimeout(700);
+  expect(await glass.evaluate((node) => node.style.scale)).toBe("");
+  await expect(glass.locator('span[style*="radial-gradient"]')).toHaveCount(0);
+  await expect(menu).toHaveCount(0);
   await cdp.send("Input.dispatchTouchEvent", {
     type: "touchEnd",
     touchPoints: [],
   });
-  await page.screenshot({
-    path: ".scratch/iphone-composer-touch/text-selection.png",
+  const nativeText = await bubble.evaluate((node) => {
+    const style = getComputedStyle(node);
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    return {
+      selectable: style.userSelect,
+      callout: style.webkitTouchCallout,
+      allowed: node.dispatchEvent(event),
+    };
   });
-  expect(
-    await bubble.evaluate((node) => {
-      const selection = document.getSelection();
-      return (
-        !!selection &&
-        node.contains(selection.anchorNode) &&
-        node.contains(selection.focusNode) &&
-        selection.toString()
-      );
-    }),
-  ).toBe("这是一段需要复制的文字");
-  await expect(menu.getByRole("button", { name: "取消" })).toHaveCount(0);
-  expect(
-    await page
-      .locator(".companion-message-overlay")
-      .evaluate((node) => getComputedStyle(node).pointerEvents),
-  ).toBe("none");
+  expect(nativeText.selectable).toBe("text");
+  expect(nativeText.callout).not.toBe("none");
+  expect(nativeText.allowed).toBe(true);
   await bubble.evaluate((node) => {
     const text = [...node.querySelector(".markdown p").childNodes].find(
       (child) =>
@@ -166,25 +162,18 @@ try {
     selection.removeAllRanges();
     selection.addRange(range);
   });
-  await page.waitForTimeout(500);
-  const copyBox = await menu
-    .getByRole("button", { name: "复制", exact: true })
-    .boundingBox();
-  const copyPoint = {
-    x: copyBox.x + copyBox.width / 2,
-    y: copyBox.y + copyBox.height / 2,
-  };
+  expect(await page.evaluate(() => document.getSelection().toString())).toBe("段需要复");
+  const sent = page.locator(".companion-text-bubble").filter({ hasText: "短消息" });
+  const sentGlass = sent.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' companion-glass-bubble ')]");
+  expect(await sentGlass.evaluate((node) => getComputedStyle(node).backgroundColor))
+    .not.toBe(await glass.evaluate((node) => getComputedStyle(node).backgroundColor));
+  const sentBox = await sent.boundingBox();
   await cdp.send("Input.dispatchTouchEvent", {
     type: "touchStart",
-    touchPoints: [copyPoint],
+    touchPoints: [{ x: sentBox.x + sentBox.width / 2, y: sentBox.y + sentBox.height / 2 }],
   });
-  await cdp.send("Input.dispatchTouchEvent", {
-    type: "touchEnd",
-    touchPoints: [],
-  });
-  await expect
-    .poll(() => page.evaluate(() => window.__copiedText))
-    .toBe("段需要复");
+  await page.waitForTimeout(700);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await expect(menu).toHaveCount(0);
   const image = page.locator(".companion-media-button");
   await expect(image).toBeVisible();
@@ -207,13 +196,21 @@ try {
     type: "touchEnd",
     touchPoints: [],
   });
+  await expect.poll(async () => {
+    const imageBox = await image.boundingBox();
+    const menuBox = await page.locator(".companion-action-menu").boundingBox();
+    const expected = Math.min(imageBox.x, 390 - menuBox.width - 8);
+    return Math.abs(menuBox.x - Math.max(8, expected));
+  }).toBeLessThanOrEqual(2);
   const menuButtons = await menu
     .getByRole("button")
     .evaluateAll((nodes) =>
       nodes.map((node) => node.getBoundingClientRect().toJSON()),
     );
   await page.screenshot({
-    path: ".scratch/iphone-composer-touch/image-menu.png",
+    path: process.env.APP_GLASS_DARK === "1"
+      ? ".scratch/iphone-composer-touch/glass-image-menu-dark.png"
+      : ".scratch/iphone-composer-touch/image-menu.png",
   });
   expect(Math.abs(menuButtons[0].top - menuButtons[1].top)).toBeLessThan(2);
   await expect(menu.getByRole("button", { name: "取消" })).toHaveCount(0);
@@ -270,22 +267,8 @@ try {
     imageId: "selection-image",
   });
   await expect(menu).toHaveCount(0);
-  await bubble.focus();
-  await bubble.press("Shift+F10");
-  await expect(
-    menu.getByRole("button", { name: "复制", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(menu).toHaveCount(0);
-  await expect(bubble).toBeFocused();
-  await bubble.press("Shift+F10");
-  await menu.getByRole("button", { name: "复制", exact: true }).press("Enter");
-  await expect
-    .poll(() => page.evaluate(() => window.__copiedText))
-    .toBe("这是一段需要复制的文字");
-  await expect(menu).toHaveCount(0);
   await context.close();
-  console.log("message selection: bounded selection and partial copy passed");
+  console.log("native text selection and image actions passed");
 } finally {
   await browser.close();
   for (const ws of channels.keys()) ws.terminate();

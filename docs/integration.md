@@ -182,11 +182,11 @@ must consume the exact Orc-approved v2 contracts/frontend/runner identity in the
 [submission handoff](native-durable-submissions.md). Joint native acceptance is
 a separate gate; fixture success does not establish it.
 Stop targets one native turn and never follows an engine mismatch to a newer turn.
-Voice capability and stream require native authentication and same-origin upgrades.
-Missing/disabled/config-failed speech disables recording without breaking text.
-Native Qwen sentence aggregation, lifecycle and transcript validation remain in
-host adapters. Shared capture uses real 16 kHz worklet PCM with no resampler,
-batch fallback, audio persistence, interim preview or reply TTS.
+The App no longer captures or streams voice input. The existing public voice input
+contract is retained for hosts such as CFL, whose capability and stream require
+native authentication and same-origin upgrades. Host recognition and aggregation
+remain backend responsibilities. Existing voice-message playback and streamed text
+replies are independent of this compatibility contract.
 
 Panels use six bounded shared reads, image bytes use authenticated same-origin
 HTTP, and native reminder scheduling stays native. Images/recovery retain strict

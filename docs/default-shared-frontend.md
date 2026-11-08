@@ -16,8 +16,9 @@ a service worker. No Composer redesign or Penpot board applies.
 
 ## Checks, in order
 
-Use Bun 1.3.14, installed Chrome (or a test-owned Playwright Chromium executable
-selected by `APP_ACCEPTANCE_BROWSER`) and test-owned state. From the App checkout:
+Use Bun 1.3.14, installed Chrome and test-owned state. Runners that support
+`APP_ACCEPTANCE_BROWSER` may select a test-owned Playwright Chromium executable;
+the composer touch fixture uses the installed Chrome channel. From the App checkout:
 
 ```sh
 bun install --frozen-lockfile
@@ -36,19 +37,18 @@ bun run test:route-lifecycle-browser
 bun tests/notifications-browser.mjs
 ```
 
-`test:browser` runs text and voice separately: seven feature runners in total
-(text, voice, panels, images, compact, search, notifications), plus the route
-lifecycle regression and the shared submission timing/recovery runner. Notifications use a recording native API fake; the other
-App runners inject denied permission so they never request real OS permission.
-The route lifecycle regression uses real intercepted requests and waits for held
-handlers to settle; genuine route errors fail the process. All fixture hosts use
-canonical root paths and reject missing assets and `/slice`, without SPA fallback.
-Text also boots `/chat`, compares its HTML with `/`, fetches deployed script/style,
-manifest and icon URLs and checks standalone PWA scope. This models App entries;
-it does not claim acceptance of the actual platform gateway. Images check actual
-original/model variants, authenticated media, native limits and recovery. Voice
-checks actual browser 16 kHz AudioWorklet PCM and release, not batch audio.
-Screenshots cover 390/1280; image/compact also retain 320px overflow probes.
+`test:browser` runs the text runner followed by the local composer touch fixture.
+The commands above also run panels, images, compact, search, notifications, route
+lifecycle and submission timing/recovery. The composer touch fixture uses a
+loopback test-owned host and checks that tap and hold do not request microphone
+access. It has no external-host mode and does not validate native iPhone behavior.
+Notifications use a recording native API fake. The route lifecycle regression uses
+real intercepted requests and waits for held handlers to settle; genuine route
+errors fail the process. Fixture hosts use canonical root paths and reject missing
+assets and `/slice`, without SPA fallback. Text also boots `/chat` and checks
+standalone PWA assets; this does not establish actual platform gateway acceptance.
+Images check original/model variants, authenticated media, native limits and
+recovery. Screenshots cover 390/1280; image/compact retain 320px overflow probes.
 
 ## One committed-source candidate
 
@@ -57,7 +57,7 @@ It builds once into ignored `.scratch/native-durable-submissions/candidate`, ref
 an existing identity. Historical artifacts are never overwritten. The single
 `lamplit-native-durable-submissions.tgz` contains `browser/`, `contracts/package/`,
 `acceptance/`, three per-file SHA256 manifests and `SOURCE_HEAD`. The acceptance
-package includes all seven feature runners, route regression, their fixtures/helpers
+package includes the feature runners, local composer touch regression, route regression, their fixtures/helpers
 (including `notification-permission.mjs` and the shared local/native
 `optimistic-send-browser.mjs`), the notification acceptance guide,
 licenses, source attribution and native-control docs. Its package pins Playwright;
@@ -86,8 +86,11 @@ frozen source. For extracted App fixture acceptance, from `acceptance/` set
 `bun voice-browser.mjs`, `bun panels-browser.mjs`, `bun images-browser.mjs`,
 `bun compact-browser.mjs`, `bun search-browser.mjs`,
 `bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs` and `bun optimistic-send-browser.mjs` using
-its submission controls described in the v2 handoff.
-The latter supports isolated image/WS fixtures and actual native hosts through
+its submission controls described in the v2 handoff. `voice-browser.mjs` is a
+compatibility entry for the local composer touch regression; the packaged runner
+uses `APP_ACCEPTANCE_ASSETS` (default `../browser`) and rejects external host/control
+URLs. It requires installed Chrome and does not claim external voice acceptance.
+The submission runner supports isolated image/WS fixtures and actual native hosts through
 test-owned submission controls. It verifies receipt/view ordering, persisted App
 pending state, stop outcome and 390/1280 light/dark screenshots. Configure actual-host
 URLs as described in `native-durable-submissions.md`. Set
@@ -98,18 +101,18 @@ approved files. Record native HEAD, fixture/fake-engine identity, command, exit
 code, screenshots and before/after hashes. Owner approval of a changed candidate
 is required before either backend consumes a replacement.
 
-## Actual-host text and voice controls
+## Actual-host text controls
 
 Every public request must reach the actual authenticated native adapter. Controls
 are separate test infrastructure: reset/seed only test-owned native state, configure
-fake model/speech behavior, observe transport, or delay/fail delivery. Do not return
+fake model behavior, observe transport, or delay/fail delivery. Do not return
 fabricated public DTOs, intercept browser public routes, substitute a mock backend,
 change native auth/admission, or invoke installed real model/app-server executables.
 Use the existing Pi/workerd and CFL/Node fixture patterns with fake loopback
-model/official app-server and speech services. Controls may run on a separate port.
+model/official app-server services. Controls may run on a separate port.
 Missing fixture support is a blocker to report to Owner, not an assertion to relax.
 
-Both new controls accept JSON POST and return state after the action. Text uses
+The text control accepts JSON POST and returns state after the action. It uses
 `/__test/text` by default:
 
 | Action              | Native fixture operation                                                                                                                   |
@@ -125,38 +128,8 @@ execution, safe external links, keyboard/mouse menus, theme and language.
 The external-link page is a separate test-owned loopback HTTP origin; no browser
 route fulfillment or product API mock is used.
 
-Voice uses `/__test/voice` by default:
-
-| Action                                                    | Native fixture operation                                                                                                                                                                                                                                                                      |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reset`                                                   | Reset fixture chat, counters and speech takes; enabled speech, transcript `recognized final`, no held final result.                                                                                                                                                                           |
-| `state`                                                   | Observe `{ executions, takes }` from actual authenticated native voice transport.                                                                                                                                                                                                             |
-| `speech`, `text?`, `hold?`, `holdReady?`, `availability?` | Configure fake speech final transcript/held completion. Availability `enabled`/`disabled` follows native speech configuration; `unreachable` fails capability delivery (e.g. 503) after native authentication. Do not forge capability JSON. `holdReady` holds actual speech setup readiness. |
-| `ready`, `takeId`                                         | Release the held fake speech setup for this take through the native ready event. A closed take stays closed.                                                                                                                                                                                  |
-| `complete`, `text?`                                       | Complete the held fake native chat turn, as for text.                                                                                                                                                                                                                                         |
-| `disconnect`                                              | Close this fixture's chat observation sockets, preserving native turn ownership. Normal native reconnection remains enabled.                                                                                                                                                                  |
-| `result`, `takeId`, `text`                                | Release an old held fake speech result; the native cancelled/closed take may discard it. Never inject a result directly into the browser.                                                                                                                                                     |
-| `error`, `takeId`, `code`                                 | Make that fake speech upstream fail with the specified native mapped error (`upstream_error` in this suite).                                                                                                                                                                                  |
-
-Each observed take has `{ id, bytes, controls, closed, finishedBytes, firstFrame,
-nonzero, ready, events, frames }`. `id` is a stable test observation ID; `bytes` counts PCM bytes admitted
-on the actual voice transport; `controls` is ordered client `finish`/`cancel`;
-`closed` reflects transport cleanup; `finishedBytes` is the byte count at finish;
-`firstFrame` is the bounded first PCM frame as a byte array; `nonzero` observes
-whether any admitted frame has nonzero audio. Observe at the native transport seam,
-not provider chunk sizes. `ready` reports actual transport readiness; `events`
-records `ready`, each `pcm`, and controls in order; `frames` is the bounded test
-observation of each original PCM frame as a byte array. These observations stay in
-test-owned fixture memory, never product state. Fake speech must hold an otherwise valid recognized
-result without changing native transcript aggregation/validation.
-
-The runner preserves streaming-before-finish, exact 3200-byte first frame,
-nonzero PCM, actual 16000 Hz, selected draft replacement, edit/explicit send,
-finish ordering, cancel/stale result, fresh take, upstream failure, chat-disconnect
-cleanup, oversized transcript, actual-rate mismatch, microphone denial, navigation
-cleanup, disabled/unreachable capability and continued text assertions. Browser
-resource probes wrap real capture/AudioContext; rate-mismatch/denial deliberately
-exercise capture failures. No recording bytes are saved into product state.
+Voice input is no longer an App acceptance path. The composer touch runner uses
+only a test-owned local host; it cannot validate a native host.
 
 From the extracted `acceptance/` directory, after approved native fixtures start:
 
@@ -164,9 +137,6 @@ From the extracted `acceptance/` directory, after approved native fixtures start
 APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/ \
 APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:CONTROL_PORT/__test/text \
 APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence/text bun browser.mjs
-APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/ \
-APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:CONTROL_PORT/__test/voice \
-APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence/voice bun voice-browser.mjs
 ```
 
 Use `/chat` for hosted gateway acceptance. Optional `APP_ACCEPTANCE_USERNAME` and
@@ -211,41 +181,22 @@ For Matrix #3560 use the [complete Matrix handoff](matrix-source-ui.md) and
 runners and adds Matrix plus current collapsed-thinking acceptance, frozen locks
 and a new candidate directory. Existing identities are never overwritten.
 
-## Fast voice start candidate (#3734)
+## Historical fast voice start candidate (#3734)
 
-`bun tests/prepare-default.mjs --fast-voice-start` exports current committed source
-to `.scratch/fast-voice-start/candidate-<full HEAD>/lamplit-fast-voice-start.tgz`.
-It retains current layout, reminder, Matrix, thinking and all existing runners,
-freezes acceptance/contracts Bun locks, and records source HEAD/tree, archive,
-manifest and voice-runner identities. Historical candidates remain untouched.
-Review exact bytes before native consumption; a local candidate is not approval.
-
-Run `voice-browser.mjs` against both source-built and freshly extracted browser
-bytes. Install extraction dependencies with `bun install --frozen-lockfile` in
-contracts/package and acceptance. Verify archive, all three manifests and
-`SOURCE_HEAD` before and after each run; include frozen lockfiles in the manifest
-checks. Use the existing external URL/control URL variables above for isolated
-native hosts. The runner requires `holdReady`, `ready`, ordered frame observations
-and resource probes through the same seam, with no fabricated public responses.
-
-The built worklet proves local PCM before delayed recognition, no pre-ready sends,
-early Stop release followed by exact queued frames/residual and one finish,
-remote-first permission delay, late permission cancellation, bounded overflow,
-backpressure, retained startup deadline, premature-result rejection and fresh-take
-recovery. Browser timers and an outbound-buffer probe control deadline/backpressure
-cases; actual PCM still comes from Chromium's synthetic microphone and built worklet.
-Screenshots at 390/1280 show recording while readiness is held and released idle.
-Timing logs separate click-to-first-PCM from click-to-ready. They establish isolated
-ordering, not physical microphone or real-provider latency. App owns this one
-recorder; Chat consumes an approved immutable archive, while codex-for-love prepares
-clean full-SHA-pinned source. Native consumers remain separate follow-up work.
+Previous candidates and their hashes remain historical evidence of the removed
+recorder. The `--fast-voice-start` preparation mode remains available because
+other acceptance modes share its packaging path, but a new candidate contains
+the local composer touch regression, not the former PCM or native voice runner.
+`voiceRunnerSHA256` identifies its compatibility entry; the acceptance manifest
+also covers the composer runner and helpers. No current runner makes a native
+voice-input acceptance claim.
 
 ## Failed-message actions candidate (#3936)
 
 Use `bun tests/prepare-default.mjs --failed-message-actions` from verified clean
 committed source. The new `.scratch/failed-message-actions/candidate-<full HEAD>/`
 contains `lamplit-failed-message-actions.tgz`, compiled required contracts and all
-current voice/layout/source/default runners. Historical identities stay unchanged.
+current composer touch/layout/source/default runners. Historical identities stay unchanged.
 Freeze the archive, three manifests and `SOURCE_HEAD`; verify before and after
 source-built and extracted `optimistic-send-browser.mjs` runs at existing 390/1280
 light/dark viewports. Install only extracted owned dependencies with frozen locks.

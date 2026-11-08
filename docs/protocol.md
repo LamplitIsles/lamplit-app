@@ -164,65 +164,22 @@ Each inbound command and outgoing frame passes the host authorization check.
 The Pi adapter supplies connection-specific hosted-session verification so one
 connection's identity cannot leak into another's delivery callback.
 
-## Streaming voice input
+## Voice input compatibility contract
 
-Voice is separate from Chord. The authenticated same-origin
-`GET /api/voice/capability` returns exactly `{ available: boolean }`. This endpoint
-is the authority for recording availability; the chat snapshot has no `voice`
-capability field. Failed or invalid capability responses disable recording while
-text chat stays usable. Recheck on app mount; the stream must also enforce current
-authorization and speech availability rather than trusting a prior capability GET.
+The App no longer records audio, performs speech-to-text, or opens the voice input
+stream. Existing hosts, including CFL, still consume `@lamplit/contracts/voice`;
+its public export, schemas, validators, constants and wire semantics remain intact.
+This input compatibility contract is separate from [assistant voice messages](#assistant-voice-messages)
+and from streamed text replies.
 
-`/api/voice/stream` opens one transient recognition take per WebSocket. The host
-sends `{ type: "ready" }` after speech setup. Explicit Start opens recognition and
-prepares local capture concurrently. The first valid worklet PCM frame establishes
-local recording readiness; server `ready` independently permits transport. Audio is
-binary signed PCM16 little-endian mono at actual 16,000 Hz: at most 300 seconds,
-9,600,000 raw bytes, 16 KiB per nonempty even-length frame. The client bounds its
-unsent PCM FIFO at 160,000 bytes (five seconds), with FIFO plus WebSocket output
-bounded together at 256 KiB. It emits 100 ms frames (3,200 bytes). Overflow fails
-rather than dropping speech. It requests
-16 kHz from AudioContext and checks the actual rate; unsupported rates fail cleanly
-without an application resampler or batch fallback.
-
-Controls are strictly `{ type: "finish" }` or `{ type: "cancel" }`, at most 128
-UTF-8 bytes. Finish follows the worklet's final partial PCM frame and flush
-acknowledgement. Early Stop releases microphone, nodes and AudioContext on that
-acknowledgement, then delivers queued frames in order after readiness before sending
-finish exactly once. A result before the client's own finish is rejected. Stop
-before the first PCM retains cancellation semantics. The 15-second startup deadline
-remains until both local capture and recognition are ready, including after early
-Stop. Flush, post-flush delivery and final-result waits each retain their 20-second
-bounds. The host then finishes the provider task. Cancel/disconnect
-releases capture and provider resources. No audio enters chat replication,
-attachments, persistent storage or model execution. Hidden-page, pagehide, navigation,
-session change and unmount discard pending audio and invalidate late results.
-
-Nothing is prewarmed before explicit Start. Recognition setup may now begin before
-microphone permission completes, including when permission is eventually denied.
-The host may contact its provider at that point; cancelling releases known resources
-but cannot undo provider processing or billing already incurred. Capability is still
-the current host availability gate, independent of recognition readiness.
-
-Server events are strictly `ready`, `{ type: "result", text }` or
-`{ type: "error", code }`, at most 128 KiB UTF-8. Result requires nonblank finalized
-text, at most 20,000 Unicode code points. Preserve these error codes:
-`voice_disabled`, `config_unavailable`, `invalid_key`, `rate_limited`,
-`upstream_error`, `timeout`, `cancelled`, `invalid_audio`, `transcript_invalid`.
-Unknown properties/types/codes and invalid audio bounds are rejected by the public
-`@lamplit/contracts/voice` validators. Hosts additionally enforce lifecycle order,
-authorization, setup/finish timeouts and provider semantics.
-
-The Qwen relay stores final sentences by positive sentence ID, replaces duplicate
-finals and orders IDs before joining text. Interim updates are hidden and cannot
-reopen a finalized sentence. Finish succeeds only with finalized, valid sentences
-and no outstanding unfinished sentences. Backend adapters own this aggregation.
-
-Only the final result, after finish, replaces the composer's saved selection. It
-remains an editable draft until explicit send. Cancel, session change, disposal,
-disconnect and a changed draft invalidate old results. Chat send still uses its
-16,000 UTF-16-unit trimmed-text limit; a longer transcript remains editable, with
-send disabled until shortened. No automatic send, interim preview or reply TTS.
+For compatible hosts, `GET /api/voice/capability` returns `{ available: boolean }`
+and `/api/voice/stream` is a same-origin authenticated WebSocket. Audio is mono
+PCM16 little-endian at 16 kHz, limited to 300 seconds, 9,600,000 raw bytes and
+16 KiB per even-length frame. Client controls are `finish` and `cancel`; server
+events are `ready`, `result` with nonblank bounded text, or `error` with a listed
+voice error code. The public validators enforce frame, control, event and transcript
+bounds; hosts remain responsible for authentication, lifecycle and provider behavior.
+CFL's existing backend implementation and tests are unchanged by this App change.
 
 ## Companion panels
 

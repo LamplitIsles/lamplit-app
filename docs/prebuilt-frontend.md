@@ -62,10 +62,6 @@ The pinned Chord and Skeleton Elements packages omit their license files, so
 their versioned upstream notices are maintained in `docs/licenses/` and copied
 into the archive: [Chord 1.0.0](https://github.com/earendil-works/pi/blob/v1.0.0/LICENSE)
 and [Skeleton Elements 4.0.1](https://github.com/nolimits4web/skeleton-elements/blob/v4.0.1/LICENSE).
-The browser also imports `@capacitor-community/media` 9.1.0, whose package
-declares MIT but contains no license or copyright notice. The archive includes
-its versioned upstream metadata, canonical MIT permission text, and an explicit
-statement that no upstream copyright statement was found.
 The Konsta 5.5.0 package omits its MIT license file; its
 [upstream notice](https://github.com/konstaui/konsta/blob/v5.5.0/LICENSE) is
 maintained in `docs/licenses/` and included in the frontend archive.

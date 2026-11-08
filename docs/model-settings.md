@@ -48,12 +48,8 @@ unsupported hosts, and zh/en at mobile/desktop sizes. Test-owned fixtures and
 screenshots live under `.scratch/dashboard-model-selector/browser`. CFL owns
 fake-native persistence/next-turn acceptance; this runner does not call models.
 
-The optional `/api/voice/settings` GET and POST independently expose a host's
-voice configuration. GET returns `{region, configured}` without the key; POST
-accepts `{region, apiKey}`. The host stores the key; the browser never reads it
-back. Missing settings endpoints hide the corresponding card, independently of
-whether the host supports recording. `bun run test:settings-browser` exercises
-navigation, host availability, draft preservation, and pending voice saves.
+The App no longer exposes voice-input settings; host voice-input configuration and
+endpoints remain outside this App change.
 
 Voice output has a separate optional host settings page for MiniMax, Alibaba,
 ByteDance, and ElevenLabs. Framework7 Smart Select opens the provider and
@@ -61,7 +57,7 @@ ElevenLabs voice pickers; the ElevenLabs picker lists saved account voices and
 offers manual voice ID entry. Other providers use a voice ID field. Key saves
 and provider/voice activation are separate actions; keys are never returned to
 the browser. MiniMax authentication remains on the host. Unsupported hosts
-hide the card independently of voice input. The host contracts are
+hide the voice-output card when unsupported. The host contracts are
 `/api/tts/settings`, `/api/tts/settings/key`, and
 `/api/tts/elevenlabs/voices`; FlickNote #46 and #47 specify their fields.
 After `bun run build`, `bun tests/voice-output-settings-browser.mjs` exercises

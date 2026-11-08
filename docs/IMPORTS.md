@@ -8,7 +8,7 @@ The frontend was subsequently synchronized with local CFL `main`, commit
 `1263eb20c9a73462ba0ad48ee068635b97af004d` (Framework7 merge #57 and UI fixes #60/#62).
 This includes its palette, message links, anchored long-press menus, typing motion,
 settings, search presentation, reminder drawer and timeline behavior. The shared
-controller, capability gates and streaming voice lifecycle remain app adaptations;
+controller and capability gates remain app adaptations;
 CFL's engine-specific controller and backend alarm persistence were not imported.
 The source is Apache-2.0; this repository retains the Apache-2.0 license.
 
@@ -18,20 +18,21 @@ handling, Markdown and localization remain derived from that source. First-slice
 presentation hides capabilities that have not yet been connected. No runtime state,
 credentials, conversations or uncommitted source changes were imported.
 
-Framework7, Svelte, Capacitor, Noto Sans SC, KaTeX, lucide-svelte and other dependencies
+Framework7, Svelte, Noto Sans SC, KaTeX, lucide-svelte and other dependencies
 retain their respective upstream licenses in package distributions. Chord and
 TypeBox are dependencies, not vendored source. Passkey ceremonies use the
 `@simplewebauthn/browser` package under its upstream MIT license; no library
 source was copied into this repository.
 
-The streaming `voice-input.ts` lifecycle and `voice-worklet.js` were adapted from
+The now-removed streaming `voice-input.ts` lifecycle and `voice-worklet.js` were adapted from
 `LamplitIsles/lamplit-chat`, commit
 `8d3723e892c705960039ea77cc2d745c29d9f133` (read-only adjacent checkout), paths
 `frontend/src/lib/companion/client/voice-input.ts` and `voice-worklet.js`.
-`tests/voice-worklet.test.ts` derives from its `src/companion/voice-worklet.test.ts`.
+The now-removed `tests/voice-worklet.test.ts` derived from its `src/companion/voice-worklet.test.ts`.
 That source is Apache-2.0, covered by this repository's retained Apache-2.0 license.
-The adaptation uses the shared public contracts and the existing Framework7
-composer instead of the imported CFL batch MediaRecorder/transcription path.
+The historical adaptation used the shared public contracts and the existing Framework7
+composer instead of the imported CFL batch MediaRecorder/transcription path. The
+public voice contract remains for compatibility with existing hosts.
 No provider keys, recordings, transcripts or runtime state were imported.
 
 The companion-panels adaptation connects the imported relationship history, diary,

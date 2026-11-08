@@ -127,6 +127,9 @@ for (const name of [
   ...(thinking ? ["thinking-browser.mjs", "thinking-fixture.ts"] : []),
   "browser.mjs",
   "voice-browser.mjs",
+  "composer-touch-browser.mjs",
+  "ui-test-host.ts",
+  "direct-test-host.ts",
   "panels-browser.mjs",
   "images-browser.mjs",
   "optimistic-send-browser.mjs",
@@ -140,13 +143,24 @@ for (const name of [
   "panels-fixture.ts",
   "images-fixture.ts",
   "submissions-fixture.ts",
-  "native-gallery-browser.mjs",
   "keet-browser.mjs",
   "keet-fixture.ts",
   "compact-fixture.ts",
   "search-fixture.ts",
 ]) {
-  const source = await readFile(join(root, "tests", name), "utf8");
+  let source = await readFile(join(root, "tests", name), "utf8");
+  if (name === "composer-touch-browser.mjs") {
+    const assets = 'resolve("apps/web/build")';
+    if (!source.includes(assets))
+      throw new Error("Composer fixture asset path changed");
+    source = source.replace(
+      assets,
+      'resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "../browser")',
+    );
+    source =
+      `if (process.env.APP_ACCEPTANCE_URL || process.env.APP_ACCEPTANCE_CONTROL_URL) throw new Error("Composer touch acceptance only supports its local test-owned host");\n` +
+      source;
+  }
   await writeFile(
     join(acceptance, name),
     source
@@ -356,7 +370,7 @@ const identity = {
     ...(matrix ? ["matrix"] : []),
     ...(thinking ? ["thinking"] : []),
     "browser",
-    "voice",
+    "composer-touch (local test-owned host only)",
     "panels",
     "images",
     "compact",
@@ -365,7 +379,6 @@ const identity = {
     "route-lifecycle",
     "optimistic-send (same runner for App fixture and native hosts)",
     "keet",
-    "native-gallery (plugin fake only)",
   ],
   localAcceptance: "test-owned App fixture; not native acceptance",
   ...(sentence

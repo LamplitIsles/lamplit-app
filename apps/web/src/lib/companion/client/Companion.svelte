@@ -3,7 +3,6 @@
   import RefreshCw from "lucide-svelte/icons/refresh-cw";
   import { visibleViewport, followTimelineResize } from "./viewport.js";
   import { MAX_MESSAGE_LENGTH } from "../../message-input.ts";
-  import { normalizeVoiceTranscription } from "./voice-input.js";
   import {
     english,
     type CompanionLocaleKey,
@@ -17,11 +16,6 @@
   export let backgroundVersion = 0;
   export let refreshBackgrounds: () => Promise<boolean> = async () => false;
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
-  import {
-    captureNativePhoto,
-    chooseNativePhotos,
-    hasNativeCamera,
-  } from "./native-mobile.js";
   import AlarmDrawer from "./AlarmDrawer.svelte";
   import ReminderBody from "./ReminderBody.svelte";
   import type { AlarmView } from "./alarm-view.ts";
@@ -59,21 +53,18 @@
     Sheet as KonstaSheet,
     Popover as KonstaPopover,
   } from "konsta/svelte";
-  import { syncSystemBars } from "./native-navigation.ts";
   import MessageCircle from "lucide-svelte/icons/message-circle";
   import Settings from "lucide-svelte/icons/settings";
   import ArrowLeft from "lucide-svelte/icons/arrow-left";
   import Palette from "lucide-svelte/icons/palette";
   import Cpu from "lucide-svelte/icons/cpu";
   import ModelSettings from "./ModelSettings.svelte";
-  import VoiceSettings from "./VoiceSettings.svelte";
   import VoiceOutputSettings from "./VoiceOutputSettings.svelte";
   import BackgroundSettings from "./BackgroundSettings.svelte";
   import Search from "lucide-svelte/icons/search";
   import Pause from "lucide-svelte/icons/pause";
   import Play from "lucide-svelte/icons/play";
   import Square from "lucide-svelte/icons/square";
-  import Mic from "lucide-svelte/icons/mic";
   import Volume2 from "lucide-svelte/icons/volume-2";
   import X from "lucide-svelte/icons/x";
   import Images from "lucide-svelte/icons/images";
@@ -110,10 +101,7 @@
     messageMenuOpen,
     runMessageMenuAction,
   } from "./message-menu.ts";
-  import { Capacitor } from "@capacitor/core";
-  import { Clipboard } from "@capacitor/clipboard";
-  import { App } from "@capacitor/app";
-  import { saveImage, ImageSaveUnavailableError } from "./save-image.ts";
+  import { saveImage } from "./save-image.ts";
   type Swiper = ReturnType<typeof f7.swiper.create>;
   import type { PhotoBrowser } from "framework7/components/photo-browser";
   import {
@@ -173,13 +161,6 @@
   import { formatMessageTime, messageTimeDateTime } from "../message-time.js";
   import { chatDayHeadings, nextChatDayBoundary } from "./chat-day.js";
   import { resolveImageDisplaySize } from "../media.js";
-  import {
-    canCaptureVoice,
-    VoiceRecordingController,
-    VoiceRecordingError,
-    type VoiceRecordingStatus,
-  } from "./voice-input.js";
-
   interface CompanionIdentityView {
     companionName: string;
     companionAvatar?: string;
@@ -224,8 +205,6 @@
     | import("./contracts.js").ImageAttachmentLimits
     | undefined;
   export let fileLimits: FileLimits | undefined;
-  export let voiceCapability: "loading" | "available" | "unavailable" =
-    "unavailable";
   export let continuity: CompanionContinuityView = {};
   export let recoveredDraft: CompanionRecoveredDraft | undefined;
   export let history: CompanionHistoryView = {
@@ -264,14 +243,14 @@
   let fileInput: HTMLInputElement;
   let filePickerSession: string | undefined;
   let filePickerGeneration = 0;
-  let nativePhotoBusy = false;
-  let nativePhotoGeneration = 0;
-  let photoDisposed = false;
+  let imagePickerSession: string | undefined;
+  let imagePickerGeneration = 0;
+  let sessionGeneration = 0;
+  let attachmentDisposed = false;
   let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
   let konstaTheme: "ios" | "material" = "material";
   let chatDayNow = Date.now();
-  let refreshChatDay = () => {};
   onMount(() => {
     let timer: ReturnType<typeof setTimeout>;
     const refresh = () => {
@@ -280,7 +259,6 @@
       timer = setTimeout(refresh, Math.max(1, nextChatDayBoundary(chatDayNow) - chatDayNow + 50));
     };
     const visible = () => { if (document.visibilityState === "visible") refresh(); };
-    refreshChatDay = refresh;
     refresh();
     document.addEventListener("visibilitychange", visible);
     window.addEventListener("focus", refresh);
@@ -288,7 +266,6 @@
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("focus", refresh);
-      refreshChatDay = () => {};
     };
   });
   onMount(() => {
@@ -305,12 +282,11 @@
     | "home"
     | "appearance"
     | "models"
-    | "voice"
     | "voice-output";
   function preferencesTabFromLocation(): PreferencesTab | undefined {
     const routes: Record<string, PreferencesTab> = {
       "#settings": "home", "#settings/appearance": "appearance",
-      "#settings/models": "models", "#settings/voice": "voice",
+      "#settings/models": "models", "#settings/voice": "home",
       "#settings/voice-output": "voice-output",
     };
     return routes[window.location.hash];
@@ -320,7 +296,6 @@
   let preferencesButton: HTMLButtonElement;
   let preferencesBack: HTMLButtonElement;
   let modelSettingsSupported = false;
-  let voiceSettingsSupported = false;
   let voiceOutputSettingsSupported = false;
   onMount(() => {
     const tab = preferencesTabFromLocation();
@@ -392,8 +367,6 @@
   let imageLoads: Record<string, string> = {};
   let imageDimensions: Record<string, { width: number; height: number }> = {};
   let wasNearBottom = true;
-  let copyToast: CompanionLocaleKey | undefined;
-  let copyToastTimer: ReturnType<typeof setTimeout> | undefined;
   let liveAnnouncement: string | CompanionMessage = "";
 
   let lightboxReturnFocus: HTMLElement | undefined;
@@ -435,41 +408,6 @@
   let messagebarInstance: ReturnType<typeof f7.messagebar.create> | undefined;
   let composerExpanded = false;
   let messagesComponent: Messages;
-  let voiceInsertion = { start: 0, end: 0 };
-  let voiceOriginDraft = "";
-  let voiceStatus: VoiceRecordingStatus = "idle";
-  const voiceCaptureAvailable = canCaptureVoice();
-  let voiceFailure: CompanionLocaleKey | "" = "";
-  let voiceHoldActive = false;
-  let voiceHoldCancel = false;
-  let clearVoiceGesture: (() => void) | undefined;
-  let voicePermissionPending = false;
-  let voicePermissionVerified = false;
-  let voicePermissionNotice = false;
-  let voiceController = new VoiceRecordingController({
-    onStatus: (status) => {
-      voiceStatus = status;
-    },
-    onDurationLimit: () => {
-      const send = voiceHoldActive && !voiceHoldCancel;
-      clearVoiceGesture?.();
-      voiceHoldActive = false;
-      if (voiceHoldCancel) void cancelVoiceInput();
-      else void stopVoiceAndTranscribe(send);
-    },
-    onError: (error) => {
-      if (error.code !== "cancelled") {
-        clearVoiceGesture?.();
-        voiceHoldActive = false;
-        voiceHoldCancel = false;
-        voiceFailure = voiceErrorKey(error);
-        liveAnnouncement = { key: voiceFailure };
-      }
-    },
-  });
-  let voiceSessionId: string | undefined;
-  let voiceGeneration = 0;
-
   $: effectiveWorkspaceReadiness = workspaceReadiness;
   $: effectiveSessionReadiness = sessionReadiness;
   $: if (sessionId !== panelSession) {
@@ -523,11 +461,6 @@
     imageDrafts.length || fileDrafts.length
       ? undefined
       : findComposerCommand(composer.draft, t);
-  $: voiceBusy =
-    voiceStatus === "starting" ||
-    voiceStatus === "recording" ||
-    voiceStatus === "stopping" ||
-    voiceStatus === "transcribing";
   $: if (imageDrafts || fileDrafts) void scheduleComposerResize();
   $: contextCapacity = resolveContextCapacity(continuity?.contextPressure);
   $: latestContinuityLifecycle = continuity?.lifecycle ?? undefined;
@@ -543,7 +476,7 @@
   $: dayHeadings = chatDayHeadings(visibleMessageUnits, displayedProjection.historyGaps, chatDayNow, locale, t);
   $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
-    nativePhotoGeneration += 1;
+    sessionGeneration += 1;
     releaseSubmissionImages(imageDrafts);
     imageDrafts = [];
     fileDrafts = [];
@@ -570,12 +503,6 @@
     recoveredPendingKey = "";
     restoredNeedsAttachments = false;
   }
-  $: if (projection.canSubmit === false && voiceBusy) void cancelVoiceInput();
-  $: if (sessionId !== voiceSessionId) {
-    voiceSessionId = sessionId;
-    void cancelVoiceInput();
-  }
-
   async function scheduleComposerResize(): Promise<void> {
     await tick();
     if (!composerInput?.isConnected) return;
@@ -593,10 +520,6 @@
     options: {
       label: string;
       suggestions: boolean;
-      readOnly: boolean;
-      hold: boolean;
-      cancel: boolean;
-      hint: string;
     },
   ) {
     const bar = node.closest<HTMLElement>(".companion-composer")!;
@@ -607,22 +530,11 @@
     preview.setAttribute("aria-hidden", "true");
     input.parentElement?.append(preview);
     composerPreview = preview;
-    const holdHint = document.createElement("span");
-    holdHint.className = "companion-voice-hold-hint";
-    holdHint.setAttribute("aria-hidden", "true");
-    input.parentElement?.append(holdHint);
     input.classList.add("resizable");
     input.setAttribute("enterkeyhint", "send");
     input.addEventListener("focus", closeStickerPanel);
     const update = (value: typeof options) => {
       input.setAttribute("aria-label", value.label);
-      input.readOnly = value.readOnly;
-      input.parentElement?.toggleAttribute("data-voice-hold", value.hold);
-      input.parentElement?.toggleAttribute(
-        "data-voice-cancel",
-        value.hold && value.cancel,
-      );
-      holdHint.textContent = value.hint;
       if (value.suggestions) {
         input.setAttribute("aria-autocomplete", "list");
         input.setAttribute("aria-controls", "companion-command-suggestions");
@@ -632,88 +544,6 @@
       }
     };
     update(options);
-    let holdTimer: ReturnType<typeof setTimeout> | undefined;
-    let pointer: {
-      id: number;
-      x: number;
-      y: number;
-      session: string | undefined;
-      activated: boolean;
-      moved: boolean;
-    } | undefined;
-    const clearHold = () => {
-      clearTimeout(holdTimer);
-      holdTimer = undefined;
-      pointer = undefined;
-      window.removeEventListener("pointermove", moveHold, true);
-      window.removeEventListener("pointerup", endHold, true);
-      window.removeEventListener("pointercancel", cancelHold, true);
-    };
-    clearVoiceGesture = clearHold;
-    const moveHold = (event: PointerEvent) => {
-      if (!pointer || event.pointerId !== pointer.id) return;
-      if (pointer.activated) {
-        voiceHoldCancel = event.clientY < pointer.y - 60;
-        event.preventDefault();
-      } else if (
-        Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 12
-      ) {
-        pointer.moved = true;
-        clearTimeout(holdTimer);
-      }
-    };
-    const endHold = (event: PointerEvent) => {
-      if (!pointer || event.pointerId !== pointer.id) return;
-      const { activated, moved } = pointer;
-      const cancel = voiceHoldCancel;
-      clearHold();
-      if (!activated) {
-        if (!moved) input.focus();
-        return;
-      }
-      event.preventDefault();
-      if (!voiceHoldActive) return;
-      voiceHoldActive = false;
-      voiceHoldCancel = false;
-      if (cancel || voiceStatus !== "recording") void cancelVoiceInput();
-      else void stopVoiceAndTranscribe(true);
-    };
-    const cancelHold = (event: PointerEvent) => {
-      if (!pointer || event.pointerId !== pointer.id) return;
-      const activated = pointer.activated;
-      clearHold();
-      if (activated) void cancelVoiceInput();
-    };
-    const startHold = (event: PointerEvent) => {
-      if (
-        !event.isPrimary || event.button !== 0 || pointer ||
-        input.readOnly || voiceBusy || voicePermissionPending || nativePhotoBusy ||
-        projection.canSubmit === false || voiceCapability !== "available" ||
-        !voiceCaptureAvailable ||
-        bar.closest(".page")?.hasAttribute("data-composer-expanded")
-      ) return;
-      event.preventDefault();
-      pointer = {
-        id: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        session: sessionId,
-        activated: false,
-        moved: false,
-      };
-      window.addEventListener("pointermove", moveHold, true);
-      window.addEventListener("pointerup", endHold, true);
-      window.addEventListener("pointercancel", cancelHold, true);
-      holdTimer = setTimeout(() => {
-        if (!pointer || pointer.moved || pointer.session !== sessionId) return;
-        pointer.activated = true;
-        voiceHoldActive = true;
-        voiceHoldCancel = false;
-        input.blur();
-        void toggleVoiceInput();
-      }, 450);
-    };
-    input.addEventListener("pointerdown", startHold);
     let disposed = false;
     f7ready(() => {
       if (disposed) return;
@@ -749,10 +579,6 @@
       destroy() {
         bar.removeEventListener("transitionend", resizeAfterActions);
         observer.disconnect();
-        clearHold();
-        if (clearVoiceGesture === clearHold) clearVoiceGesture = undefined;
-        input.removeEventListener("pointerdown", startHold);
-        holdHint.remove();
         preview.remove();
         if (composerPreview === preview) composerPreview = undefined;
         input.removeEventListener("focus", closeStickerPanel);
@@ -768,7 +594,6 @@
   }
 
   function restoreRecoveredDraft(draft: CompanionRecoveredDraft): void {
-    if (nativePhotoBusy) return;
     if (sessionId !== imageDraftSessionId) return;
     if (
       composer.draft.trim() ||
@@ -1389,24 +1214,11 @@
       timeline,
       () => timelineReady && wasNearBottom,
     );
-    let disposed = false;
-    const foreground = App.addListener("resume", () => {
-      if (!disposed) refreshChatDay();
-      if (!disposed && timelineReady) returnToLatest();
-    }).catch((error) =>
-      console.warn("Could not watch application resume", error),
-    );
     void reconcileProjection(displayedProjection);
     return {
       destroy() {
-        disposed = true;
         reading.destroy();
         follow.destroy();
-        void foreground
-          .then((listener) => listener?.remove())
-          .catch((error) =>
-            console.warn("Could not release foreground scrolling", error),
-          );
       },
     };
   }
@@ -1416,22 +1228,6 @@
     messagesComponent
       ?.instance()
       ?.scroll(0, timeline.scrollHeight - timeline.clientHeight);
-  }
-
-  async function copyText(text: string): Promise<void> {
-    try {
-      if (Capacitor.isNativePlatform())
-        await Clipboard.write({ string: text });
-      else await navigator.clipboard.writeText(text);
-      copyToast = "messages.copied";
-    } catch {
-      copyToast = "messages.copyFailed";
-    }
-    if (copyToastTimer) clearTimeout(copyToastTimer);
-    copyToastTimer = setTimeout(() => {
-      copyToast = undefined;
-      copyToastTimer = undefined;
-    }, 2000);
   }
 
   function closeStickerPanel(): void {
@@ -1475,25 +1271,22 @@
   }
   function compactMessageMenu(node: HTMLElement, active: boolean) {
     let listening = false;
-    const recordSelection = () => {
-      const current = $currentMessageMenu;
-      const selection = document.getSelection();
-      if (
-        current?.preserveSelection &&
-        selection?.anchorNode &&
-        selection.focusNode &&
-        current.target.contains(selection.anchorNode) &&
-        current.target.contains(selection.focusNode) &&
-        !selection.isCollapsed
-      ) current.selectedText = selection.toString();
+    const overlay = node.closest<HTMLElement>(".companion-message-overlay");
+    const popover = node.closest<HTMLElement>(".companion-action-menu");
+    const alignToBubble = () => {
+      const target = $currentMessageMenu?.target;
+      if (!overlay || !popover || !target?.isConnected) return;
+      const edge = 8;
+      const maxLeft = Math.max(edge, window.innerWidth - popover.offsetWidth - edge);
+      const left = Math.min(maxLeft, Math.max(edge, target.getBoundingClientRect().left));
+      overlay.style.setProperty("--compact-menu-left", `${left}px`);
     };
+    const resize = new ResizeObserver(alignToBubble);
     const pointerdown = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) return;
       const current = $currentMessageMenu;
       if (!current?.compact) return;
-      if (node.contains(event.target)) {
-        recordSelection();
-      } else if (!current.target.contains(event.target)) {
+      if (!node.contains(event.target) && !current.target.contains(event.target)) {
         dismissMessageMenu();
       }
     };
@@ -1521,18 +1314,24 @@
       if (listening === next) return;
       listening = next;
       if (next) {
+        alignToBubble();
+        if (popover) resize.observe(popover);
+        if ($currentMessageMenu?.target) resize.observe($currentMessageMenu.target);
+        window.addEventListener("resize", alignToBubble);
+        document.addEventListener("scroll", alignToBubble, true);
         document.addEventListener("pointerdown", pointerdown, true);
         document.addEventListener("keydown", keydown, true);
-        document.addEventListener("selectionchange", recordSelection);
         if ($currentMessageMenu?.autoFocus)
           queueMicrotask(() => {
             if (listening)
               node.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
           });
       } else {
+        resize.disconnect();
+        window.removeEventListener("resize", alignToBubble);
+        document.removeEventListener("scroll", alignToBubble, true);
         document.removeEventListener("pointerdown", pointerdown, true);
         document.removeEventListener("keydown", keydown, true);
-        document.removeEventListener("selectionchange", recordSelection);
       }
     };
     update(active);
@@ -1600,9 +1399,7 @@
   }
   function submit(): void {
     if (
-      projection.canSubmit === false ||
-      voiceBusy ||
-      nativePhotoBusy
+      projection.canSubmit === false
     )
       return;
     const restoreText = composer.draft;
@@ -1620,7 +1417,7 @@
     const submittedDrafts = [...imageDrafts];
     const submittedFiles = [...fileDrafts];
     const originSessionId = sessionId;
-    const originSessionGeneration = nativePhotoGeneration;
+    const originSessionGeneration = sessionGeneration;
     const sources = replacementSourceIds;
     replacementSourceIds = [];
     restoredNeedsAttachments = false;
@@ -1649,7 +1446,7 @@
         if (
           error instanceof CompanionPreControllerError &&
           sessionId === originSessionId &&
-          nativePhotoGeneration === originSessionGeneration
+          sessionGeneration === originSessionGeneration
         ) {
           composer = {
             ...composer,
@@ -1668,7 +1465,7 @@
         } else if (error instanceof CompanionPreControllerError) {
           releaseSubmissionImages(submittedDrafts);
         }
-        if (sessionId !== originSessionId || nativePhotoGeneration !== originSessionGeneration) return;
+        if (sessionId !== originSessionId || sessionGeneration !== originSessionGeneration) return;
         const capacityKey = error instanceof CompanionPreControllerError
           ? capacityErrorKey(error.code)
           : undefined;
@@ -1679,188 +1476,6 @@
             ? { key: "error.compactImages" }
             : { key: "error.restored" };
       });
-  }
-
-  function voiceErrorKey(error: unknown): CompanionLocaleKey {
-    if (error instanceof VoiceRecordingError) {
-      if (error.code === "insecure-context") return "voice.secure";
-      if (error.code === "unsupported") return "voice.unsupported";
-      if (error.code === "permission-denied") return "voice.permission";
-      if (error.code === "duration-limit") return "voice.duration";
-      if (error.code === "size-limit") return "voice.size";
-    }
-    return "voice.failed";
-  }
-
-  async function cancelVoiceInput(): Promise<void> {
-    clearVoiceGesture?.();
-    voiceHoldActive = false;
-    voiceHoldCancel = false;
-    voiceGeneration += 1;
-    voiceFailure = "";
-    voicePermissionNotice = false;
-    try {
-      await voiceController.cancel();
-    } catch {
-      /* cleanup is best effort; the controller stops every known track */
-    }
-  }
-
-  async function hasVoicePermission(generation: number): Promise<boolean> {
-    if (voicePermissionPending) return false;
-    voicePermissionPending = true;
-    const originSessionId = sessionId;
-    const canShowResult = () =>
-      sessionId === originSessionId && composerInput?.isConnected && !document.hidden;
-    let state: PermissionState | undefined;
-    try {
-      try {
-        state = (await navigator.permissions?.query({ name: "microphone" as PermissionName }))?.state;
-      } catch {
-        // Some browsers do not expose microphone permission through this API.
-      }
-      if (generation !== voiceGeneration) return false;
-      if (state === "granted" || (state === undefined && voicePermissionVerified)) {
-        voicePermissionVerified = true;
-        return true;
-      }
-      if (state === "denied") {
-        voiceFailure = "voice.permission";
-        liveAnnouncement = { key: "voice.permission" };
-        return false;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
-      voicePermissionVerified = true;
-      if (canShowResult()) {
-        voicePermissionNotice = true;
-      }
-      return false;
-    } catch (error) {
-      if (canShowResult()) {
-        voiceFailure = error instanceof DOMException &&
-          (error.name === "NotAllowedError" || error.name === "SecurityError")
-          ? "voice.permission"
-          : "voice.failed";
-        liveAnnouncement = { key: voiceFailure };
-      }
-      return false;
-    } finally {
-      voicePermissionPending = false;
-    }
-  }
-
-  async function stopVoiceAndTranscribe(send = false): Promise<void> {
-    const generation = voiceGeneration;
-    const originSessionId = sessionId;
-    const originDraft = voiceOriginDraft;
-    const insertion = { ...voiceInsertion };
-    try {
-      const transcription = await voiceController.stopAndGet();
-      if (
-        !transcription ||
-        generation !== voiceGeneration ||
-        sessionId !== originSessionId ||
-        (!send && composer.draft !== originDraft)
-      )
-        return;
-      const text = normalizeVoiceTranscription(transcription).text;
-      if (send) {
-        if (text.length > MAX_MESSAGE_LENGTH) {
-          setDraft(composer.draft ? `${composer.draft}\n${text}` : text);
-          liveAnnouncement = {
-            key: "message.tooLong",
-            params: { limit: MAX_MESSAGE_LENGTH, count: text.length },
-          };
-          return;
-        }
-        try {
-          await actions.send(text, []);
-          returnToLatest();
-        } catch (error) {
-          if (
-            error instanceof CompanionPreControllerError &&
-            sessionId === originSessionId
-          ) {
-            setDraft(composer.draft ? `${composer.draft}\n${text}` : text);
-            liveAnnouncement = { key: "error.restored" };
-          }
-        }
-        return;
-      }
-      setDraft(
-        originDraft.slice(0, insertion.start) +
-          text +
-          originDraft.slice(insertion.end),
-      );
-      await tick();
-      composerInput?.setSelectionRange(
-        insertion.start + text.length,
-        insertion.start + text.length,
-      );
-      liveAnnouncement = { key: "voice.ready" };
-    } catch (error) {
-      if (
-        generation !== voiceGeneration ||
-        (error instanceof VoiceRecordingError && error.code === "cancelled")
-      )
-        return;
-      voiceFailure = voiceErrorKey(error);
-      liveAnnouncement = { key: voiceFailure };
-    }
-  }
-
-  async function toggleVoiceInput(): Promise<void> {
-    if (nativePhotoBusy) return;
-    if (
-      projection.canSubmit === false &&
-      voiceStatus !== "recording" &&
-      voiceStatus !== "stopping"
-    )
-      return;
-    if (voiceStatus === "recording" || voiceStatus === "stopping") {
-      if (voiceStatus === "recording") await stopVoiceAndTranscribe();
-      return;
-    }
-    if (voiceStatus === "transcribing" || voiceStatus === "starting") return;
-    if (voiceCapability === "loading") {
-      liveAnnouncement = { key: "voice.wait" };
-      return;
-    }
-    if (voiceCapability !== "available" || !voiceCaptureAvailable) {
-      liveAnnouncement = {
-        key: voiceCaptureAvailable ? "voice.install" : "voice.unavailable",
-      };
-      return;
-    }
-    voiceFailure = "";
-    voicePermissionNotice = false;
-    const generation = ++voiceGeneration;
-    try {
-      if (!(await hasVoicePermission(generation))) {
-        if (generation === voiceGeneration) {
-          voiceHoldActive = false;
-          voiceHoldCancel = false;
-        }
-        return;
-      }
-      if (generation !== voiceGeneration) return;
-      voiceOriginDraft = composer.draft;
-      voiceInsertion = {
-        start: composerInput?.selectionStart ?? composer.draft.length,
-        end: composerInput?.selectionEnd ?? composer.draft.length,
-      };
-      if (!(await voiceController.start()) || generation !== voiceGeneration)
-        return;
-    } catch (error) {
-      if (generation !== voiceGeneration) return;
-      if (error instanceof VoiceRecordingError && error.code === "cancelled")
-        return;
-      voiceHoldActive = false;
-      voiceHoldCancel = false;
-      voiceFailure = voiceErrorKey(error);
-      liveAnnouncement = { key: voiceFailure };
-    }
   }
 
   async function stop(): Promise<void> {
@@ -1876,7 +1491,6 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (voiceBusy) return;
     if (
       commandSuggestion &&
       (event.key === "Tab" || (event.key === "Enter" && composer.draft !== commandSuggestion.command)) &&
@@ -1926,10 +1540,22 @@
     imageIntakeFailure = undefined;
     imageDrafts = [...imageDrafts, ...createImageDrafts(files)];
   }
+  function beginImageSelection(): void {
+    imagePickerSession = sessionId;
+    imagePickerGeneration = sessionGeneration;
+  }
   function onImageInput(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
-    addImages(Array.from(input.files ?? []));
+    const files = Array.from(input.files ?? []);
     input.value = "";
+    if (
+      !files.length ||
+      imagePickerSession !== sessionId ||
+      imagePickerGeneration !== sessionGeneration ||
+      attachmentDisposed ||
+      !canIntakePhoto()
+    ) return;
+    addImages(files);
   }
   function onFileInput(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
@@ -1938,8 +1564,8 @@
     if (
       !files.length ||
       filePickerSession !== sessionId ||
-      filePickerGeneration !== nativePhotoGeneration ||
-      photoDisposed
+      filePickerGeneration !== sessionGeneration ||
+      attachmentDisposed
     )
       return;
     const error = fileIntakeError(fileDrafts, files, fileLimits);
@@ -1965,18 +1591,18 @@
   async function downloadFile(item: TimelineFile): Promise<void> {
     const ref = item.attachment;
     const originSession = sessionId;
-    const generation = nativePhotoGeneration;
+    const generation = sessionGeneration;
     if (!ref || ref.availability !== "available" || !originSession) return;
     try {
       const url = new URL(fileDownloadUrl(ref.attachmentId), location.href);
       // Check availability without buffering; the download manager reads the file.
       const response = await fetch(url, { credentials: "same-origin", redirect: "error" });
-      if (!response.ok || sessionId !== originSession || generation !== nativePhotoGeneration || photoDisposed) {
+      if (!response.ok || sessionId !== originSession || generation !== sessionGeneration || attachmentDisposed) {
         await response.body?.cancel();
         throw new Error("file-unavailable");
       }
       await response.body?.cancel();
-      if (sessionId !== originSession || generation !== nativePhotoGeneration || photoDisposed) return;
+      if (sessionId !== originSession || generation !== sessionGeneration || attachmentDisposed) return;
       const link = document.createElement("a");
       link.className = "external";
       link.href = url.href;
@@ -1987,7 +1613,7 @@
       link.click();
       link.remove();
     } catch {
-      if (sessionId === originSession && generation === nativePhotoGeneration)
+      if (sessionId === originSession && generation === sessionGeneration)
         liveAnnouncement = { key: "file.downloadFailed" };
     }
   }
@@ -2000,51 +1626,16 @@
 
   function canIntakePhoto(): boolean {
     return (
-      !voiceBusy &&
       !!imageLimits &&
       projection.canSubmit !== false &&
-      !photoDisposed
+      !attachmentDisposed
     );
   }
-  async function selectNativePhotos(capture = false): Promise<void> {
-    if (nativePhotoBusy || !canIntakePhoto() || !imageLimits) return;
-    const remaining = imageLimits.maxImagesPerMessage - imageDrafts.length;
-    if (remaining <= 0) {
-      imageIntakeFailure = {
-        key: "image.countLimit",
-        params: { count: imageLimits.maxImagesPerMessage },
-      };
-      liveAnnouncement = imageIntakeFailure;
-      return;
-    }
-    nativePhotoBusy = true;
-    const generation = ++nativePhotoGeneration;
-    const originSessionId = sessionId;
-    const ownsSelection = () =>
-      !photoDisposed &&
-      generation === nativePhotoGeneration &&
-      sessionId === originSessionId;
-    try {
-      const files = capture
-        ? await captureNativePhoto().then((file) => (file ? [file] : undefined))
-        : await chooseNativePhotos(remaining);
-      if (ownsSelection() && files && canIntakePhoto()) addImages(files);
-    } catch {
-      if (ownsSelection()) {
-        imageIntakeFailure = { key: "camera.failed" };
-        liveAnnouncement = imageIntakeFailure;
-      }
-    } finally {
-      nativePhotoBusy = false;
-    }
-  }
-
   function removeImage(draft: CompanionImageDraft): void {
     releaseSubmissionImages([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
   function openAttachmentMenu(): void {
-    if (nativePhotoBusy || voiceBusy) return;
     closeStickerPanel();
     attachmentOpen = true;
   }
@@ -2053,13 +1644,12 @@
     if (kind === "files") {
       if (!fileLimits || projection.canSubmit === false) return;
       filePickerSession = sessionId;
-      filePickerGeneration = nativePhotoGeneration;
+      filePickerGeneration = sessionGeneration;
       fileInput?.click();
       return;
     }
     if (!canIntakePhoto()) return;
-    if (hasNativeCamera()) void selectNativePhotos(kind === "camera");
-    else if (kind === "camera") photoCaptureInput?.click();
+    if (kind === "camera") photoCaptureInput?.click();
     else photoLibraryInput?.click();
   }
   function formatHistoryDate(value: string, locale: string): string {
@@ -2160,11 +1750,10 @@
     );
   }
   function setPreferencesSupport(
-    tab: "models" | "voice" | "voice-output",
+    tab: "models" | "voice-output",
     supported: boolean,
   ): void {
     if (tab === "models") modelSettingsSupported = supported;
-    else if (tab === "voice") voiceSettingsSupported = supported;
     else voiceOutputSettingsSupported = supported;
     if (!supported && preferencesOpen && preferencesTab === tab) {
       window.history.replaceState(window.history.state, "", "#settings");
@@ -2228,7 +1817,6 @@
       on: {
         open() {
           photoElement = browser.el;
-          syncSystemBars(true);
           browser.el.setAttribute("role", "dialog");
           browser.el.setAttribute("aria-modal", "true");
           browser.el.setAttribute("aria-label", item.alt);
@@ -2289,7 +1877,6 @@
         },
         closed() {
           dismissMessageMenu();
-          syncSystemBars(document.documentElement.classList.contains("dark"));
           photoElement.removeEventListener("keydown", photoKeydown);
           imagePress?.destroy();
           imagePress = undefined;
@@ -2340,36 +1927,6 @@
       alt: draft.file.name || t("image.pending"),
       previewUrl: draft.previewUrl,
     });
-  }
-  function showTextMenu(
-    item: TimelineText,
-    target: HTMLElement,
-    source: "keyboard" | "mouse" | "touch",
-  ): void {
-    if (!item.text.trim()) return;
-    const selection = document.getSelection();
-    if (!selection) return;
-    const range = document.createRange();
-    range.selectNodeContents(target.querySelector(".markdown") ?? target);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    const selectedText = selection.toString();
-    messageMenu(
-      target,
-      [{
-        text: t("messages.copy"),
-        run: () => {
-          const current = document.getSelection();
-          const text = current?.anchorNode && current.focusNode &&
-            target.contains(current.anchorNode) && target.contains(current.focusNode)
-            ? current.toString() : $currentMessageMenu?.selectedText;
-          return copyText(text || $currentMessageMenu?.selectedText || selectedText);
-        },
-      }],
-      t("actions.cancel"),
-      undefined,
-      { compact: true, preserveSelection: true, selectedText, autoFocus: source !== "touch" },
-    );
   }
   function showFileMenu(item: TimelineFile, target: HTMLElement): void {
     if (showFailedMenu(item.messageKey, target)) return;
@@ -2457,14 +2014,8 @@
             try {
               await saveImage(url, name);
               showToast(t("image.saved"));
-            } catch (error) {
-              showToast(
-                t(
-                  error instanceof ImageSaveUnavailableError
-                    ? "image.saveUnavailable"
-                    : "image.saveFailed",
-                ),
-              );
+            } catch {
+              showToast(t("image.saveFailed"));
             }
           },
         },
@@ -2595,19 +2146,16 @@
 
   onDestroy(() => {
     resetStickerClient();
-    photoDisposed = true;
-    nativePhotoGeneration += 1;
+    attachmentDisposed = true;
+    sessionGeneration += 1;
     dismissMessageMenu();
     imagePress?.destroy();
     panelGeneration++;
     photoBrowser?.destroy();
-    if (copyToastTimer) clearTimeout(copyToastTimer);
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     releaseDeferredPreviewReleases();
     releaseSubmissionImages(imageDrafts);
     clearWaitingTimers();
-    voiceGeneration += 1;
-    voiceController.dispose();
     for (const audio of document.querySelectorAll<HTMLAudioElement>(
       "#dsh-companion .companion-voice audio",
     ))
@@ -2617,12 +2165,7 @@
   });
 </script>
 
-<svelte:window on:pagehide={() => void cancelVoiceInput()} on:popstate={syncPreferencesLocation} />
-<svelte:document
-  on:visibilitychange={() => {
-    if (document.hidden) void cancelVoiceInput();
-  }}
-/>
+<svelte:window on:popstate={syncPreferencesLocation} />
 
 <KonstaProvider theme={konstaTheme} dark>
 <Page
@@ -2731,11 +2274,6 @@
       <KonstaGlass class="toolbar messagebar companion-composer companion-compose-row" highlight={false}>
         <div class="companion-compose-content" hidden={detailOpen}>
         {#snippet beforeInner()}
-          {#if copyToast}
-            <div class="companion-copy-toast" role="status">
-              <div class="companion-copy-toast-message">{t(copyToast)}</div>
-            </div>
-          {/if}
           {#if commandSuggestion}
             <div
               id="companion-command-suggestions"
@@ -2789,8 +2327,7 @@
               <button
                 class="button button-tonal"
                 type="button"
-                disabled={nativePhotoBusy ||
-                  !recoveredDraft.replacementEligible ||
+                disabled={!recoveredDraft.replacementEligible ||
                   !!composer.draft.trim() ||
                   imageDrafts.length > 0 ||
                   fileDrafts.length > 0}
@@ -2854,6 +2391,7 @@
             multiple
             tabindex="-1"
             aria-hidden="true"
+            on:click={beginImageSelection}
             on:change={onImageInput}
           />
           <input
@@ -2865,6 +2403,7 @@
             capture="environment"
             tabindex="-1"
             aria-hidden="true"
+            on:click={beginImageSelection}
             on:change={onImageInput}
           />
           <input
@@ -2932,79 +2471,28 @@
           {/if}
         {/snippet}
         {#snippet composerActions()}
-          <KonstaButton
-            class={`companion-microphone ${voiceStatus === "recording" ? "companion-microphone-recording" : ""} ${voiceStatus === "stopping" ? "companion-microphone-stopping" : ""}`}
-            tonal rounded
-            type="button"
-            data-state={voiceStatus}
-            aria-label={voiceStatus === "recording"
-              ? t("voice.stop")
-              : voiceStatus === "transcribing"
-                ? t("voice.transcribing")
-                : voiceCapability === "loading"
-                  ? t("voice.preparing")
-                  : voiceCapability === "available" && voiceCaptureAvailable && voiceStatus !== "unavailable"
-                    ? t("voice.start")
-                    : t("voice.micUnavailable")}
-            title={voiceStatus === "recording"
-              ? t("voice.stop")
-              : voiceCapability === "available" && voiceCaptureAvailable && voiceStatus !== "unavailable"
-                ? t("voice.start")
-                : undefined}
-            disabled={nativePhotoBusy || voicePermissionPending ||
-              voiceStatus === "starting" ||
-              voiceStatus === "stopping" ||
-              voiceStatus === "transcribing" ||
-              voiceStatus === "unavailable" ||
-              projection.canSubmit === false ||
-              voiceCapability !== "available" ||
-              !voiceCaptureAvailable}
-            onClick={() => void toggleVoiceInput()}
-          >
-            {#if voiceStatus === "starting" || voiceStatus === "transcribing" || voiceStatus === "stopping"}<Preloader
-                class="preloader  "
-                aria-hidden="true"
-              />{:else if voiceStatus === "recording"}<Square
-                size={16}
-                fill="currentColor"
-                aria-hidden="true"
-              />{:else}<Mic size={19} strokeWidth={2} aria-hidden="true" />{/if}
-          </KonstaButton>
           <KonstaButton class="companion-stickers" tonal rounded type="button"
             aria-label={t("stickers.open")} aria-pressed={stickerOpen}
             aria-haspopup="dialog" aria-expanded={stickerOpen}
             inert={composerExpanded} aria-hidden={composerExpanded}
-            disabled={voiceBusy || nativePhotoBusy || !actions.openStickers}
+            disabled={!actions.openStickers}
             onClick={toggleStickerPanel}
             ><Smile size={20} aria-hidden="true" /></KonstaButton
           >
-          {#if imageLimits || fileLimits || voiceBusy}<KonstaButton
-              class={`companion-attach ${voiceBusy ? "companion-voice-cancel" : ""}`}
-              tonal rounded
-              type="button"
-              aria-label={t(voiceBusy ? "voice.cancel" : "attachment.open")}
-              title={t(voiceBusy ? "voice.cancel" : "attachment.open")}
-              aria-haspopup="dialog"
-              aria-expanded={attachmentOpen}
-              inert={composerExpanded && !voiceBusy} aria-hidden={composerExpanded && !voiceBusy}
-              disabled={!voiceBusy &&
-                ((!imageLimits && !fileLimits) || nativePhotoBusy)}
-              onClick={() =>
-                voiceBusy
-                  ? void cancelVoiceInput()
-                  : openAttachmentMenu()}
-              >{#if voiceBusy}<X size={20} aria-hidden="true" />{:else}<Plus
-                  size={19}
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />{/if}</KonstaButton
+          {#if imageLimits || fileLimits}<KonstaButton
+              class="companion-attach" tonal rounded type="button"
+              aria-label={t("attachment.open")} title={t("attachment.open")}
+              aria-haspopup="dialog" aria-expanded={attachmentOpen}
+              inert={composerExpanded} aria-hidden={composerExpanded}
+              onClick={openAttachmentMenu}
+              ><Plus size={19} strokeWidth={2} aria-hidden="true" /></KonstaButton
             >
           {/if}
         {/snippet}
         {#snippet afterInner()}
           {#if projection.promptError || imageIntakeFailure}
             <div
-              class="companion-voice-input-status companion-voice-input-error"
+              class="companion-input-error"
               role="alert"
               data-testid="input-error"
             >
@@ -3020,15 +2508,11 @@
             use:connectMessagebar={{
               label: t("composer.label"),
               suggestions: !!commandSuggestion,
-              readOnly: voiceBusy,
-              hold: voiceHoldActive && voiceStatus === "recording",
-              cancel: voiceHoldCancel,
-              hint: t(voiceHoldCancel ? "voice.holdCancel" : "voice.holdRecording"),
             }}
           ></div>
           {#if composer.draft.trim().length > MAX_MESSAGE_LENGTH}
             <div
-              class="companion-voice-input-status companion-voice-input-error"
+              class="companion-input-error"
               role="alert"
             >
               {t("message.tooLong", {
@@ -3037,18 +2521,6 @@
               })}
             </div>
           {/if}
-          {#if voiceCapability !== "unavailable" && voiceCaptureAvailable && (voiceFailure || voiceStatus === "unavailable")}
-            <div
-              class="companion-voice-input-status companion-voice-input-error"
-              data-testid="companion-voice-error-status"
-              role="status"
-            >
-              {t(voiceFailure || "voice.failed")}
-            </div>
-          {/if}
-          {#if voicePermissionNotice}
-            <div class="companion-voice-input-status" data-testid="voice-permission-ready" role="status">{t("voice.permissionReady")}</div>
-          {/if}
         {/snippet}
         {@render beforeInner()}
         {@render beforeArea()}
@@ -3056,11 +2528,7 @@
           class="companion-konsta-messagebar"
           textareaId="companion-textarea"
           value={composer.draft}
-          placeholder={t(
-            voiceCapability === "available" && voiceCaptureAvailable
-              ? "composer.placeholder"
-              : "composer.textOnlyPlaceholder",
-          )}
+          placeholder={t("composer.textOnlyPlaceholder")}
           right={composerActions}
           onInput={onInput}
         />
@@ -3075,26 +2543,26 @@
             </KonstaTabbarLink>
             <KonstaTabbarLink id="companion-history-tab" class="companion-nav-item" component="button"
               active={detailOpen && drawerTab === "history"} aria-current={detailOpen && drawerTab === "history" ? "page" : undefined}
-              aria-disabled={voiceBusy || !actions.refreshRelationship} label={t("navigation.memories")}
-              linkProps={{ type: "button", disabled: voiceBusy || !actions.refreshRelationship, onClick: () => selectSection("history") }}>
+              aria-disabled={!actions.refreshRelationship} label={t("navigation.memories")}
+              linkProps={{ type: "button", disabled: !actions.refreshRelationship, onClick: () => selectSection("history") }}>
               {#snippet icon()}<Heart size={22} aria-hidden="true" />{/snippet}
             </KonstaTabbarLink>
             <KonstaTabbarLink id="companion-diary-tab" class="companion-nav-item" component="button"
               active={detailOpen && drawerTab === "diary"} aria-current={detailOpen && drawerTab === "diary" ? "page" : undefined}
-              aria-disabled={voiceBusy || !actions.readPanel} label={t("navigation.diary")}
-              linkProps={{ type: "button", disabled: voiceBusy || !actions.readPanel, onClick: () => selectSection("diary") }}>
+              aria-disabled={!actions.readPanel} label={t("navigation.diary")}
+              linkProps={{ type: "button", disabled: !actions.readPanel, onClick: () => selectSection("diary") }}>
               {#snippet icon()}<BookOpen size={22} aria-hidden="true" />{/snippet}
             </KonstaTabbarLink>
             <KonstaTabbarLink id="companion-images-tab" class="companion-nav-item" component="button"
               active={detailOpen && drawerTab === "images"} aria-current={detailOpen && drawerTab === "images" ? "page" : undefined}
-              aria-disabled={voiceBusy || !actions.readPanel} label={t("navigation.album")}
-              linkProps={{ type: "button", disabled: voiceBusy || !actions.readPanel, onClick: () => selectSection("images") }}>
+              aria-disabled={!actions.readPanel} label={t("navigation.album")}
+              linkProps={{ type: "button", disabled: !actions.readPanel, onClick: () => selectSection("images") }}>
               {#snippet icon()}<Images size={22} aria-hidden="true" />{/snippet}
             </KonstaTabbarLink>
             <KonstaTabbarLink id="companion-alarms-tab" class="companion-nav-item" component="button"
               active={detailOpen && drawerTab === "alarms"} aria-current={detailOpen && drawerTab === "alarms" ? "page" : undefined}
-              aria-disabled={voiceBusy || !actions.readPanel} label={t("navigation.wake")}
-              linkProps={{ type: "button", disabled: voiceBusy || !actions.readPanel, onClick: () => selectSection("alarms") }}>
+              aria-disabled={!actions.readPanel} label={t("navigation.wake")}
+              linkProps={{ type: "button", disabled: !actions.readPanel, onClick: () => selectSection("alarms") }}>
               {#snippet icon()}<AlarmClock size={22} aria-hidden="true" />{/snippet}
             </KonstaTabbarLink>
           </KonstaTabbar>
@@ -3359,19 +2827,10 @@
                                 text={unit.thinking}
                               />{/if}
                             {#if part.item.kind === "text"}
-                              <!-- svelte-ignore a11y_no_noninteractive_tabindex (focusable message content provides keyboard context-menu access without a button role around nested links) -->
+                              <!-- svelte-ignore a11y_no_noninteractive_tabindex (focusable message content supports keyboard selection without a button role around nested links) -->
                               <div
                                 class="companion-text-bubble"
                                 tabindex="0"
-                                use:longPress={{
-                                  selectable: true,
-                                  run: (node, source) =>
-                                    showTextMenu(
-                                      part.item as TimelineText,
-                                      node,
-                                      source,
-                                    ),
-                                }}
                               >
                                 {#if unit.alarm}
                                   <ReminderBody
@@ -3574,7 +3033,7 @@
                               >{/if}
                           {/if}
                         {/snippet}
-                        {#snippet messageBody()}
+                        {#snippet messageContent()}
                           <div class="companion-message-body">
                             {#if part.kind === "images"}
                               {@render imageContent()}
@@ -3582,6 +3041,15 @@
                               {@render textContent()}
                             {/if}
                           </div>
+                        {/snippet}
+                        {#snippet messageBody()}
+                          {#if konstaTheme === "ios"}
+                            <KonstaGlass class="companion-glass-bubble" highlight={false}>
+                              {@render messageContent()}
+                            </KonstaGlass>
+                          {:else}
+                            {@render messageContent()}
+                          {/if}
                         {/snippet}
                         <KonstaMessage
                           header={partIndex === 0 &&
@@ -3594,6 +3062,11 @@
                             ? messageMetadata
                             : undefined}
                           type={unit.side === "incoming" ? "received" : "sent"}
+                          colors={konstaTheme === "ios" ? {
+                            messageSent: "text-inherit",
+                            bubbleSentIos: "companion-glass-message-surface",
+                            bubbleReceivedIos: "companion-glass-message-surface",
+                          } : undefined}
                           text={messageBody}
                           class={`companion-row ${independentMessage || partIndex === 0 ? "companion-message-first" : ""} ${independentMessage || partIndex === parts.length - 1 ? "companion-message-last" : ""} ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""} ${unit.items.some((item) => item.kind === "file") ? "companion-has-files" : ""}`}
                           data-pending={unit.pending || undefined}
@@ -3994,7 +3467,7 @@
             <KonstaButton type="button" clear onClick={closeComposerMenu} aria-label={t("actions.cancel")}><X size={20} aria-hidden="true" /></KonstaButton>
           </div>
           {#key stickerPanelVersion}
-            <StickerPanel client={stickerClient} {t} send={actions.sendSticker} favoritesRevision={stickerFavoritesRevision} canSend={projection.canSubmit !== false && !voiceBusy} />
+            <StickerPanel client={stickerClient} {t} send={actions.sendSticker} favoritesRevision={stickerFavoritesRevision} canSend={projection.canSubmit !== false} />
           {/key}
         </div>
       </KonstaSheet>
@@ -4010,7 +3483,7 @@
     <button bind:this={preferencesBack} type="button" class="settings-back" aria-label={t("settings.back")} on:click={closePreferences}>
       <ArrowLeft size={22} strokeWidth={1.8} aria-hidden="true" />
     </button>
-    <h1>{preferencesTab === "home" ? t("preferences.open") : preferencesTab === "appearance" ? t("preferences.theme") : preferencesTab === "models" ? t("models.title") : preferencesTab === "voice-output" ? t("settings.outputTitle") : t("settings.voiceTitle")}</h1>
+    <h1>{preferencesTab === "home" ? t("preferences.open") : preferencesTab === "appearance" ? t("preferences.theme") : preferencesTab === "models" ? t("models.title") : t("settings.outputTitle")}</h1>
     <div class="settings-cards" hidden={preferencesTab !== "home"}>
       <button type="button" class="settings-card settings-card-appearance" on:click={() => openPreferencesTab("appearance")}>
         <Palette size={27} strokeWidth={1.8} aria-hidden="true" />
@@ -4020,12 +3493,6 @@
         <button type="button" class="settings-card settings-card-models" on:click={() => openPreferencesTab("models")}>
           <Cpu size={27} strokeWidth={1.8} aria-hidden="true" />
           <span>{t("models.title")}</span><ChevronRight size={21} aria-hidden="true" />
-        </button>
-      {/if}
-      {#if voiceSettingsSupported}
-        <button type="button" class="settings-card settings-card-voice" on:click={() => openPreferencesTab("voice")}>
-          <Mic size={27} strokeWidth={1.8} aria-hidden="true" />
-          <span>{t("settings.voiceTitle")}</span><ChevronRight size={21} aria-hidden="true" />
         </button>
       {/if}
       {#if voiceOutputSettingsSupported}
@@ -4061,9 +3528,6 @@
           {/key}
         {/if}
       </List>
-    </div>
-    <div class="settings-detail" hidden={preferencesTab !== "voice"}>
-      <VoiceSettings {t} open={preferencesOpen} onSupportChange={(supported) => setPreferencesSupport("voice", supported)} />
     </div>
     <div class="settings-detail" hidden={preferencesTab !== "voice-output"}>
       <VoiceOutputSettings {t} open={preferencesOpen} active={preferencesTab === "voice-output"}

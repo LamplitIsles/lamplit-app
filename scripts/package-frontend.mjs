@@ -142,7 +142,6 @@ export async function packageFrontend(
     );
     await cp(fontLicense, join(stage, "licenses/NotoSansSC-OFL-1.1.txt"));
     for (const name of [
-      "capacitor-community-media-9.1.0-MIT.txt",
       "chord-1.0.0-MIT.txt",
       "konsta-5.5.0-MIT.txt",
       "skeleton-elements-4.0.1-MIT.txt",

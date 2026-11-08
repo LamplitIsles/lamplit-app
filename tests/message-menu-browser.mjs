@@ -5,6 +5,7 @@ import { fileLimits } from "./files-fixture.ts";
 import { createUiTestHost } from "./ui-test-host.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
+import { fixtureImage } from "./panels-fixture.ts";
 
 const fixture = fixtureBackend();
 const backend = {
@@ -14,7 +15,7 @@ const backend = {
     return {
       ...view,
       capabilities: { ...view.capabilities, files: fileLimits },
-      messages: [{ id: "menu-message", role: "agent", text: "长按测试消息", createdAt: 1, operationId: null, turnId: "menu-turn" }],
+      messages: [{ id: "menu-message", role: "agent", text: "", images: [{ attachmentId: "menu-image", name: "sample.png", mediaType: "image/png", availability: "available" }], createdAt: 1, operationId: null, turnId: "menu-turn" }],
     };
   },
 };
@@ -26,6 +27,7 @@ const server = Bun.serve({
   fetch(req, server) {
     const path = new URL(req.url).pathname;
     if (path === "/api/chat/socket" && server.upgrade(req)) return;
+    if (path.startsWith("/api/chat/media/menu-image/")) return new Response(fixtureImage, { headers: { "content-type": "image/png" } });
     return staticAssets(resolve("apps/web/build"), path);
   },
   websocket: {
@@ -56,23 +58,19 @@ try {
           });
         }
       }, true);
-      Object.defineProperty(navigator, "clipboard", {
-        value: { writeText: async (text) => { window.__copiedText = text; } },
-        configurable: true,
-      });
     });
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(`http://127.0.0.1:${server.port}/`);
-    const bubble = page.locator(".companion-text-bubble").filter({ hasText: "长按测试消息" });
+    const bubble = page.locator(".companion-media-button");
     const menu = page.getByTestId("message-action-menu");
-    const copy = menu.getByRole("button", { name: "复制", exact: true });
+    const copy = menu.getByRole("button", { name: "保存图片", exact: true });
     await expect(bubble).toBeVisible();
     await bubble.focus();
     await bubble.press("Shift+F10");
     await expect(menu).toBeVisible();
-    await expect(copy).toBeFocused();
+    await expect(menu.getByRole("button").first()).toBeFocused();
     await expect.poll(() => page.evaluate(() => window.__menuTransitions.some((item) => item.kind === "popover" && !item.closed))).toBe(true);
     if (width === 390) {
       await page.mouse.move(1, 1);
@@ -110,9 +108,10 @@ try {
     await expect(menu, "closed after backdrop click").toHaveCount(0);
     await bubble.click({ button: "right" });
     await expect(menu).toBeVisible();
+    const download = page.waitForEvent("download");
     await copy.click();
-    await expect(menu, "closed after copy").toHaveCount(0);
-    expect(await page.evaluate(() => window.__copiedText)).toBe("长按测试消息");
+    await download;
+    await expect(menu, "closed after save").toHaveCount(0);
     await bubble.scrollIntoViewIfNeeded();
     const box = await bubble.boundingBox();
     await page.mouse.move(box.x + 8, box.y + box.height / 2);
@@ -165,7 +164,7 @@ try {
   await reduced.addInitScript(denyNativeNotifications);
   const reducedPage = await reduced.newPage();
   await reducedPage.goto(`http://127.0.0.1:${server.port}/`);
-  const reducedBubble = reducedPage.locator(".companion-text-bubble").filter({ hasText: "长按测试消息" });
+  const reducedBubble = reducedPage.locator(".companion-media-button");
   await reducedBubble.click({ button: "right" });
   const reducedMenu = reducedPage.getByTestId("message-action-menu");
   await expect(reducedMenu).toBeVisible();

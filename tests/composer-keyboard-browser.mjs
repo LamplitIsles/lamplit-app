@@ -121,12 +121,12 @@ try {
     await page.goto(origin);
     const input = page.locator("#companion-textarea");
     const nav = page.locator(".companion-bottom-nav");
-    const mic = page.locator(".companion-microphone");
+    const shell = page.locator(".companion-composer");
     const stickers = page.locator(".companion-stickers");
     const attach = page.locator(".companion-attach");
     await expect(input).toBeVisible();
     await expect(nav).toBeVisible();
-    await expect(mic).toBeVisible();
+    await expect(page.locator(".companion-microphone")).toHaveCount(0);
     await expect(stickers).toBeVisible();
     await expect(attach).toBeVisible();
     await expect(nav.getByRole("link")).toHaveCount(5);
@@ -141,13 +141,10 @@ try {
         document.querySelector(selector).getBoundingClientRect().toJSON();
       return {
         input: rect("#companion-textarea"),
-        mic: rect(".companion-microphone"),
         stickers: rect(".companion-stickers"),
         attach: rect(".companion-attach"),
       };
     });
-    expect(collapsed.mic.left).toBeGreaterThan(collapsed.input.left);
-    expect(collapsed.mic.right).toBeLessThanOrEqual(collapsed.input.right);
     expect(collapsed.input.height).toBeGreaterThanOrEqual(48);
     for (const button of [collapsed.stickers, collapsed.attach]) {
       expect(button.width).toBeCloseTo(collapsed.input.height, 0);
@@ -207,6 +204,9 @@ try {
     if (mode !== "desktop") {
       await page.evaluate(() => window.setFixtureKeyboard(true));
       await expect(nav).toBeHidden();
+      await expect(shell).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(shell).toHaveCSS("box-shadow", "none");
+      await expect(shell).toHaveCSS("backdrop-filter", "none");
     }
     await expect.poll(() => page.evaluate(() => window.__composerTransitions.includes("width"))).toBe(true);
     await expect.poll(() => input.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(collapsed.input.width + 50);
@@ -238,35 +238,9 @@ try {
     }));
     expect(expanded.scroll).toBeGreaterThan(expanded.height);
     expect(expanded.value).toContain("第 30 行");
-    await expect(mic).toBeVisible();
+    await expect(page.locator(".companion-microphone")).toHaveCount(0);
     await expect(stickers).toBeHidden();
     await expect(attach).toBeHidden();
-    // The same control becomes the voice-cancel action while recording.
-    await attach.evaluate((el) => el.classList.add("companion-voice-cancel"));
-    await expect(attach).toBeVisible();
-    await attach.evaluate((el) =>
-      el.classList.remove("companion-voice-cancel"),
-    );
-    const bottomAlignment = await page.evaluate(() => {
-      const input = document
-        .querySelector("#companion-textarea")
-        .getBoundingClientRect();
-      const mic = document
-        .querySelector(".companion-microphone")
-        .getBoundingClientRect();
-      return {
-        inputBottom: input.bottom,
-        micBottom: mic.bottom,
-        inputRight: input.right,
-        micRight: mic.right,
-      };
-    });
-    expect(
-      Math.abs(bottomAlignment.inputBottom - bottomAlignment.micBottom),
-    ).toBeLessThanOrEqual(4);
-    expect(bottomAlignment.micRight).toBeLessThanOrEqual(
-      bottomAlignment.inputRight,
-    );
     await input.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
     });

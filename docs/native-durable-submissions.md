@@ -66,7 +66,6 @@ bun run test
 bun run build
 bun tests/optimistic-send-browser.mjs
 bun tests/images-browser.mjs
-bun tests/native-gallery-browser.mjs
 bun tests/keet-browser.mjs
 bun run prepare:default
 ```
@@ -161,14 +160,14 @@ stopped operation's `submitted` lookup result without input recovery.
 The image runner continues 390/1280/320 ownership/media/history/album/recovery gates
 using `submitted/withdrawn/failed` modes. Its full controls remain in the image doc.
 
-Run existing browser, voice, panels, images, compact, search, route lifecycle and
-Keet runners against the same approved artifact, with their documented isolated
-controls. One ordinary reply and the Keet maintenance path must retain original
+Run existing browser, local composer touch, panels, images, compact, search, route
+lifecycle and Keet runners against the same approved artifact, with their documented
+isolated controls. Composer touch uses only its test-owned local host. One ordinary reply and the Keet maintenance path must retain original
 public text/source privacy and exclude internal attribution/context from timeline,
 search and panels. The unchanged Keet runner supports both image profiles; native
 provider prompts/maintenance requests require backend-side evidence in addition to
-browser projection checks. Native-gallery verification uses the app's plugin fake;
-it establishes preserved routing/bytes behavior, not physical device acceptance.
+browser projection checks. Web attachment selection uses the browser file input;
+physical device selection remains separate from fixture acceptance.
 
 ## Failed-message actions — spec #3936
 

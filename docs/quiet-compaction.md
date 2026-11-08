@@ -116,7 +116,7 @@ must be reported, not substituted with a weaker fixture claim.
 Use [complete default handoff](default-shared-frontend.md) for current full checks,
 one committed-source browser/contracts/all-runner archive, hash verification and
 native approval gate. The historical Owner-approved frozen-95f0f06 bytes remain
-unchanged evidence. Text and voice now support actual test-owned hosts via explicit
-controls; they no longer need to be limited to fixture-only runs. Native state,
+unchanged evidence. Text supports actual test-owned hosts via explicit controls;
+the composer touch regression uses only a local fixture. Native state,
 admission, silent completion, fresh usage and no-replay assertions remain intact.
 No merge, deployment, native release or live frontend replacement is implied.

@@ -67,4 +67,4 @@ complete messages; obtain separate authorization for any live-service testing.
 
 No physical Mac was available for implementation acceptance. Actual Safari
 permission presentation, OS notification display and click return remain
-unverified. iPhone/iPad, Capacitor and mobile push remain outside this feature.
+unverified. iPhone/iPad and mobile push remain outside this feature.

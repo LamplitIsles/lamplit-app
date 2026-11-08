@@ -172,7 +172,7 @@ try {
         ),
       };
       await control({ action: "mode", state: "slow", hidden: true });
-      await page.locator("#companion-image-library").setInputFiles(photo);
+      await pickImages(page.locator("#companion-image-library"), photo);
       await input.fill("慢确认文字图片");
       await input.press("Enter");
       await expect(input).toHaveValue("");
@@ -339,7 +339,7 @@ try {
           .locator(".companion-action-menu")
           .getByRole("button", { name, exact: true });
       await control({ action: "mode", state: "failed" });
-      await page.locator("#companion-image-library").setInputFiles(photo);
+      await pickImages(page.locator("#companion-image-library"), photo);
       await input.fill("明确拒绝文字图片");
       await input.press("Enter");
       await expect(failedMark()).toBeVisible();
@@ -348,17 +348,10 @@ try {
         page.locator(".companion-image-draft-preview img"),
       ).toHaveCount(0);
       await input.fill("新草稿保持原样");
-      await page.locator("#companion-image-library").setInputFiles(photo);
+      await pickImages(page.locator("#companion-image-library"), photo);
       await snap("failed");
-      await bubble("明确拒绝文字图片")
-        .locator(".companion-text-bubble")
-        .focus();
-      await page.keyboard.press("Shift+F10");
-      await expect(menuAction("复制")).toBeVisible();
-      await snap("failed-menu");
-      await page.keyboard.press("Escape");
       await failedMark().click();
-      await expect(menuAction("复制")).toHaveCount(0);
+      await snap("failed-menu");
       await menuAction("删除").click();
       await expect(
         page.getByRole("dialog", {
@@ -492,4 +485,10 @@ try {
   await browser.close();
   host.close();
   if (server) await server.stop(true);
+}
+
+// Match the hidden picker's click before delivering the selected files.
+async function pickImages(input, files) {
+  await input.dispatchEvent("click");
+  await input.setInputFiles(files);
 }

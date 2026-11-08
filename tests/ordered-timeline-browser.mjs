@@ -131,7 +131,7 @@ try {
 
   const choose = page.locator("#companion-image-library");
   const photo = { name: "photo.png", mimeType: "image/png", buffer: Buffer.from(fixtureImage) };
-  await choose.setInputFiles([photo, photo]);
+  await pickImages(choose, [photo, photo]);
   await page.locator("#companion-textarea").fill("发给你");
   await page.locator("#companion-textarea").press("Enter");
   const sent = page.locator(".companion-image-entry img[alt='photo.png']");
@@ -141,7 +141,7 @@ try {
   expect(localSrc.every((src) => src?.startsWith("blob:"))).toBe(true);
   await sent.evaluateAll((nodes) => { window.__sentPreviews = nodes; });
   const secondPhoto = { ...photo, name: "second.png" };
-  await choose.setInputFiles([secondPhoto, secondPhoto]);
+  await pickImages(choose, [secondPhoto, secondPhoto]);
   await page.locator("#companion-textarea").fill("第二条图片");
   await page.locator("#companion-textarea").press("Enter");
   const secondImages = page.locator(".companion-image-entry img[alt='second.png']");
@@ -172,14 +172,14 @@ try {
   expect(mediaRequests).toEqual([]);
 
   const thirdPhoto = { ...photo, name: "third.png" };
-  await choose.setInputFiles([thirdPhoto]);
+  await pickImages(choose, [thirdPhoto]);
   await page.locator("#companion-textarea").fill("第三条图片");
   await page.locator("#companion-textarea").press("Enter");
   await expect(page.getByText("第三条图片", { exact: true })).toBeVisible();
   await context.request.post(new URL("/__test/intervening-message", url).href);
   await expect(page.getByText("中间的回复", { exact: true })).toBeVisible();
   const fourthPhoto = { ...photo, name: "fourth.png" };
-  await choose.setInputFiles([fourthPhoto]);
+  await pickImages(choose, [fourthPhoto]);
   await page.locator("#companion-textarea").fill("第四条图片");
   await page.locator("#companion-textarea").press("Enter");
   const fourthImage = page.locator(".companion-image-entry img[alt='fourth.png']");
@@ -198,7 +198,7 @@ try {
 
   await context.request.post(new URL("/__test/mode-failed", url).href);
   const retryPhoto = { ...photo, name: "retry.png" };
-  await choose.setInputFiles([retryPhoto, retryPhoto]);
+  await pickImages(choose, [retryPhoto, retryPhoto]);
   await page.locator("#companion-textarea").fill("重试图片");
   await page.locator("#companion-textarea").press("Enter");
   const retryImages = page.locator(".companion-image-entry img[alt='retry.png']");
@@ -230,4 +230,10 @@ try {
   host.close();
   for (const socket of channels.keys()) socket.terminate();
   server.stop(true);
+}
+
+// Match the hidden picker's click before delivering the selected files.
+async function pickImages(input, files) {
+  await input.dispatchEvent("click");
+  await input.setInputFiles(files);
 }
