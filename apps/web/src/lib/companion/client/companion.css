@@ -372,6 +372,8 @@
 }
 .companion-timeline.page-content {
   overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
   background: transparent;
   scrollbar-gutter: stable;
   padding-bottom: calc(var(--companion-messagebar-height, var(--f7-messagebar-height)) + 12px);
@@ -450,8 +452,8 @@
   white-space: normal;
   touch-action: auto;
   -webkit-touch-callout: none;
-  user-select: none;
-  -webkit-user-select: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .companion-text-bubble .markdown > :first-child {
   margin-top: 0;
@@ -496,6 +498,7 @@
 }
 .companion-row.outgoing .companion-message-time {
   text-align: right;
+  padding-inline-end: 16px;
 }
 .companion-chat-day {
   margin-bottom: 12px;
@@ -742,6 +745,28 @@
 .companion-message-overlay {
   z-index: 20000;
 }
+.companion-message-overlay.compact {
+  pointer-events: none;
+}
+.companion-message-overlay.compact .companion-action-menu {
+  pointer-events: auto;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+}
+.companion-compact-actions {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow-x: auto;
+  gap: 2px;
+  padding: 4px;
+}
+.companion-compact-actions .k-button {
+  border: 0;
+  box-shadow: none;
+  width: auto;
+  flex: 0 0 auto;
+}
 .companion-message-menu-label {
   margin: 0;
   padding: 16px;
@@ -967,10 +992,6 @@
   box-sizing: border-box;
   padding: 6px;
   background-clip: content-box;
-}
-#dsh-companion .companion-konsta-messagebar .companion-reply-stop {
-  order: 1;
-  margin-inline-start: 12px;
 }
 #dsh-companion .companion-konsta-messagebar .companion-stickers {
   order: 2;
@@ -1577,13 +1598,27 @@
   color: inherit;
 }
 
-.companion-text-bubble * {
-  user-select: none;
-  -webkit-user-select: none;
-}
-
 .companion-context-meter-wrap {
   flex: none;
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+.companion-header .companion-reply-stop {
+  position: absolute;
+  inset: 0;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: inherit;
+}
+.companion-header .companion-reply-stop:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
 }
 .companion-header .companion-context-meter,
 .companion-header .companion-preferences-trigger {

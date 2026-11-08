@@ -11,6 +11,10 @@ interface MenuState {
   actions: MenuAction[];
   cancelLabel: string;
   confirmation?: string;
+  compact?: boolean;
+  preserveSelection?: boolean;
+  selectedText?: string;
+  autoFocus?: boolean;
 }
 
 export const currentMessageMenu = writable<MenuState | undefined>();
@@ -24,12 +28,26 @@ export function messageMenuOpen(): boolean {
 
 export function dismissMessageMenu(): void {
   if (!current) return;
+  const dismissed = current;
   current = undefined;
   currentMessageMenu.set(undefined);
+  if (dismissed.preserveSelection) {
+    const selection = document.getSelection();
+    if (
+      selection?.anchorNode &&
+      dismissed.target.contains(selection.anchorNode)
+    )
+      selection.removeAllRanges();
+  }
   const target = returnFocus;
   returnFocus = undefined;
   queueMicrotask(() => {
-    if (!current && target?.isConnected) target.focus({ preventScroll: true });
+    if (
+      !current &&
+      (!dismissed.compact || dismissed.autoFocus) &&
+      target?.isConnected
+    )
+      target.focus({ preventScroll: true });
   });
 }
 
@@ -38,10 +56,23 @@ export function messageMenu(
   actions: MenuAction[],
   cancelLabel: string,
   confirmation?: string,
+  options: {
+    compact?: boolean;
+    preserveSelection?: boolean;
+    selectedText?: string;
+    autoFocus?: boolean;
+  } = {},
 ): void {
   if (!current) returnFocus = captureReadingFocus(document);
-  document.getSelection()?.removeAllRanges();
-  current = { id: ++nextId, target, actions, cancelLabel, confirmation };
+  if (!options.preserveSelection) document.getSelection()?.removeAllRanges();
+  current = {
+    id: ++nextId,
+    target,
+    actions,
+    cancelLabel,
+    confirmation,
+    ...options,
+  };
   currentMessageMenu.set(current);
 }
 

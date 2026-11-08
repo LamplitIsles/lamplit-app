@@ -170,10 +170,22 @@ try {
           bubbleRight: bubble.getBoundingClientRect().right,
         };
       });
+    const incomingInset = await page
+      .locator(".companion-row.incoming")
+      .first()
+      .evaluate((row) => {
+        const bubble = row.querySelector(".companion-message-body")
+          ?.parentElement?.parentElement;
+        const time = row.querySelector(".companion-message-time");
+        if (!bubble || !time) throw new Error("missing message layout");
+        const range = document.createRange();
+        range.selectNodeContents(time);
+        return range.getBoundingClientRect().left - bubble.getBoundingClientRect().left;
+      });
     expect(geometry.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(parseFloat(geometry.radius)).toBeGreaterThan(10);
     expect(geometry.gap).toBeGreaterThanOrEqual(8);
-    expect(Math.abs(geometry.timeRight - geometry.bubbleRight)).toBeLessThan(2);
+    expect(Math.abs(geometry.bubbleRight - geometry.timeRight - incomingInset)).toBeLessThan(2);
     const edges = await page
       .locator(".companion-row .companion-message-body")
       .evaluateAll((nodes) =>

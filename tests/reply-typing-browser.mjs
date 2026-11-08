@@ -113,13 +113,30 @@ try {
     const bubbles = page.locator(".k-message.incoming .companion-text-bubble");
     const typing = page.getByTestId("companion-typing-indicator");
     const stop = page.getByTestId("companion-stop");
+    const ring = page.locator(".companion-context-meter");
+    await expect(ring).toBeVisible();
+    await ring.click();
+    await expect(page.locator("#companion-context-popover")).toBeVisible();
     await control("start", "");
+    await expect(page.locator("#companion-context-popover")).toHaveCount(0);
     await expect(typing).toBeVisible();
     await expect(bubbles).toHaveCount(0);
     await control("advance", "First line\r\nSecond line\nunfinished");
     await expect(bubbles).toHaveText(["First line", "Second line"]);
     await expect(typing).toBeVisible();
     await expect(stop).toBeVisible();
+    await expect(page.locator('.companion-header-actions [data-testid="companion-stop"]')).toHaveCount(1);
+    await expect(page.locator(".companion-konsta-messagebar [data-testid='companion-stop']")).toHaveCount(0);
+    await expect(ring).toBeDisabled();
+    await expect(ring).toHaveAttribute("aria-hidden", "true");
+    const positions = await page.evaluate(() => {
+      const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
+      const ring = rect(".companion-context-meter");
+      const stop = rect('[data-testid="companion-stop"]');
+      return { x: Math.abs(ring.left + ring.width / 2 - stop.left - stop.width / 2), y: Math.abs(ring.top + ring.height / 2 - stop.top - stop.height / 2) };
+    });
+    expect(positions.x).toBeLessThan(1);
+    expect(positions.y).toBeLessThan(1);
     await page.screenshot({ path: `${evidence}/held-${width}.png` });
     await control(
       "body-complete",
@@ -155,6 +172,21 @@ try {
     await page.locator("#companion-textarea").fill("Test-owned queued input");
     await expect(page.locator("#companion-textarea")).toBeEditable();
     await page.locator("#companion-textarea").fill("");
+    if (process.env.APP_STOP_POSITION_ONLY === "1") {
+      await control("finish-execution");
+      await expect(stop).toHaveCount(0);
+      await expect(ring).toBeEnabled();
+      await expect(ring).not.toHaveAttribute("aria-hidden", "true");
+      await control("start", "Stop this reply");
+      await expect(stop).toBeVisible();
+      await stop.click();
+      await expect(stop).toHaveCount(0);
+      await expect(ring).toBeEnabled();
+      expect((await fixture.backend.read()).activeTurnId).toBeNull();
+      expect(errors).toEqual([]);
+      await context.close();
+      continue;
+    }
     const finishedTurn = (await fixture.backend.read()).activeTurnId;
     await context.request.post(
       `http://127.0.0.1:${server.port}/__test/disconnect`,
@@ -169,6 +201,8 @@ try {
     await expect(stop).toBeVisible();
     await control("finish-execution");
     await expect(stop).toHaveCount(0);
+    await expect(ring).toBeEnabled();
+    await expect(ring).not.toHaveAttribute("aria-hidden", "true");
     await expect(typing).toHaveCount(0);
     await control("start", "Non-final item");
     await expect(typing).toBeVisible();
@@ -247,7 +281,9 @@ try {
     JSON.stringify(
       {
         scope:
-          "App DTO fixture, real socket and built Partner/Companion DOM; not native proof",
+          process.env.APP_STOP_POSITION_ONLY === "1"
+            ? "Focused stop position and action; App DTO fixture and real socket, not native proof"
+            : "App DTO fixture, real socket and built Partner/Companion DOM; not native proof",
         widths: [390, 1280],
         acceptance: "passed",
       },

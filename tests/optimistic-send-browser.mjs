@@ -354,10 +354,11 @@ try {
         .locator(".companion-text-bubble")
         .focus();
       await page.keyboard.press("Shift+F10");
-      await expect(menuAction("复制消息")).toBeVisible();
+      await expect(menuAction("复制")).toBeVisible();
       await snap("failed-menu");
       await page.keyboard.press("Escape");
       await failedMark().click();
+      await expect(menuAction("复制")).toHaveCount(0);
       await menuAction("删除").click();
       await expect(
         page.getByRole("dialog", {

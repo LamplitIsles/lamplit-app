@@ -295,7 +295,7 @@ try {
         await page.waitForTimeout(700);
         await page.mouse.up();
       }
-      const copy = page.getByRole("button", { name: "复制消息", exact: true });
+      const copy = page.getByRole("button", { name: "复制", exact: true });
       await expect(copy).toBeVisible();
       if (width < 500) await copy.tap();
       else await copy.click();
@@ -340,12 +340,12 @@ try {
       await copyBubble(
         bubbles.filter({ hasText: /^历史第一行。同行第二句。$/ }),
       ),
-    ).toBe("历史第一行。同行第二句。\n");
+    ).toBe("历史第一行。同行第二句。");
     expect(
       await copyBubble(bubbles.filter({ hasText: /^历史第二行。$/ })),
     ).toBe("历史第二行。");
     const quote = bubbles.filter({ hasText: /^发现办法是比对照片。$/ });
-    expect(await copyBubble(quote)).toBe("> 发现办法是比对照片。\n");
+    expect(await copyBubble(quote)).toBe("发现办法是比对照片。");
     await page.screenshot({ path: `${evidence}/quote-${width}.png` });
     await shape.last().scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -408,7 +408,7 @@ try {
     await control("advance", answer);
     await expect(first).toHaveAttribute("data-cr-identity", "stable");
     await expect(bubbles.filter({ hasText: /^第二行增长$/ })).toHaveCount(0);
-    expect(await copyBubble(first)).toBe("正在第一句。同行第二句。\r\n");
+    expect(await copyBubble(first)).toBe("正在第一句。同行第二句。");
     await page.screenshot({ path: `${evidence}/held-${width}.png` });
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await page.locator("#companion-preferences-panel")
@@ -466,7 +466,7 @@ try {
       ).toBeVisible();
       expect(
         await copyBubble(bubbles.filter({ hasText: /^普通第二行。$/ })),
-      ).toBe("普通第二行。\n");
+      ).toBe("普通第二行。");
       await expect(
         page.locator('[data-testid="message-rich"] .companion-thinking'),
       ).toHaveCount(thinkingCount);
@@ -485,8 +485,14 @@ try {
     }
     await page.screenshot({ path: `${evidence}/complete-${width}.png` });
     const scrollText = Array(120).fill("滚动行").join("\n") + "\n";
-    await control("start", scrollText);
     const timeline = page.locator(".companion-timeline");
+    // Copying an older selection leaves the reader at that message; explicitly
+    // return to the latest message before testing following-mode streaming.
+    await timeline.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await control("start", scrollText);
     await expect
       .poll(() =>
         timeline.evaluate(
@@ -558,7 +564,7 @@ try {
       ).toHaveCount(0);
       if (source.startsWith("before\n"))
         expect(await copyBubble(bubbles.nth(1))).toBe(
-          source.split("\n")[1] + "\n",
+          expected[1].trimEnd(),
         );
     }
     // HTML cleanup may rewrite raw spelling; only source tokens own offsets.
@@ -584,12 +590,7 @@ try {
       await expect(
         bubbles.locator(".markdown hr, .markdown br, .markdown .x"),
       ).toHaveCount(0);
-      const cut = source.indexOf("last");
-      expect(await copyBubble(bubbles.first())).toBe(
-        inline
-          ? source.slice(0, cut)
-          : source.slice(0, source.indexOf("\n") + 1),
-      );
+      expect(await copyBubble(bubbles.first())).toBe(await bubbles.first().innerText());
     }
     await control("session");
     await expect(bubbles).toHaveCount(0);
@@ -632,7 +633,7 @@ try {
     const resolved = referenceSource + "\n\n[r]: https://late.test\n";
     await control("advance", resolved);
     await expect(reference.locator("a")).toHaveCount(0);
-    expect(await copyBubble(reference)).toBe("reference before [anchor][r]\n");
+    expect(await copyBubble(reference)).toBe("reference before [anchor][r]");
     await reference.evaluate((node) => { window.fixtureReference = node; });
     await control("advance", resolved + "\n\nadditional tail");
     await expect(bubbles.filter({ hasText: "additional tail" })).toHaveCount(0);

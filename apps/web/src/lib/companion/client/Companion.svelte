@@ -532,7 +532,8 @@
   $: contextCapacity = resolveContextCapacity(continuity?.contextPressure);
   $: latestContinuityLifecycle = continuity?.lifecycle ?? undefined;
   $: syncContinuityStatus(latestContinuityLifecycle);
-  $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
+  $: if ((!contextCapacity || (projection.running && actions.stop)) && contextMeterOpen)
+    closeContextMeter(false);
   $: syncWaitingState(
     typingVisible,
     `${sessionId ?? "none"}:${latestSettledReplyKey(projection)}`,
@@ -1417,11 +1418,11 @@
       ?.scroll(0, timeline.scrollHeight - timeline.clientHeight);
   }
 
-  async function copyMessage(item: TimelineText): Promise<void> {
+  async function copyText(text: string): Promise<void> {
     try {
       if (Capacitor.isNativePlatform())
-        await Clipboard.write({ string: item.text });
-      else await navigator.clipboard.writeText(item.text);
+        await Clipboard.write({ string: text });
+      else await navigator.clipboard.writeText(text);
       copyToast = "messages.copied";
     } catch {
       copyToast = "messages.copyFailed";
@@ -1471,6 +1472,71 @@
   function messageMenuPortal(node: HTMLElement) {
     document.body.append(node);
     return { destroy: () => node.remove() };
+  }
+  function compactMessageMenu(node: HTMLElement, active: boolean) {
+    let listening = false;
+    const recordSelection = () => {
+      const current = $currentMessageMenu;
+      const selection = document.getSelection();
+      if (
+        current?.preserveSelection &&
+        selection?.anchorNode &&
+        selection.focusNode &&
+        current.target.contains(selection.anchorNode) &&
+        current.target.contains(selection.focusNode) &&
+        !selection.isCollapsed
+      ) current.selectedText = selection.toString();
+    };
+    const pointerdown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return;
+      const current = $currentMessageMenu;
+      if (!current?.compact) return;
+      if (node.contains(event.target)) {
+        recordSelection();
+      } else if (!current.target.contains(event.target)) {
+        dismissMessageMenu();
+      }
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        dismissMessageMenu();
+      } else if (
+        (event.key === "Enter" || event.key === " ") &&
+        event.target instanceof HTMLButtonElement &&
+        node.contains(event.target)
+      ) {
+        // Framework7 may suppress the synthetic click after a prior touch hold.
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        const buttons = [...node.querySelectorAll<HTMLButtonElement>("button")];
+        const action =
+          $currentMessageMenu?.actions[buttons.indexOf(event.target)];
+        if (action) runMessageMenuAction(action);
+      }
+    };
+    const update = (next: boolean) => {
+      if (listening === next) return;
+      listening = next;
+      if (next) {
+        document.addEventListener("pointerdown", pointerdown, true);
+        document.addEventListener("keydown", keydown, true);
+        document.addEventListener("selectionchange", recordSelection);
+        if ($currentMessageMenu?.autoFocus)
+          queueMicrotask(() => {
+            if (listening)
+              node.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+          });
+      } else {
+        document.removeEventListener("pointerdown", pointerdown, true);
+        document.removeEventListener("keydown", keydown, true);
+        document.removeEventListener("selectionchange", recordSelection);
+      }
+    };
+    update(active);
+    return { update, destroy: () => update(false) };
   }
   function messageMenuFocus(node: HTMLElement, active: boolean) {
     let listening = false;
@@ -2186,13 +2252,14 @@
           );
           if (image)
             imagePress = longPress(image, {
-              run: (node) =>
+              run: (node, source) =>
                 showImageMenu(
                   lightboxUrl,
                   item.alt,
                   node,
                   undefined,
                   item.attachment,
+                  source,
                 ),
             });
           (browser.swiper as Swiper).on(
@@ -2274,13 +2341,34 @@
       previewUrl: draft.previewUrl,
     });
   }
-  function showTextMenu(item: TimelineText, target: HTMLElement): void {
-    if (showFailedMenu(item.messageKey, target)) return;
-    if (item.pending || !item.text.trim()) return;
+  function showTextMenu(
+    item: TimelineText,
+    target: HTMLElement,
+    source: "keyboard" | "mouse" | "touch",
+  ): void {
+    if (!item.text.trim()) return;
+    const selection = document.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(target.querySelector(".markdown") ?? target);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const selectedText = selection.toString();
     messageMenu(
       target,
-      [{ text: t("messages.copy"), run: () => copyMessage(item) }],
+      [{
+        text: t("messages.copy"),
+        run: () => {
+          const current = document.getSelection();
+          const text = current?.anchorNode && current.focusNode &&
+            target.contains(current.anchorNode) && target.contains(current.focusNode)
+            ? current.toString() : $currentMessageMenu?.selectedText;
+          return copyText(text || $currentMessageMenu?.selectedText || selectedText);
+        },
+      }],
       t("actions.cancel"),
+      undefined,
+      { compact: true, preserveSelection: true, selectedText, autoFocus: source !== "touch" },
     );
   }
   function showFileMenu(item: TimelineFile, target: HTMLElement): void {
@@ -2295,15 +2383,9 @@
   function showFailedMenu(key: string, target: HTMLElement): boolean {
     const unit = projection.messageUnits.find((u) => u.id === key);
     if (!unit?.failed) return false;
-    const text = unit.items.find(
-      (item): item is TimelineText => item.kind === "text",
-    );
     messageMenu(
       target,
       [
-        ...(text
-          ? [{ text: t("messages.copy"), run: () => copyMessage(text) }]
-          : []),
         {
           text: t("messages.retryFailed"),
           run: () => actions.retryFailed?.(unit.actionId ?? key),
@@ -2340,6 +2422,7 @@
     target: HTMLElement,
     key?: string,
     attachment?: ImageRef,
+    source: "keyboard" | "mouse" | "touch" = "touch",
   ): void {
     if (key && showFailedMenu(key, target)) return;
     if (!url) return;
@@ -2387,6 +2470,8 @@
         },
       ],
       t("actions.cancel"),
+      undefined,
+      { compact: true, autoFocus: source !== "touch" },
     );
   }
   async function loadOlder(): Promise<void> {
@@ -2569,8 +2654,9 @@
       </div>
       <div class="konsta-chat companion-header-actions-region">
       <KonstaGlass class="companion-header-actions">
-      {#if contextCapacity}
+      {#if contextCapacity || (projection.running && actions.stop)}
         <div class="companion-context-meter-wrap">
+          {#if contextCapacity}
           <button
             bind:this={contextMeterButton}
             class="button button-tonal button-round companion-context-meter"
@@ -2589,6 +2675,9 @@
             aria-haspopup="dialog"
             aria-expanded={contextMeterOpen}
             aria-controls="companion-context-popover"
+            aria-hidden={projection.running && actions.stop ? "true" : undefined}
+            disabled={!!(projection.running && actions.stop)}
+            tabindex={projection.running && actions.stop ? -1 : undefined}
             on:click={toggleContextMeter}
           >
             <svg viewBox="0 0 28 28" aria-hidden="true"
@@ -2607,6 +2696,19 @@
               ></circle></svg
             >
           </button>
+          {/if}
+          {#if projection.running && actions.stop}
+            <KonstaButton
+              class="companion-reply-stop"
+              clear rounded
+              type="button"
+              data-testid="companion-stop"
+              aria-label={t("reply.stop")}
+              onClick={() => void stop()}
+              disabled={stopping}
+              ><Square size={12} fill="currentColor" aria-hidden="true" /></KonstaButton
+            >
+          {/if}
         </div>
       {/if}
       <button
@@ -2626,7 +2728,7 @@
     </Navbar>
     {#if effectiveWorkspaceReadiness === "ready" && effectiveSessionReadiness === "ready" && projection.openState !== "error"}
       <div class="konsta-chat companion-composer-region" data-f7-slot="fixed">
-      <KonstaGlass class="toolbar messagebar companion-composer companion-compose-row">
+      <KonstaGlass class="toolbar messagebar companion-composer companion-compose-row" highlight={false}>
         <div class="companion-compose-content" hidden={detailOpen}>
         {#snippet beforeInner()}
           {#if copyToast}
@@ -2830,18 +2932,6 @@
           {/if}
         {/snippet}
         {#snippet composerActions()}
-          {#if projection.running && actions.stop}
-            <KonstaButton
-              class="companion-reply-stop"
-              tonal rounded
-              type="button"
-              data-testid="companion-stop"
-              aria-label={t("reply.stop")}
-              onClick={() => void stop()}
-              disabled={stopping}
-              ><Square size={16} fill="currentColor" aria-hidden="true" /></KonstaButton
-            >
-          {/if}
           <KonstaButton
             class={`companion-microphone ${voiceStatus === "recording" ? "companion-microphone-recording" : ""} ${voiceStatus === "stopping" ? "companion-microphone-stopping" : ""}`}
             tonal rounded
@@ -3201,7 +3291,7 @@
                                         })}
                                         on:click={() => showLightbox(image)}
                                         use:longPress={{
-                                          run: (node) =>
+                                          run: (node, source) =>
                                             showImageMenu(
                                               imageUrls[image.id] ||
                                                 image.previewUrl ||
@@ -3210,6 +3300,7 @@
                                               node,
                                               unit.id,
                                               image.attachment as ImageRef | undefined,
+                                              source,
                                             ),
                                         }}
                                         ><img
@@ -3271,12 +3362,14 @@
                               <!-- svelte-ignore a11y_no_noninteractive_tabindex (focusable message content provides keyboard context-menu access without a button role around nested links) -->
                               <div
                                 class="companion-text-bubble"
-                                tabindex={part.item.pending ? -1 : 0}
+                                tabindex="0"
                                 use:longPress={{
-                                  run: (node) =>
+                                  selectable: true,
+                                  run: (node, source) =>
                                     showTextMenu(
                                       part.item as TimelineText,
                                       node,
+                                      source,
                                     ),
                                 }}
                               >
@@ -3820,28 +3913,33 @@
     {#if displayedMessageMenu}
     {#key displayedMessageMenu.id}
       <div class="konsta-chat companion-composer-overlay companion-message-overlay"
+        class:compact={displayedMessageMenu.compact}
         class:companion-overlay-closing={!$currentMessageMenu} inert={!$currentMessageMenu}
         aria-hidden={!$currentMessageMenu} use:messageMenuPortal>
         <KonstaPopover
           class="companion-action-menu"
           {opened}
           target={displayedMessageMenu.target}
+          backdrop={!displayedMessageMenu.compact}
           onBackdropClick={dismissMessageMenu}
         >
           <div
-            role="dialog"
-            aria-modal="true"
+            role={displayedMessageMenu.compact ? "group" : "dialog"}
+            aria-modal={displayedMessageMenu.compact ? undefined : "true"}
             aria-label={displayedMessageMenu.confirmation ?? displayedMessageMenu.actions.map((action) => action.text).join(", ")}
             data-testid="message-action-menu"
-            use:messageMenuFocus={!!$currentMessageMenu}
+            class:companion-compact-actions={displayedMessageMenu.compact}
+            use:messageMenuFocus={!!$currentMessageMenu && !displayedMessageMenu.compact}
+            use:compactMessageMenu={!!$currentMessageMenu && !!displayedMessageMenu.compact}
           >
             {#if displayedMessageMenu.confirmation}
               <p class="companion-message-menu-label">{displayedMessageMenu.confirmation}</p>
             {/if}
             {#each displayedMessageMenu.actions as action}
-              <KonstaActionsButton onClick={() => runMessageMenuAction(action)}>{action.text}</KonstaActionsButton>
+              {#if displayedMessageMenu.compact}<KonstaButton clear small inline onClick={() => runMessageMenuAction(action)}>{action.text}</KonstaButton>
+              {:else}<KonstaActionsButton onClick={() => runMessageMenuAction(action)}>{action.text}</KonstaActionsButton>{/if}
             {/each}
-            <KonstaActionsButton bold onClick={dismissMessageMenu}>{displayedMessageMenu.cancelLabel}</KonstaActionsButton>
+            {#if !displayedMessageMenu.compact}<KonstaActionsButton bold onClick={dismissMessageMenu}>{displayedMessageMenu.cancelLabel}</KonstaActionsButton>{/if}
           </div>
         </KonstaPopover>
       </div>

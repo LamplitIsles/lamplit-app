@@ -3,7 +3,10 @@ import { f7 } from "framework7-svelte";
 /** Framework7 owns touch holds; pointer events adapt mouse holds to the same menu. */
 export function longPress(
   node: HTMLElement,
-  options: { run(node: HTMLElement): void },
+  options: {
+    run(node: HTMLElement, source: "keyboard" | "mouse" | "touch"): void;
+    selectable?: boolean;
+  },
 ) {
   // Framework7 9.2 leaves the first hold pending when a stationary second finger lands.
   // Guard that gap without duplicating its timer or movement recognition.
@@ -16,7 +19,7 @@ export function longPress(
     ) {
       event.preventDefault();
       event.stopPropagation();
-      options.run(node);
+      options.run(node, "keyboard");
     }
   };
   node.addEventListener("keydown", keyboard);
@@ -28,11 +31,11 @@ export function longPress(
     if (!event.touches.length) multiTouch = false;
   };
   const hold = () => {
-    if (!multiTouch) options.run(node);
+    if (!multiTouch) options.run(node, "touch");
   };
   const context = (event: MouseEvent) => {
     event.preventDefault();
-    if (event.button === 2) options.run(node);
+    if (event.button === 2) options.run(node, "mouse");
   };
   let mouse: { id: number; x: number; y: number; fired: boolean } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -95,11 +98,13 @@ export function longPress(
     timer = setTimeout(() => {
       if (!mouse) return;
       mouse.fired = true;
-      options.run(node);
+      options.run(node, "mouse");
     }, f7.params.touch?.tapHoldDelay ?? 450);
   };
   node.addEventListener("pointerdown", down);
-  const select = (event: Event) => event.preventDefault();
+  const select = (event: Event) => {
+    if (!options.selectable) event.preventDefault();
+  };
   document.addEventListener("touchstart", start, {
     capture: true,
     passive: true,

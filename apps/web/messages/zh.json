@@ -171,7 +171,7 @@
   "voice.preparing": "正在准备语音",
   "voice.retry": "重试语音",
   "voice.transcript": "转文字",
-  "messages.copy": "复制消息",
+  "messages.copy": "复制",
   "messages.copied": "已复制",
   "messages.copyFailed": "复制失败，请重试",
   "messages.latest": "有新消息",

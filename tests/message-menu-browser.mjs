@@ -67,7 +67,7 @@ try {
     await page.goto(`http://127.0.0.1:${server.port}/`);
     const bubble = page.locator(".companion-text-bubble").filter({ hasText: "长按测试消息" });
     const menu = page.getByTestId("message-action-menu");
-    const copy = menu.getByRole("button", { name: "复制消息", exact: true });
+    const copy = menu.getByRole("button", { name: "复制", exact: true });
     await expect(bubble).toBeVisible();
     await bubble.focus();
     await bubble.press("Shift+F10");
@@ -88,13 +88,7 @@ try {
       await page.mouse.up();
       await copy.focus();
     }
-    await page.keyboard.press("Tab");
-    await expect(menu.getByRole("button", { name: "取消", exact: true })).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(copy).toBeFocused();
-    await page.evaluate(() => document.activeElement.blur());
-    await page.keyboard.press("Shift+Tab");
-    await expect(menu.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+    await expect(menu.getByRole("button", { name: "取消", exact: true })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.locator(".companion-message-overlay")).toHaveAttribute("aria-hidden", "true");
     await expect(bubble).toBeFocused();
@@ -125,7 +119,7 @@ try {
     await page.mouse.down();
     await expect(menu).toBeVisible();
     await page.mouse.up();
-    await menu.getByRole("button", { name: "取消", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(menu, "closed after mouse hold cancel").toHaveCount(0);
 
     if (width === 390) {
@@ -136,9 +130,8 @@ try {
       await expect(menu).toBeVisible();
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await page.screenshot({ path: ".scratch/konsta-chat/message-menu-ios.png" });
-      const cancelBounds = await menu.getByRole("button", { name: "取消", exact: true }).boundingBox();
-      const cancelPoint = { x: cancelBounds.x + cancelBounds.width / 2, y: cancelBounds.y + cancelBounds.height / 2 };
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [cancelPoint] });
+      const outsidePoint = { x: width - 5, y: 5 };
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [outsidePoint] });
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await expect(menu, "closed after touch hold cancel").toHaveCount(0);
       await cdp.detach();

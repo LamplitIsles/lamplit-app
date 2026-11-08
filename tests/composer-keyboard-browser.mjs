@@ -198,6 +198,12 @@ try {
       await page.mouse.up();
     }
     await input.focus();
+    if (mode === "viewport-ios") {
+      // Focus must enter editing mode even when iOS reports no viewport resize.
+      await expect(nav).toBeHidden();
+      await expect(stickers).toHaveAttribute("aria-hidden", "true");
+      await expect(attach).toHaveAttribute("aria-hidden", "true");
+    }
     if (mode !== "desktop") {
       await page.evaluate(() => window.setFixtureKeyboard(true));
       await expect(nav).toBeHidden();
@@ -283,8 +289,12 @@ try {
       await expect(preview).toBeVisible();
       await expect(preview).toContainText("…");
       await expect(preview).toHaveAttribute("aria-hidden", "true");
-      await input.blur();
       await input.click();
+      if (mode === "viewport-ios") {
+        // The input can stay focused when iOS dismisses the keyboard.
+        await expect(nav).toBeHidden();
+        await expect(stickers).toHaveAttribute("aria-hidden", "true");
+      }
       await page.evaluate(() => window.setFixtureKeyboard(true));
       await expect(nav).toBeHidden();
       await expect(input).toHaveValue(expanded.value);

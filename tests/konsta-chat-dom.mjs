@@ -196,16 +196,16 @@ assert.equal(
 );
 assert.equal(
   document.querySelectorAll(".k-message.incoming .companion-chat-avatar").length,
-  1,
+  0,
 );
 for (let i = 0; i < 100; i++) {
-  if (document.querySelector(".k-message.incoming .companion-chat-avatar img"))
+  if (document.querySelector(".companion-identity-chip img"))
     break;
   await new Promise((r) => setTimeout(r, 20));
 }
 assert.equal(
   document
-    .querySelector(".k-message.incoming .companion-chat-avatar img")
+    .querySelector(".companion-identity-chip img")
     ?.getAttribute("src"),
   "/api/test/companion.png",
 );
@@ -259,10 +259,10 @@ assert.equal(textarea.value, "");
 assert.match(document.body.textContent, /测试输入/);
 assert.ok(
   document.querySelector(
-    '.companion-konsta-messagebar [data-testid="companion-stop"]',
+    '.companion-header-actions [data-testid="companion-stop"]',
   ),
 );
-assert.equal(document.querySelectorAll(".companion-header-actions button").length, 3);
+assert.equal(document.querySelectorAll(".companion-header-actions button:not([disabled])").length, 3);
 document.querySelector(".companion-attach")?.click();
 await new Promise((r) => setTimeout(r, 100));
 [...document.querySelectorAll('[data-testid="attachment-menu"] button')]

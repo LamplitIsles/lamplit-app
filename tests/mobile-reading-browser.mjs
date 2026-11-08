@@ -317,7 +317,7 @@ try {
           .locator(".companion-text-bubble")
           .click({ button: "right" });
         const copy = page.getByRole("button", {
-          name: "复制消息",
+          name: "复制",
           exact: true,
         });
         await expect(copy).toBeFocused();

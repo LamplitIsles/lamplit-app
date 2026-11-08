@@ -158,9 +158,9 @@ try {
         .locator(".companion-text-bubble")
         .filter({ hasText: "独立答案" });
       await answer.click({ button: "right" });
-      await page.getByRole("button", { name: "复制消息", exact: true }).click();
+      await page.getByRole("button", { name: "复制", exact: true }).click();
       expect(await page.evaluate(() => window.fixtureCopied)).toBe(
-        "独立答案 **灯火**",
+        "独立答案 灯火",
       );
       await expect(page.locator(".companion-action-menu")).toBeHidden();
       await summary.press("Space");

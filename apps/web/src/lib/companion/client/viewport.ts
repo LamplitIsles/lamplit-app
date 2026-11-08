@@ -17,6 +17,9 @@ export function visibleViewport(
   let frame = 0;
   let restingHeight = host.innerHeight;
   let restingWidth = host.innerWidth;
+  let composerHadFocus = false;
+  let keyboardSeen = false;
+  let keyboardDismissed = false;
   const keys = [
     "--companion-visible-height",
     "--companion-visible-top",
@@ -34,12 +37,26 @@ export function visibleViewport(
       ),
     );
   };
-  const setComposerMode = (keyboardOpen: boolean) => {
+  const setComposerMode = (keyboardOpen: boolean | undefined) => {
     const input = node.querySelector("#companion-textarea");
     const focused = input !== null && host.document?.activeElement === input;
-    const coarsePointer = host.matchMedia?.("(pointer: coarse)").matches ?? false;
-    const expanded = focused && (keyboardOpen || !coarsePointer);
-    const keyboardVisible = focused && keyboardOpen;
+    const coarsePointer =
+      host.matchMedia?.("(pointer: coarse)").matches ?? false;
+    if (!focused || !composerHadFocus) {
+      keyboardSeen = false;
+      keyboardDismissed = false;
+    }
+    if (focused && keyboardOpen === true) {
+      keyboardSeen = true;
+      keyboardDismissed = false;
+    } else if (focused && keyboardOpen === false && keyboardSeen) {
+      keyboardSeen = false;
+      keyboardDismissed = true;
+    }
+    composerHadFocus = focused;
+    const expanded = focused && !keyboardDismissed;
+    // This attribute controls the mobile editing layout, not keyboard geometry.
+    const keyboardVisible = coarsePointer && expanded;
     const changed =
       node.hasAttribute("data-composer-expanded") !== expanded ||
       node.hasAttribute("data-composer-keyboard-open") !== keyboardVisible;
@@ -53,7 +70,10 @@ export function visibleViewport(
     clear();
     node.removeAttribute("data-keyboard-overlay");
     // Preserve browser zoom/panning; zoom is never evidence of a keyboard.
-    if (viewport && viewport.scale !== 1) return;
+    if (viewport && viewport.scale !== 1) {
+      setComposerMode(undefined);
+      return;
+    }
     const focused = editing();
     if (!focused || host.innerWidth !== restingWidth) {
       restingHeight = host.innerHeight;
@@ -69,7 +89,8 @@ export function visibleViewport(
     const covered = focused
       ? Math.max(0, restingHeight - height - (viewport?.offsetTop ?? 0))
       : 0;
-    const coarsePointer = host.matchMedia?.("(pointer: coarse)").matches ?? false;
+    const coarsePointer =
+      host.matchMedia?.("(pointer: coarse)").matches ?? false;
     // Some hosts expose VirtualKeyboard but still resize the visual viewport
     // without reporting keyboard bounds. Use that geometry when it happens.
     if (keyboard && (keyboard.boundingRect.height > 0 || covered < 80)) {
@@ -120,10 +141,20 @@ export function visibleViewport(
   const schedule = () => {
     if (!frame) frame = host.requestAnimationFrame(update);
   };
+  const reopenComposer = (event: PointerEvent) => {
+    if (
+      keyboardDismissed &&
+      event.target === node.querySelector("#companion-textarea")
+    ) {
+      keyboardDismissed = false;
+      schedule();
+    }
+  };
   update();
   host.addEventListener("resize", schedule);
   host.document?.addEventListener("focusin", schedule);
   host.document?.addEventListener("focusout", schedule);
+  node.addEventListener("pointerdown", reopenComposer);
   viewport?.addEventListener("resize", schedule);
   viewport?.addEventListener("scroll", schedule);
   keyboard?.addEventListener("geometrychange", schedule);
@@ -132,6 +163,7 @@ export function visibleViewport(
       host.removeEventListener("resize", schedule);
       host.document?.removeEventListener("focusin", schedule);
       host.document?.removeEventListener("focusout", schedule);
+      node.removeEventListener("pointerdown", reopenComposer);
       viewport?.removeEventListener("resize", schedule);
       viewport?.removeEventListener("scroll", schedule);
       keyboard?.removeEventListener("geometrychange", schedule);

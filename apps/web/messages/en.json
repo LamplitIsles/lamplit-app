@@ -171,7 +171,7 @@
   "voice.preparing": "Preparing audio",
   "voice.retry": "Retry audio",
   "voice.transcript": "Transcript",
-  "messages.copy": "Copy message",
+  "messages.copy": "Copy",
   "messages.copied": "Copied",
   "messages.copyFailed": "Copy failed. Try again.",
   "messages.latest": "Latest messages",

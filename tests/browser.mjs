@@ -333,9 +333,9 @@ try {
     const menu = page.locator(".companion-action-menu.k-popover");
     await expect(menu).toBeVisible();
     await expect(
-      menu.getByRole("button", { name: "复制消息", exact: true }),
+      menu.getByRole("button", { name: "复制", exact: true }),
     ).toBeVisible();
-    await menu.getByRole("button", { name: "取消", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(page.locator(".companion-action-menu")).toHaveCount(0);
     await bubble.scrollIntoViewIfNeeded();
     const bounds = await bubble.boundingBox();
