@@ -110,7 +110,7 @@ try {
       const assertMessage = async (text, name, id, room, time = authored) => {
         const message = row(text);
         await expect(message).toHaveClass(/incoming/);
-        await expect(message.locator(".companion-avatar-crop")).toHaveText("M");
+        await expect(message.locator(".companion-avatar-crop")).toHaveCount(0);
         await expect(
           message.getByRole("group", { name: "Matrix", exact: true }),
         ).toBeVisible();

@@ -200,10 +200,12 @@ try {
   }
   for (const width of process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
     ? []
-    : stickerPanelOnly ? [390] : [390, 1280, 320]) {
+    : stickerPanelOnly ? [390, 391] : [390, 1280, 320]) {
+    const stickerIos = stickerPanelOnly && width === 391;
     const context = await browser.newContext({
       viewport: { width, height: 844 },
       locale: "zh-CN",
+      ...(stickerIos ? { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" } : {}),
       httpCredentials: process.env.APP_ACCEPTANCE_USERNAME
         ? {
             username: process.env.APP_ACCEPTANCE_USERNAME,
@@ -218,6 +220,14 @@ try {
     };
     await control({ action: "reset" });
     await context.addInitScript(denyNativeNotifications);
+    await context.addInitScript(() => {
+      window.__stickerTransitions = [];
+      document.addEventListener("transitionrun", (event) => {
+        if (event.target instanceof Element && event.target.matches(".companion-sticker-sheet")) {
+          window.__stickerTransitions.push(event.target.classList.contains("-translate-y-full") ? "open" : "close");
+        }
+      }, true);
+    });
     const page = await context.newPage();
     const errors = [];
     const albumMetadata = [];
@@ -289,8 +299,16 @@ try {
       await input.fill("保留草稿");
       await input.blur();
       await page.getByRole("button", { name: "表情", exact: true }).click();
+      await expect.poll(() => page.evaluate(() => window.__stickerTransitions.includes("open"))).toBe(true);
       await expect.poll(() => stickerReads.filter((path) => path.endsWith("/packs")).length).toBeGreaterThanOrEqual(1);
       await expect.poll(() => stickerReads.filter((path) => path.endsWith("/favorites")).length).toBeGreaterThanOrEqual(2);
+      await expect(page.locator(".sticker-panel .k-searchbar")).toBeVisible();
+      await expect(page.getByRole("searchbox", { name: "搜索表情名称或标签" })).toHaveCSS("padding-inline-start", stickerIos ? "42px" : "48px");
+      if (stickerPanelOnly && !stickerIos) {
+        const searchBackground = await page.getByRole("searchbox", { name: "搜索表情名称或标签" }).evaluate((el) => getComputedStyle(el).backgroundColor);
+        expect(searchBackground).not.toBe("rgba(0, 0, 0, 0)");
+      }
+      await expect(page.getByRole("button", { name: "收藏", exact: true })).toHaveClass(/k-button/);
       await expect(page.getByText("收藏未确认，请检查收藏列表", { exact: true })).toHaveCount(0);
       await expect(page.getByText("加载失败，点按重试", { exact: true })).toHaveCount(0);
       await page.getByRole("searchbox", { name: "搜索表情名称或标签" }).fill("猫");
@@ -298,15 +316,23 @@ try {
       await expect(page.getByRole("button", { name: "小猫", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "猫组", exact: true }).click();
       await expect(page.locator(".sticker-pack-name")).toHaveText("猫组");
+      await expect(page.getByRole("searchbox", { name: "搜索表情名称或标签" })).toHaveValue("");
+      await expect(page.getByRole("button", { name: "猫组", exact: true })).toHaveAttribute("aria-pressed", "true");
       await page.getByRole("button", { name: "收藏表情", exact: true }).click();
       await expect(page.getByRole("button", { name: "取消收藏", exact: true })).toBeVisible();
+      if (stickerPanelOnly) {
+        await page.waitForTimeout(450);
+        await page.screenshot({ path: resolve(evidence, `sticker-panel-${stickerIos ? "ios" : "material"}.png`) });
+      }
       const item = page.locator(".sticker-send");
+      await expect(item).toHaveClass(/k-button/);
       await item.hover();
       await page.mouse.down();
       await page.waitForTimeout(500);
       await expect(page.locator(".sticker-preview-name")).toHaveText("小猫");
       const preview = page.locator(".sticker-preview");
       await expect(preview).toBeVisible();
+      if (stickerPanelOnly && !stickerIos) expect(await preview.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
       const bounds = await preview.boundingBox();
       const sheetBounds = await page.locator(".companion-sticker-sheet").boundingBox();
       expect(bounds.x).toBeGreaterThanOrEqual(0);
@@ -316,7 +342,10 @@ try {
       await page.mouse.up();
       await expect(page.locator(".sticker-preview")).toHaveCount(0);
       expect(stages).toBe(0);
+      await item.click();
+      await expect.poll(() => stages).toBe(1);
       await page.getByRole("dialog", { name: "表情" }).getByRole("button", { name: "取消", exact: true }).click();
+      await expect.poll(() => page.evaluate(() => window.__stickerTransitions.includes("close"))).toBe(true);
       await expect(input).toHaveValue("保留草稿");
       denied = true;
       await page.getByRole("button", { name: "表情", exact: true }).click();
@@ -492,7 +521,7 @@ try {
     let state = await control({ action: "state" });
     expect(state.album.some((image) => image.origin === "human")).toBe(true);
     expect(state.album.some((image) => image.origin === "agent")).toBe(true);
-    await page.getByRole("button", { name: "相册", exact: true }).click();
+    await page.getByRole("link", { name: "相册", exact: true }).click();
     const drawer = page.locator("#companion-drawer-panel");
     await expect(
       drawer.getByRole("button", { name: "pasted.png", exact: true }),
@@ -516,7 +545,7 @@ try {
       path: `${evidence}/album-${width}.png`,
       fullPage: true,
     });
-    await page.getByRole("button", { name: "聊天", exact: true }).click();
+    await page.getByRole("link", { name: "聊天", exact: true }).click();
     await expect(drawer).not.toBeVisible();
     await page.screenshot({
       path: `${evidence}/history-${width}.png`,

@@ -176,7 +176,7 @@ try {
           : dm;
       await expect(input).toBeVisible();
       await expect(dm).toHaveClass(/incoming/);
-      await expect(dm.locator(".companion-avatar-crop")).toHaveText("K");
+      await expect(dm.locator(".companion-avatar-crop")).toHaveCount(0);
       await expect(dm.locator(".companion-keet-source")).toHaveText(
         "Keet DMAlice · Peer",
       );
@@ -221,7 +221,7 @@ try {
         '<img src=x onerror="window.keetUnsafe=2">',
       );
       await expect(sources.locator("img")).toHaveCount(0);
-      await expect(group.locator(".companion-avatar-crop")).toHaveText("K");
+      await expect(group.locator(".companion-avatar-crop")).toHaveCount(0);
       await assertImageContent(group, "图片原文与可见说明", liveGroup, false);
       await expect(
         page
@@ -292,7 +292,7 @@ try {
         ).toHaveText(label);
         await expect(
           historyRow(text).locator(".companion-avatar-crop"),
-        ).toHaveText("K");
+        ).toHaveCount(0);
         await expect(historyRow(text)).toHaveClass(/incoming/);
       }
       await assertImageContent(

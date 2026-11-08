@@ -234,20 +234,16 @@ try {
       const row = rowFor(bubble);
       await expect(row).toHaveClass(/companion-message-first/);
       await expect(row).toHaveClass(/companion-message-last/);
-      for (const selector of [".companion-chat-avatar", "time"]) {
-        const el = row.locator(selector);
-        await expect(el).toBeVisible();
-        expect(
-          await el.evaluate((node) => {
-            for (let p = node; p; p = p.parentElement) {
-              const style = getComputedStyle(p);
-              if (Number(style.opacity) === 0 || style.visibility !== "visible")
-                return false;
-            }
-            return node.getBoundingClientRect().width > 0;
-          }),
-        ).toBe(true);
-      }
+      await expect(row.locator(".companion-chat-avatar")).toHaveCount(0);
+      const el = row.locator("time");
+      await expect(el).toBeVisible();
+      expect(await el.evaluate((node) => {
+        for (let p = node; p; p = p.parentElement) {
+          const style = getComputedStyle(p);
+          if (Number(style.opacity) === 0 || style.visibility !== "visible") return false;
+        }
+        return node.getBoundingClientRect().width > 0;
+      })).toBe(true);
     };
     const copyBubble = async (bubble) => {
       await bubble.evaluate((el) =>

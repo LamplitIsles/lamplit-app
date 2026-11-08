@@ -139,9 +139,7 @@ try {
       const assertMessage = async (id, src, time = authored) => {
         const message = row(id);
         await expect(message).toHaveClass(/incoming/);
-        await expect(message.locator(".companion-avatar-crop")).toHaveText(
-          src.platform === "qq" ? "Q" : "M",
-        );
+        await expect(message.locator(".companion-avatar-crop")).toHaveCount(0);
         const header = message.locator(".companion-post-source");
         await expect(header).toHaveCount(1);
         await expect(header.locator(".badge")).toHaveText(
@@ -212,10 +210,10 @@ try {
           hasText: hostile.senderDisplayName,
         }),
       });
-      await expect(imageRow.locator(".message-image img")).toBeVisible();
+      await expect(imageRow.locator(".companion-image-entry img")).toBeVisible();
       expect(
         await imageRow
-          .locator(".message-image img")
+          .locator(".companion-image-entry img")
           .evaluate((el) => el.naturalWidth),
       ).toBeGreaterThan(0);
       await expect(

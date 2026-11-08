@@ -8,6 +8,10 @@ Terms for the shared chat experience across agent engines.
 The ordered conversation shown to the Human, including both participants' messages and in-progress content. The same conversation content retains its order when read later in history.
 _Avoid_: Tool transcript, messages grouped by media type
 
+**Chat day（聊天日）**:
+The local-time day used to label a conversation, beginning at 04:00 and ending just before 04:00 the next calendar day. Messages sent before 04:00 belong to the previous chat day.
+_Avoid_: Calendar day starting at midnight
+
 **Chat interface（聊天界面消息）**:
 A structured interface sent by the companion as part of the conversation. It occupies a position in the chat timeline and remains associated with the same conversation when read later.
 _Avoid_: tool transcript, separate conversation

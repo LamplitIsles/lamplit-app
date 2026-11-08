@@ -1,5 +1,5 @@
 /* Framework7 owns global styles; omit Tailwind preflight and Konsta base rules. */
-@layer theme, base, components, utilities;
+@layer framework7, theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "../../../../node_modules/konsta/styles/colors.css";
 @import "../../../../node_modules/konsta/styles/glass.css";

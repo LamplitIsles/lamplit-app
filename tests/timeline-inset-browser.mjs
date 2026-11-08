@@ -50,11 +50,12 @@ const browser = await chromium.launch({
   args: ["--disable-background-networking", "--disable-sync"],
 });
 try {
-  for (const width of [390, 1280]) {
+  for (const { width, ios } of [{ width: 390, ios: false }, { width: 390, ios: true }, { width: 1280, ios: false }]) {
     const context = await browser.newContext({
       viewport: { width, height: 844 },
       isMobile: width === 390,
       hasTouch: width === 390,
+      ...(ios ? { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" } : {}),
       serviceWorkers: "block",
     });
     await context.route("**/*", (route) =>
@@ -124,8 +125,19 @@ try {
       await expect
         .poll(() => timeline.evaluate((el) => el.scrollTop))
         .toBeLessThan(96);
+      const latest = page.locator(".companion-return-latest .k-fab");
+      await expect(latest).toBeVisible();
+      const fabTheme = await page.evaluate(() => document.documentElement.classList.contains("ios") ? "ios" : "material");
+      expect(fabTheme).toBe(ios ? "ios" : "material");
+      const fabBounds = await latest.boundingBox();
+      expect(fabBounds.width).toBe(fabTheme === "ios" ? 44 : 56);
+      expect(fabBounds.height).toBe(fabTheme === "ios" ? 44 : 56);
+      await latest.click();
+      await expect
+        .poll(() => timeline.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+        .toBeLessThan(50);
     }
-    console.log(`${width}: passed`);
+    console.log(`${width} ${ios ? "ios" : "material"}: passed`);
     await context.close();
   }
 } finally {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import Heart from "lucide-svelte/icons/heart";
+  import { Button as KonstaButton, Glass as KonstaGlass, Searchbar as KonstaSearchbar } from "konsta/svelte";
   import type { Sticker, StickerPack, StickerIdentity } from "@lamplit/contracts";
   import type { StickerClient } from "../../sticker-client.js";
   import type { CompanionTranslate } from "./locale.js";
@@ -18,6 +19,7 @@
   let packsLoading = false;
   let selected = "favorites";
   let query = "";
+  let searchEpoch = 0;
   let stickers: Sticker[] = [];
   let cursor: string | null = null;
   let loading = false;
@@ -88,13 +90,17 @@
     finally { if (!disposed && token === generation) loading = false; }
   }
   function select(id: string) {
-    clearTimeout(searchTimer); query = ""; selected = id; preview = null;
+    clearTimeout(searchTimer); query = ""; searchEpoch++; selected = id; preview = null;
     void load(true);
   }
   function search() {
     generation++; stickers = []; cursor = null; failed = false;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => void load(true), 250);
+  }
+  // Searchbar exposes an input id but not input attributes; retain searchbox semantics.
+  function searchSemantics(node: HTMLElement) {
+    node.querySelector("input")?.setAttribute("role", "searchbox");
   }
   async function favorite(sticker: Sticker) {
     if (!favoriteIds || favoriteBusy) return;
@@ -154,11 +160,13 @@
     function click(event: MouseEvent) {
       if (suppress) { event.preventDefault(); event.stopImmediatePropagation(); suppress = false; }
     }
+    function contextMenu(event: MouseEvent) { event.preventDefault(); }
     function scroll() { if (active && !active.fired) finish(); }
     node.addEventListener("pointerdown", down);
     node.addEventListener("click", click, true);
+    node.addEventListener("contextmenu", contextMenu);
     return { destroy() {
-      finish(); node.removeEventListener("pointerdown", down); node.removeEventListener("click", click, true);
+      finish(); node.removeEventListener("pointerdown", down); node.removeEventListener("click", click, true); node.removeEventListener("contextmenu", contextMenu);
     } };
   }
   onMount(() => { void loadPacks(true); void loadFavorites(); void load(true); });
@@ -166,58 +174,70 @@
 </script>
 
 <section class="sticker-panel" aria-label={t("stickers.open")}>
-  <input class="sticker-search" type="search" placeholder={t("stickers.search")} aria-label={t("stickers.search")} bind:value={query} on:input={search} />
+  {#key searchEpoch}
+    <div class="sticker-search-region" use:searchSemantics>
+      <label class="sticker-sr-only" for="sticker-search">{t("stickers.search")}</label>
+      <KonstaSearchbar class="sticker-search" inputId="sticker-search" placeholder={t("stickers.search")} bind:value={query} clearButton={false} onInput={(event: Event) => { query = (event.currentTarget as HTMLInputElement).value; search(); }} />
+    </div>
+  {/key}
   <div class="sticker-tabs" role="group" aria-label={t("stickers.open")}>
-    <button type="button" class:selected={selected === "favorites" && !query.trim()} aria-label={t("stickers.favorites")} aria-pressed={selected === "favorites" && !query.trim()} on:click={() => select("favorites")}><Heart size={22} /></button>
+    <KonstaButton class="sticker-tab" type="button" tonal={selected === "favorites" && !query.trim()} clear={selected !== "favorites" || !!query.trim()} aria-label={t("stickers.favorites")} aria-pressed={selected === "favorites" && !query.trim()} onClick={() => select("favorites")}><Heart size={22} /></KonstaButton>
     {#each packs as pack (pack.id)}
-      <button type="button" class:selected={selected === pack.id && !query.trim()} aria-label={pack.name} aria-pressed={selected === pack.id && !query.trim()} on:click={() => select(pack.id)}>
+      <KonstaButton class="sticker-tab" type="button" tonal={selected === pack.id && !query.trim()} clear={selected !== pack.id || !!query.trim()} aria-label={pack.name} aria-pressed={selected === pack.id && !query.trim()} onClick={() => select(pack.id)}>
         {#key `${pack.cover.id}:${pack.cover.version}`}<StickerMedia {client} version={pack.cover.version} />{/key}
-      </button>
+      </KonstaButton>
     {/each}
-    {#if packCursor || packError}<button type="button" disabled={packsLoading} aria-label={t("stickers.more")} on:click={() => void loadPacks(packError && !packs.length)}>···</button>{/if}
+    {#if packCursor || packError}<KonstaButton class="sticker-tab" type="button" clear disabled={packsLoading} aria-label={t("stickers.more")} onClick={() => void loadPacks(packError && !packs.length)}>···</KonstaButton>{/if}
   </div>
   {#if selectedName}<div class="sticker-pack-name">{selectedName}</div>{/if}
-  {#if message}<button class="sticker-message" type="button" on:click={() => { message = ""; void loadFavorites(); }}>{message}</button>{/if}
+  {#if message}<KonstaButton class="sticker-message" type="button" clear small inline onClick={() => { message = ""; void loadFavorites(); }}>{message}</KonstaButton>{/if}
   <div class="sticker-scroll">
     <div class="sticker-grid">
       {#each stickers as sticker (sticker.id)}
         <div class="sticker-cell">
-          <button class="sticker-send" type="button" disabled={!sticker.available} aria-label={sticker.name} use:hold={sticker} on:click={() => void sendSticker(sticker)} on:contextmenu|preventDefault>
-            {#key `${sticker.id}:${sticker.version}`}<StickerMedia {client} version={sticker.version} />{/key}
-          </button>
-          <button class="sticker-favorite" type="button" disabled={favoriteIds === null || favoriteBusy} aria-label={t(favoriteIds?.has(sticker.id) ? "stickers.unfavorite" : "stickers.favorite")} on:click={() => void favorite(sticker)}><Heart size={15} fill={favoriteIds?.has(sticker.id) ? "currentColor" : "none"} /></button>
+          <div class="sticker-send-target" use:hold={sticker}>
+            <KonstaButton class="sticker-send" type="button" clear disabled={!sticker.available} aria-label={sticker.name} onClick={() => void sendSticker(sticker)}>
+              {#key `${sticker.id}:${sticker.version}`}<StickerMedia {client} version={sticker.version} />{/key}
+            </KonstaButton>
+          </div>
+          <KonstaButton class="sticker-favorite" type="button" tonal rounded disabled={favoriteIds === null || favoriteBusy} aria-label={t(favoriteIds?.has(sticker.id) ? "stickers.unfavorite" : "stickers.favorite")} onClick={() => void favorite(sticker)}><Heart size={15} fill={favoriteIds?.has(sticker.id) ? "currentColor" : "none"} /></KonstaButton>
         </div>
       {/each}
     </div>
-    {#if failed}<button class="sticker-status" type="button" on:click={() => void load(!stickers.length)}>{t("stickers.error")}</button>
+    {#if failed}<KonstaButton class="sticker-status" type="button" clear small inline onClick={() => void load(!stickers.length)}>{t("stickers.error")}</KonstaButton>
     {:else if loading}<div class="sticker-status" aria-busy="true">···</div>
-    {:else if cursor}<button class="sticker-status" type="button" on:click={() => void load()}>{t("stickers.more")}</button>
+    {:else if cursor}<KonstaButton class="sticker-status" type="button" clear small inline onClick={() => void load()}>{t("stickers.more")}</KonstaButton>
     {:else if !stickers.length}<div class="sticker-status">{t("stickers.empty")}</div>{/if}
   </div>
 </section>
 {#if preview}
-  <div class="sticker-preview" role="status" aria-label={t("stickers.preview")}>
+  <KonstaGlass class="sticker-preview" role="status" aria-label={t("stickers.preview")}>
     <div class="sticker-preview-image">{#key `${preview.id}:${preview.version}`}<StickerMedia {client} version={preview.version} variant="original" name={preview.name} />{/key}</div>
     <div class="sticker-preview-name">{preview.name}</div>
-  </div>
+  </KonstaGlass>
 {/if}
 
 <style>
-  .sticker-panel { height: min(310px, 40vh); display:flex; flex-direction:column; background:transparent; border-top:1px solid #8883; }
-  .sticker-search { margin:8px 12px 4px; padding:8px 10px; border:0; border-radius:9px; background:#8882; color:inherit; }
-  .sticker-tabs { display:flex; flex:none; gap:7px; overflow-x:auto; padding:5px 12px; border-bottom:1px solid #8883; }
-  .sticker-tabs button { flex:none; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:8px; background:transparent; color:inherit; padding:4px; }
-  .sticker-tabs button.selected { background:#8883; }
+  .sticker-panel { height: min(310px, 40vh); display:flex; flex-direction:column; }
+  .sticker-search-region { margin:8px 12px 4px; flex:none; min-width:0; }
+  .sticker-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0, 0, 0, 0); white-space:nowrap; border:0; }
+  .sticker-search-region :global(.sticker-search) { width:100%; margin:0; padding:0; }
+  .sticker-tabs { display:flex; flex:none; gap:7px; overflow-x:auto; padding:5px 12px; }
+  .sticker-tabs :global(.sticker-tab) { flex:none; width:38px; height:38px; padding:4px; }
   .sticker-pack-name { font-size:12px; opacity:.65; padding:5px 12px 0; }
   .sticker-scroll { overflow:auto; flex:1; overscroll-behavior:contain; }
   .sticker-grid { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:8px; padding:10px 12px; }
   .sticker-cell { position:relative; height:66px; }
-  .sticker-send { display:block; border:0; background:none; width:100%; height:100%; padding:2px 8px; touch-action:pan-y; }
-  .sticker-favorite { position:absolute; top:0; right:0; border:0; background:Canvas; color:var(--k-color-primary, #007aff); border-radius:50%; width:24px; height:24px; display:grid; place-items:center; padding:0; }
-  .sticker-favorite:disabled { opacity:.35; }
-  .sticker-status, .sticker-message { display:block; margin:8px auto; border:0; background:none; color:inherit; font-size:12px; opacity:.7; }
+  .sticker-send-target { width:100%; height:100%; touch-action:pan-y; }
+  .sticker-cell :global(.sticker-send) { width:100%; height:100%; padding:2px 8px; touch-action:pan-y; }
+  .sticker-cell :global(.sticker-favorite) { position:absolute; top:0; right:0; width:24px; height:24px; padding:0; }
+  .sticker-status, .sticker-panel :global(.sticker-status), .sticker-panel :global(.sticker-message) { display:block; margin:8px auto; width:auto; text-align:center; }
+  .sticker-panel :global(.k-button:focus-visible) { outline:2px solid var(--k-color-primary, #007aff); outline-offset:2px; }
   .sticker-status { text-align:center; }
-  .sticker-preview { position:fixed; z-index:10000; left:50%; top:42%; transform:translate(-50%, -50%); width:200px; padding:16px; border-radius:16px; background:Canvas; color:CanvasText; box-shadow:0 8px 36px #0004; pointer-events:none; }
+  :global(.sticker-preview) { position:fixed; z-index:10000; left:50%; top:42%; transform:translate(-50%, -50%); width:200px; padding:16px; border-radius:16px; pointer-events:none; }
+  /* Glass has no Material surface of its own. */
+  :global(.md .sticker-preview) { background-color:var(--color-md-light-surface-3); color:var(--color-md-light-on-surface); }
+  :global(.md.dark .sticker-preview), :global(.md .dark .sticker-preview), :global(.dark .md .sticker-preview) { background-color:var(--color-md-dark-surface-3); color:var(--color-md-dark-on-surface); }
   .sticker-preview-image { height:168px; }
   .sticker-preview-name { padding-top:10px; text-align:center; overflow-wrap:anywhere; }
 </style>

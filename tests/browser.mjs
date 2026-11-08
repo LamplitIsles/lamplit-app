@@ -176,12 +176,7 @@ try {
     const input = page.locator("#companion-textarea");
     await expect(input).toBeVisible();
     if (!external) {
-      await expect(
-        page.locator(".companion-header .companion-avatar"),
-      ).toHaveCount(0);
-      await expect(
-        page.locator(".companion-header .companion-name"),
-      ).toHaveCount(0);
+      await expect(page.getByTestId("companion-identity")).toBeVisible();
       await expect(page.locator(".companion-chat-background img")).toHaveCount(
         2,
       );
@@ -193,9 +188,9 @@ try {
             image.evaluate((img) => img.complete && img.naturalWidth > 0),
           )
           .toBe(true);
-      await page.getByRole("button", { name: "纪念", exact: true }).click();
+      await page.getByRole("link", { name: "纪念", exact: true }).click();
       await expect(page.locator("#companion-drawer-panel")).toBeVisible();
-      await page.getByRole("button", { name: "聊天", exact: true }).click();
+      await page.getByRole("link", { name: "聊天", exact: true }).click();
     }
     await input.fill(`hello-${width}`);
     if (!external)

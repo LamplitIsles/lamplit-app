@@ -118,7 +118,7 @@ try {
     await expect(page.locator(".companion-header")).not.toContainText("愉快");
     const drawer = page.locator("#companion-drawer-panel");
     await page
-      .getByRole("button", { name: "纪念", exact: true })
+      .getByRole("link", { name: "纪念", exact: true })
       .click();
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText("一起走过第 25 段路")).toBeVisible();
@@ -194,7 +194,7 @@ try {
       path: `${evidence}/relationship-${width}.png`,
       fullPage: true,
     });
-    await page.getByRole("button", { name: "日记", exact: true }).click();
+    await page.getByRole("link", { name: "日记", exact: true }).click();
     await expect(drawer.locator(".companion-diary-list-entry")).toHaveCount(30);
     await drawer
       .getByRole("button", { name: "加载更早的变化", exact: true })
@@ -221,7 +221,7 @@ try {
     await drawer.getByRole("button", { name: /返回/ }).click();
     await drawer.getByRole("button", { name: "2026-09-30" }).click();
     await expect(drawer.getByText(/这篇日记太长/)).toBeVisible();
-    await page.getByRole("button", { name: "相册", exact: true }).click();
+    await page.getByRole("link", { name: "相册", exact: true }).click();
     const tile = drawer.getByRole("button", {
       name: "灯火-35.png",
       exact: true,
@@ -284,7 +284,7 @@ try {
     });
     await page.getByRole("button", { name: "关闭大图", exact: true }).click();
     await expect(photo).not.toBeVisible();
-    await page.getByRole("button", { name: "唤醒", exact: true }).click();
+    await page.getByRole("link", { name: "唤醒", exact: true }).click();
     await expect(drawer.getByText(intervalExpectation)).toBeVisible();
     await expect(drawer.getByText(/Asia\/Shanghai/).first()).toBeVisible();
     await expect(drawer.locator(".active-state")).toHaveCount(0);
@@ -300,7 +300,7 @@ try {
         ["reminders", "唤醒"],
       ]) {
         fixture.panels.failures.add(method);
-        await page.getByRole("button", { name: tab, exact: true }).click();
+        await page.getByRole("link", { name: tab, exact: true }).click();
         await expect(drawer.locator('[role="alert"]')).toBeVisible();
         await expect(drawer.locator(".active-state")).toHaveCount(0);
         await page.screenshot({
@@ -313,7 +313,7 @@ try {
         fixture.panels.empty.add(method);
         // History/diary/album reload through their tab; reminders keep their own refresh.
         if (method !== "reminders")
-          await page.getByRole("button", { name: tab, exact: true }).click();
+          await page.getByRole("link", { name: tab, exact: true }).click();
         else
           await drawer
             .getByRole("button", { name: "刷新", exact: true })
@@ -341,9 +341,9 @@ try {
         release = resolve;
       });
       fixture.panels.delays.set("diaryRead", delayed);
-      await page.getByRole("button", { name: "日记", exact: true }).click();
+      await page.getByRole("link", { name: "日记", exact: true }).click();
       await drawer.getByRole("button", { name: "2026-10-02" }).click();
-      await page.getByRole("button", { name: "唤醒", exact: true }).click();
+      await page.getByRole("link", { name: "唤醒", exact: true }).click();
       release();
       fixture.panels.delays.delete("diaryRead");
       await expect(drawer.getByText(intervalExpectation)).toBeVisible();
@@ -352,7 +352,7 @@ try {
       ).toHaveCount(0);
       fixture.remind();
     }
-    await page.getByRole("button", { name: "聊天", exact: true }).click();
+    await page.getByRole("link", { name: "聊天", exact: true }).click();
     await expect(input).toHaveValue("保留的聊天草稿");
     await expect(page.locator(".companion-alarm-source").last()).toHaveText(
       "应用提醒",
@@ -395,12 +395,12 @@ try {
     ).toBe(true);
     if (!external) {
       await page
-        .getByRole("button", {
+        .getByRole("link", {
           name: "纪念",
           exact: true,
         })
         .click();
-      await page.getByRole("button", { name: "相册", exact: true }).click();
+      await page.getByRole("link", { name: "相册", exact: true }).click();
       await tile.click();
       await expect(photo).toBeVisible();
       await photo.click({ button: "right" });
@@ -449,7 +449,7 @@ try {
     const page = await context.newPage();
     await page.goto(url);
     await page
-      .getByRole("button", { name: "Memories", exact: true })
+      .getByRole("link", { name: "Memories", exact: true })
       .click();
     const drawer = page.locator("#companion-drawer-panel");
     const entries = drawer.locator(".companion-history-entry");

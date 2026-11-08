@@ -74,6 +74,12 @@ try {
         : route.abort(),
     );
     await context.addInitScript((mode) => {
+      window.__composerTransitions = [];
+      document.addEventListener("transitionrun", (event) => {
+        if (event.target instanceof Element && event.target.matches(".companion-stickers, .companion-attach")) {
+          window.__composerTransitions.push(event.propertyName);
+        }
+      }, true);
       const viewport = new EventTarget();
       Object.assign(viewport, {
         width: 390,
@@ -123,10 +129,11 @@ try {
     await expect(mic).toBeVisible();
     await expect(stickers).toBeVisible();
     await expect(attach).toBeVisible();
-    await expect(nav.locator('[aria-pressed="true"]')).toHaveCount(1);
-    await expect(nav.locator('[aria-pressed="false"]')).toHaveCount(4);
+    await expect(nav.getByRole("link")).toHaveCount(5);
+    await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
+    await expect(nav.locator('.companion-nav-item:not([aria-current])')).toHaveCount(4);
     const navColors = await nav.locator("button").evaluateAll((buttons) =>
-      buttons.map((button) => getComputedStyle(button).color),
+      buttons.map((button) => getComputedStyle(button.firstElementChild).color),
     );
     expect(navColors[0]).not.toBe(navColors[1]);
     const collapsed = await page.evaluate(() => {
@@ -195,6 +202,11 @@ try {
       await page.evaluate(() => window.setFixtureKeyboard(true));
       await expect(nav).toBeHidden();
     }
+    await expect.poll(() => page.evaluate(() => window.__composerTransitions.includes("width"))).toBe(true);
+    await expect.poll(() => input.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(collapsed.input.width + 50);
+    await expect(stickers).toHaveAttribute("aria-hidden", "true");
+    await expect(attach).toHaveAttribute("aria-hidden", "true");
+    expect(await stickers.evaluate((el) => el.inert)).toBe(true);
     const single = await input.evaluate(
       (el) => el.getBoundingClientRect().height,
     );
@@ -295,11 +307,41 @@ try {
       await expect(nav).toBeVisible();
       await page.evaluate(() => window.setFixtureKeyboard(true));
       await expect(nav).toBeVisible();
+      const draft = await input.inputValue();
+      await input.blur();
+      await expect(stickers).toHaveAttribute("aria-hidden", "false");
+      await input.focus();
+      await expect(stickers).toHaveAttribute("aria-hidden", "true");
+      await input.blur();
+      await expect(stickers).toBeVisible();
+      await expect(stickers).toHaveAttribute("aria-hidden", "false");
+      await expect(input).toHaveValue(draft);
     }
     expect(errors).toEqual([]);
     console.log(`${mode}: passed`);
     await context.close();
   }
+  const reduced = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    locale: "zh-CN",
+    reducedMotion: "reduce",
+  });
+  const reducedPage = await reduced.newPage();
+  await reducedPage.goto(origin);
+  const reducedInput = reducedPage.locator("#companion-textarea");
+  await reducedInput.focus();
+  const reducedSticker = reducedPage.locator(".companion-stickers");
+  await expect(reducedSticker).toHaveAttribute("aria-hidden", "true");
+  const timing = await reducedSticker.evaluate((el) => ({
+    durations: getComputedStyle(el).transitionDuration,
+    delays: getComputedStyle(el).transitionDelay,
+    inert: el.inert,
+  }));
+  expect(timing.durations.split(",").every((value) => parseFloat(value) <= 0.001)).toBe(true);
+  expect(timing.delays.split(",").every((value) => parseFloat(value) === 0)).toBe(true);
+  expect(timing.inert).toBe(true);
+  await reduced.close();
+  console.log("reduced motion: passed");
 } finally {
   await browser.close();
   for (const ws of channels.keys()) ws.terminate();

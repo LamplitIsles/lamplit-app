@@ -2,6 +2,8 @@
   "reminder.expand": "Expand",
   "reminder.collapse": "Collapse",
   "you": "You",
+  "chatDay.today": "Today",
+  "chatDay.yesterday": "Yesterday",
   "navigation.label": "Main navigation",
   "navigation.chat": "Chat",
   "navigation.memories": "Memories",

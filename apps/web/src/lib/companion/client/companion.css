@@ -289,6 +289,32 @@
   height: 100%;
   object-fit: cover;
 }
+.companion-header-identity {
+  min-width: 0;
+  max-width: calc(100% - 152px);
+}
+.companion-identity-chip {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  height: 44px;
+  padding: 6px 14px 6px 6px;
+  gap: 8px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+.companion-identity-avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+.companion-identity-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .companion-presence {
   display: flex;
   align-items: center;
@@ -296,33 +322,35 @@
   font-size: 12px;
   color: var(--f7-list-item-footer-text-color);
 }
+.companion-header-actions-region {
+  margin-left: auto;
+}
 .companion-header-actions {
   display: flex;
   align-items: center;
   flex: none;
   pointer-events: auto;
   border-radius: 999px;
-  background: var(--k-color-md-light-surface-2);
   color: var(--k-color-md-light-on-surface);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.1);
-}
-.companion-header-actions {
-  margin-left: auto;
 }
 .dark #dsh-companion .companion-header-actions,
 .dark#dsh-companion .companion-header-actions {
-  background: var(--k-color-md-dark-surface-5);
   color: var(--k-color-md-dark-on-surface);
 }
 .ios #dsh-companion .companion-header-actions {
-  background: #fff;
   color: #000;
 }
 .ios.dark #dsh-companion .companion-header-actions,
 .ios .dark #dsh-companion .companion-header-actions,
 .ios #dsh-companion.dark .companion-header-actions {
-  background: #2c2c2e;
   color: #fff;
+}
+.ios.dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
+.ios .dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
+.ios #dsh-companion.dark :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar) {
+  box-shadow:
+    inset 0 0 0 0.5px rgb(255 255 255 / 0.12),
+    inset 0 1px 4px rgb(255 255 255 / 0.08);
 }
 .companion-status {
   width: 6px;
@@ -353,6 +381,8 @@
 }
 .companion-timeline-content .messages {
   background: transparent;
+  box-sizing: border-box;
+  padding-inline: max(12px, env(safe-area-inset-left, 0px)) max(12px, env(safe-area-inset-right, 0px));
 }
 
 /* Restore the original soft shadows; iOS masks require shadowing the outer content. */
@@ -370,16 +400,6 @@
 }
 .ios .companion-row .message-content {
   filter: drop-shadow(0 5px 9px var(--companion-message-shadow-color));
-}
-.companion-row :is(.message-avatar, .companion-chat-avatar) {
-  background-color: transparent;
-  align-self: flex-start;
-}
-.companion-row:is(.message-first, .companion-message-first) :is(.message-avatar, .companion-chat-avatar) {
-  opacity: 1;
-}
-.companion-row:not(.message-first, .companion-message-first) :is(.message-avatar, .companion-chat-avatar) {
-  opacity: 0;
 }
 /* Original 20px daisyUI dots, using Framework7's typing markup. */
 .companion-row .message-typing-indicator {
@@ -473,6 +493,12 @@
 }
 .companion-message-time {
   display: block;
+}
+.companion-row.outgoing .companion-message-time {
+  text-align: right;
+}
+.companion-chat-day {
+  margin-bottom: 12px;
 }
 .companion-meta {
   margin-top: 4px;
@@ -583,6 +609,14 @@
 .companion-composer.messagebar {
   padding-bottom: var(--companion-bottom-safe-area);
 }
+.companion-composer-region {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.companion-composer-region .companion-composer {
+  pointer-events: auto;
+}
 .companion-compose-row .toolbar-pane {
   display: flex;
   align-items: center;
@@ -606,33 +640,27 @@
   overflow-x: hidden;
 }
 /* Konsta's colors apply to the chat surface; Framework7 still owns the shell. */
-#dsh-companion .companion-timeline-region,
-#dsh-companion .companion-composer {
+#dsh-companion .companion-timeline-region {
   background: var(--k-color-md-light-surface);
   color: var(--k-color-md-light-on-surface);
 }
 .dark #dsh-companion .companion-timeline-region,
-.dark #dsh-companion .companion-composer,
-.dark#dsh-companion .companion-timeline-region,
-.dark#dsh-companion .companion-composer {
+.dark#dsh-companion .companion-timeline-region {
   background: var(--k-color-md-dark-surface);
   color: var(--k-color-md-dark-on-surface);
 }
-.ios #dsh-companion .companion-timeline-region,
-.ios #dsh-companion .companion-composer {
+.ios #dsh-companion .companion-timeline-region {
   background: var(--color-ios-light-surface);
   color: #000;
 }
 .ios.dark #dsh-companion .companion-timeline-region,
-.ios.dark #dsh-companion .companion-composer,
 .ios .dark #dsh-companion .companion-timeline-region,
-.ios .dark #dsh-companion .companion-composer,
-.ios #dsh-companion.dark .companion-timeline-region,
-.ios #dsh-companion.dark .companion-composer {
+.ios #dsh-companion.dark .companion-timeline-region {
   background: var(--color-ios-dark-surface);
   color: #fff;
 }
 #dsh-companion .companion-composer.messagebar {
+  position: absolute;
   left: 50%;
   right: auto;
   bottom: 12px;
@@ -643,51 +671,50 @@
   transform: translateX(-50%);
   padding: 8px 8px calc(8px + var(--companion-bottom-safe-area));
   border-radius: 28px;
-  background: var(--k-color-md-light-surface-2);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 0.14);
+  touch-action: auto;
 }
 #dsh-companion .companion-composer.messagebar::before,
 #dsh-companion .companion-composer.messagebar::after {
   display: none;
 }
-.dark #dsh-companion .companion-composer.messagebar,
-.dark#dsh-companion .companion-composer.messagebar {
+.md #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar) {
+  background: var(--k-color-md-light-surface-2);
+  color: var(--k-color-md-light-on-surface);
+}
+.md.dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
+.md .dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
+.md #dsh-companion.dark :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar) {
   background: var(--k-color-md-dark-surface-3);
-}
-.ios #dsh-companion .companion-composer.messagebar {
-  background: #f0f0f5;
-}
-.ios.dark #dsh-companion .companion-composer.messagebar,
-.ios .dark #dsh-companion .companion-composer.messagebar,
-.ios #dsh-companion.dark .companion-composer.messagebar {
-  background: #2c2c2e;
+  color: var(--k-color-md-dark-on-surface);
 }
 .companion-bottom-nav {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 2px;
   margin-top: 4px;
 }
 #dsh-companion[data-composer-keyboard-open] .companion-bottom-nav {
   display: none;
 }
+#dsh-companion .companion-bottom-nav .k-toolbar {
+  padding: 0;
+}
+#dsh-companion .companion-bottom-nav .k-toolbar > div:first-child {
+  background: transparent;
+}
+#dsh-companion .companion-bottom-nav .k-toolbar > div:nth-child(2) {
+  width: 100%;
+  gap: 0;
+}
 #dsh-companion .companion-bottom-nav .companion-nav-item {
+  flex: 1;
   min-width: 0;
-  height: 60px;
-  padding: 4px 2px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  padding-inline: 2px;
   border: 0;
-  font-size: 11px;
-  line-height: 1.15;
+  background: transparent;
 }
-#dsh-companion .companion-bottom-nav .companion-nav-item[aria-pressed="false"]:not(:disabled) {
-  color: #737373;
+#dsh-companion .companion-bottom-nav .companion-nav-item:not(.k-tabbar-link-active) {
+  opacity: 0.6;
 }
-.dark #dsh-companion .companion-bottom-nav .companion-nav-item[aria-pressed="false"]:not(:disabled),
-.dark#dsh-companion .companion-bottom-nav .companion-nav-item[aria-pressed="false"]:not(:disabled) {
-  color: #aaa;
+#dsh-companion .companion-bottom-nav .companion-nav-item:disabled {
+  opacity: 0.35;
 }
 #dsh-companion .companion-bottom-nav .companion-nav-item:focus-visible {
   outline: 2px solid currentColor;
@@ -700,6 +727,17 @@
   position: fixed;
   inset: 0;
   z-index: 10001;
+}
+.companion-composer-overlay.companion-overlay-closing {
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .companion-composer-overlay *,
+  .companion-composer-overlay *::before,
+  .companion-composer-overlay *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 .companion-message-overlay {
   z-index: 20000;
@@ -717,6 +755,10 @@
     appearance: none;
     border: 0;
     background-color: transparent;
+  }
+  :where(.sticker-panel .k-button) {
+    appearance: none;
+    border: 0;
   }
 }
 .companion-composer-overlay .k-actions-button:disabled {
@@ -776,19 +818,19 @@
   background: transparent;
 }
 #dsh-companion .companion-konsta-messagebar .k-glass {
-  background: var(--k-color-md-light-surface);
+  background: var(--companion-voice-background, var(--k-color-md-light-surface));
 }
 .dark #dsh-companion .companion-konsta-messagebar .k-glass,
 .dark#dsh-companion .companion-konsta-messagebar .k-glass {
-  background: var(--k-color-md-dark-surface-1);
+  background: var(--companion-voice-background, var(--k-color-md-dark-surface-1));
 }
 .ios #dsh-companion .companion-konsta-messagebar .k-glass {
-  background: #fff;
+  background: var(--companion-voice-background, #fff);
 }
 .ios.dark #dsh-companion .companion-konsta-messagebar .k-glass,
 .ios .dark #dsh-companion .companion-konsta-messagebar .k-glass,
 .ios #dsh-companion.dark .companion-konsta-messagebar .k-glass {
-  background: #1c1c1e;
+  background: var(--companion-voice-background, rgb(255 255 255 / 0.1));
 }
 #dsh-companion .companion-konsta-messagebar .k-glass {
   min-width: 0;
@@ -798,12 +840,26 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+.ios.dark #dsh-companion .companion-konsta-messagebar .k-glass,
+.ios .dark #dsh-companion .companion-konsta-messagebar .k-glass,
+.ios #dsh-companion.dark .companion-konsta-messagebar .k-glass {
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.12), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+#dsh-companion .companion-konsta-messagebar .k-glass:focus-within {
+  box-shadow: inset 0 0 0 1px rgb(0 122 255 / 0.2);
+}
+.ios.dark #dsh-companion .companion-konsta-messagebar .k-glass:focus-within,
+.ios .dark #dsh-companion .companion-konsta-messagebar .k-glass:focus-within,
+.ios #dsh-companion.dark .companion-konsta-messagebar .k-glass:focus-within {
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.14);
 }
 #dsh-companion .companion-konsta-messagebar .k-glass[data-voice-hold] {
-  background: linear-gradient(to bottom, #dce9ff, #9fc3fa);
+  --companion-voice-background: linear-gradient(to bottom, #dce9ff, #9fc3fa);
 }
 #dsh-companion .companion-konsta-messagebar .k-glass[data-voice-cancel] {
-  background: linear-gradient(to bottom, #fce6e6, #efb1b1);
+  --companion-voice-background: linear-gradient(to bottom, #fce6e6, #efb1b1);
 }
 .companion-voice-hold-hint {
   display: none;
@@ -843,15 +899,9 @@
 }
 .dark #dsh-companion .companion-konsta-messagebar textarea,
 .dark#dsh-companion .companion-konsta-messagebar textarea {
-  background: transparent;
   color: var(--k-color-md-dark-on-surface);
 }
 .ios #dsh-companion .companion-konsta-messagebar textarea {
-  height: 48px;
-  min-height: 48px;
-  padding: 16px;
-  padding-inline-end: 60px;
-  background: transparent;
   color: inherit;
 }
 #dsh-companion:not([data-composer-expanded]) .companion-konsta-messagebar textarea {
@@ -859,9 +909,6 @@
   white-space: nowrap;
   overflow: hidden;
   touch-action: none;
-}
-.ios #dsh-companion:not([data-composer-expanded]) .companion-konsta-messagebar textarea {
-  height: 48px !important;
 }
 #dsh-companion:not([data-composer-expanded]) .companion-konsta-messagebar textarea:not(:placeholder-shown) {
   color: transparent;
@@ -898,7 +945,7 @@
   flex: none;
   align-self: stretch;
   align-items: flex-end;
-  gap: 12px;
+  gap: 0;
   margin: 0;
 }
 #dsh-companion .companion-konsta-messagebar .k-button {
@@ -923,6 +970,7 @@
 }
 #dsh-companion .companion-konsta-messagebar .companion-reply-stop {
   order: 1;
+  margin-inline-start: 12px;
 }
 #dsh-companion .companion-konsta-messagebar .companion-stickers {
   order: 2;
@@ -930,11 +978,29 @@
 #dsh-companion .companion-konsta-messagebar .companion-attach {
   order: 3;
 }
+#dsh-companion .companion-konsta-messagebar :is(.companion-stickers, .companion-attach) {
+  flex-shrink: 0;
+  margin-inline-start: 12px;
+  opacity: 1;
+  visibility: visible;
+  transition: width 200ms ease, min-width 200ms ease, margin-inline-start 200ms ease, opacity 150ms ease, visibility 0s;
+}
 #dsh-companion[data-composer-expanded] .companion-konsta-messagebar :is(
   .companion-stickers,
   .companion-attach:not(.companion-voice-cancel)
 ) {
-  display: none;
+  width: 0;
+  min-width: 0;
+  margin-inline-start: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: width 200ms ease, min-width 200ms ease, margin-inline-start 200ms ease, opacity 150ms ease, visibility 0s linear 200ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  #dsh-companion .companion-konsta-messagebar :is(.companion-stickers, .companion-attach) {
+    transition-delay: 0s !important;
+  }
 }
 .companion-row .message-content {
   min-width: 0;
@@ -1497,13 +1563,9 @@
   place-items: center;
 }
 
-.companion-return-latest.button {
-  width: 44px;
-  height: 44px;
-  min-height: 44px;
+.companion-return-latest .k-fab {
   padding: 0;
-  display: grid;
-  place-items: center;
+  border: 0;
 }
 
 .companion-header .button {

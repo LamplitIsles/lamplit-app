@@ -45,6 +45,17 @@ try {
     });
     await context.addInitScript(denyNativeNotifications);
     await context.addInitScript(() => {
+      window.__menuTransitions = [];
+      document.addEventListener("transitionrun", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element) || !target.closest(".companion-composer-overlay")) return;
+        if (target.matches(".k-popover, .k-actions")) {
+          window.__menuTransitions.push({
+            kind: target.matches(".k-popover") ? "popover" : "actions",
+            closed: target.classList.contains("pointer-events-none") || target.classList.contains("translate-y-full"),
+          });
+        }
+      }, true);
       Object.defineProperty(navigator, "clipboard", {
         value: { writeText: async (text) => { window.__copiedText = text; } },
         configurable: true,
@@ -62,6 +73,7 @@ try {
     await bubble.press("Shift+F10");
     await expect(menu).toBeVisible();
     await expect(copy).toBeFocused();
+    await expect.poll(() => page.evaluate(() => window.__menuTransitions.some((item) => item.kind === "popover" && !item.closed))).toBe(true);
     if (width === 390) {
       await page.mouse.move(1, 1);
       const background = await copy.evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -83,6 +95,14 @@ try {
     await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press("Shift+Tab");
     await expect(menu.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".companion-message-overlay")).toHaveAttribute("aria-hidden", "true");
+    await expect(bubble).toBeFocused();
+    await expect.poll(() => page.evaluate(() => window.__menuTransitions.some((item) => item.kind === "popover" && item.closed))).toBe(true);
+    await bubble.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    await page.waitForTimeout(700);
+    await expect(menu).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(menu, "closed after Escape").toHaveCount(0);
     await expect(bubble).toBeFocused();
@@ -124,6 +144,7 @@ try {
       await cdp.detach();
       await page.getByRole("button", { name: "添加附件" }).click();
       const attachmentMenu = page.getByTestId("attachment-menu");
+      await expect.poll(() => page.evaluate(() => window.__menuTransitions.some((item) => item.kind === "actions" && !item.closed))).toBe(true);
       const file = attachmentMenu.getByRole("button", { name: "上传文件", exact: true });
       await expect(file).toBeVisible();
       await page.mouse.move(1, 1);
@@ -137,12 +158,29 @@ try {
       await page.mouse.move(1, 1);
       await page.mouse.up();
       await attachmentMenu.getByRole("button", { name: "取消", exact: true }).click();
+      await expect.poll(() => page.evaluate(() => window.__menuTransitions.some((item) => item.kind === "actions" && item.closed))).toBe(true);
       await expect(attachmentMenu).toHaveCount(0);
     }
     expect(errors).toEqual([]);
     await context.close();
   }
-  console.log("Konsta menus: native highlight and press, keyboard, mouse and touch passed");
+  const reduced = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    locale: "zh-CN",
+    reducedMotion: "reduce",
+  });
+  await reduced.addInitScript(denyNativeNotifications);
+  const reducedPage = await reduced.newPage();
+  await reducedPage.goto(`http://127.0.0.1:${server.port}/`);
+  const reducedBubble = reducedPage.locator(".companion-text-bubble").filter({ hasText: "长按测试消息" });
+  await reducedBubble.click({ button: "right" });
+  const reducedMenu = reducedPage.getByTestId("message-action-menu");
+  await expect(reducedMenu).toBeVisible();
+  await reducedPage.keyboard.press("Escape");
+  await expect(reducedMenu).toHaveCount(0);
+  await expect(reducedBubble).toBeFocused();
+  await reduced.close();
+  console.log("Konsta menus: transitions, reduced motion, focus, keyboard, mouse and touch passed");
 } finally {
   await browser.close();
   for (const channel of channels.values()) channel.close();

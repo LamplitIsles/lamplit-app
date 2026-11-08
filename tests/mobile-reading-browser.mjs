@@ -165,7 +165,7 @@ try {
             roomId: "!room:test",
           },
         });
-        await message("image", "![图片](/icons/cfl-192.png)");
+        await message("image", "![图片](/api/test/avatar.png)");
         await message("ordinary", "应用提醒 " + long, { role: "user" });
         await message("older", "更早消息", {}, true);
         const page = await context.newPage();
@@ -246,39 +246,31 @@ try {
         }
         const measure = async (id) =>
           row(id).evaluate((el) => {
-            const avatar = el
-                .querySelector(".companion-chat-avatar")
-                ?.getBoundingClientRect(),
-              bubble = el
+            const bubble = el
                 .querySelector(".companion-message-body")
                 .parentElement.parentElement
                 .getBoundingClientRect();
             return {
-              avatarLeft: avatar?.left,
-              avatarRight: avatar?.right,
-              avatarWidth: avatar?.width,
               bubbleLeft: bubble.left,
               bubbleRight: bubble.right,
               bubbleWidth: bubble.width,
             };
           });
-        await expect(
-          row("long").locator(".companion-chat-avatar img"),
-        ).toBeVisible();
+        await expect(page.getByTestId("companion-identity").locator("img")).toBeVisible();
+        await expect(row("long").locator(".companion-chat-avatar")).toHaveCount(0);
         await expect(
           row("outgoing").locator(".companion-chat-avatar"),
         ).toHaveCount(0);
         const bounds = await measure("long"),
           outgoing = await measure("outgoing");
         console.log({ theme, width, scheme, bounds, outgoing });
-        expect(bounds.avatarWidth).toBeGreaterThan(0);
-        expect(bounds.avatarRight).toBeLessThanOrEqual(bounds.bubbleLeft);
+        expect(bounds.bubbleLeft).toBeGreaterThanOrEqual(12);
         expect(bounds.bubbleRight).toBeLessThanOrEqual(
           outgoing.bubbleRight + 2,
         );
         if (width < 500) {
-          expect(outgoing.bubbleRight).toBeLessThanOrEqual(width);
-          expect(outgoing.bubbleLeft).toBeGreaterThanOrEqual(0);
+          expect(outgoing.bubbleRight).toBeLessThanOrEqual(width - 12);
+          expect(outgoing.bubbleLeft).toBeGreaterThanOrEqual(12);
         } else expect(bounds.bubbleWidth).toBeLessThan(800);
         await row("long").scrollIntoViewIfNeeded();
         await page.screenshot({
@@ -395,11 +387,7 @@ try {
         await context.request.post(`${controlUrl}/disconnect`);
         await message("reconnected", "重连标记");
         await expect(row("reconnected")).toHaveCount(1, { timeout: 15000 });
-        await expect(page.getByText("在线· 愉快", { exact: true })).toBeVisible(
-          {
-            timeout: 15000,
-          },
-        );
+        await expect(page.locator(".companion-presence")).toHaveText("在线", { timeout: 15000 });
         await expect(collapse).toBeVisible();
         await expect(page.locator("#companion-textarea")).toHaveValue(
           "保留草稿",
