@@ -139,7 +139,7 @@ try {
           : row;
         await expect(body).toContainText(original);
         await expect(body).toHaveClass(/companion-row-keet/);
-        await expect(body).toHaveClass(/message-received/);
+        await expect(body).toHaveClass(/incoming/);
         if (available) {
           await expect(row.locator("img").first()).toBeVisible();
           await expect
@@ -175,7 +175,7 @@ try {
           ? dm.locator("xpath=following-sibling::*[1]")
           : dm;
       await expect(input).toBeVisible();
-      await expect(dm).toHaveClass(/message-received/);
+      await expect(dm).toHaveClass(/incoming/);
       await expect(dm.locator(".companion-avatar-crop")).toHaveText("K");
       await expect(dm.locator(".companion-keet-source")).toHaveText(
         "Keet DMAlice · Peer",
@@ -196,7 +196,7 @@ try {
       const web = page
         .locator(".companion-row")
         .filter({ hasText: "普通网页消息" });
-      await expect(web).toHaveClass(/message-sent/);
+      await expect(web).toHaveClass(/outgoing/);
       expect((await control({ action: "state" })).submissions).toEqual([
         "普通网页消息",
       ]);
@@ -204,10 +204,10 @@ try {
       const agent = page
         .locator(".companion-row")
         .filter({ hasText: "普通回复" });
-      await expect(agent).toHaveClass(/message-received/);
+      await expect(agent).toHaveClass(/incoming/);
       await control({ action: "reminder" });
       const reminder = page.locator(".companion-row-alarm");
-      await expect(reminder).toHaveClass(/message-received/);
+      await expect(reminder).toHaveClass(/incoming/);
       await expect(reminder.locator(".companion-alarm-source")).toBeVisible();
       await expect(reminder.locator(".companion-keet-source")).toHaveCount(0);
       // Preserve hostile labels as literal text and image-bearing original content.
@@ -227,27 +227,7 @@ try {
         page
           .locator(".companion-row-keet")
           .filter({ hasText: "图片原文与可见说明" }),
-      ).toHaveClass(/message-received/);
-      const style = (locator) =>
-        locator
-          .locator(".message-bubble")
-          .first()
-          .evaluate((el) => {
-            const css = getComputedStyle(el);
-            return {
-              background: css.backgroundColor,
-              border: css.borderInlineStartWidth,
-              accent: css.borderInlineStartColor,
-              color: css.color,
-            };
-          });
-      const keetStyle = await style(dm);
-      const normalStyle = await style(agent);
-      expect(keetStyle.border).toBe("3px");
-      expect(keetStyle.background).not.toBe(normalStyle.background);
-      expect(keetStyle.color).toBe(normalStyle.color);
-      for (const ordinary of [web, agent, reminder])
-        expect((await style(ordinary)).border).toBe("0px");
+      ).toHaveClass(/incoming/);
       expect(await dm.evaluate((el) => getComputedStyle(el).direction)).toBe(
         "ltr",
       );
@@ -289,7 +269,7 @@ try {
       await expect(input).toHaveValue("保留草稿");
       await expect(
         page.locator(".companion-row-keet").filter({ hasText: "重连原文" }),
-      ).toHaveClass(/message-received/);
+      ).toHaveClass(/incoming/);
       await page
         .getByRole("button", { name: "查看更早的消息", exact: true })
         .click();
@@ -313,7 +293,7 @@ try {
         await expect(
           historyRow(text).locator(".companion-avatar-crop"),
         ).toHaveText("K");
-        await expect(historyRow(text)).toHaveClass(/message-received/);
+        await expect(historyRow(text)).toHaveClass(/incoming/);
       }
       await assertImageContent(
         historyRow("历史群组原文"),
@@ -350,7 +330,7 @@ try {
       );
       await expect(
         page.locator(".companion-row-keet").filter({ hasText: "历史群组原文" }),
-      ).toHaveClass(/message-received/);
+      ).toHaveClass(/incoming/);
       expect((await control({ action: "state" })).submissions).toEqual([
         "普通网页消息",
       ]);

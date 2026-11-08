@@ -7,6 +7,7 @@ interface VirtualKeyboard extends EventTarget {
 export function visibleViewport(
   node: HTMLElement,
   host: Window = window,
+  onComposerModeChange: () => void = () => {},
 ): { destroy(): void } {
   const viewport = host.visualViewport;
   const keyboard = (
@@ -33,6 +34,19 @@ export function visibleViewport(
       ),
     );
   };
+  const setComposerMode = (keyboardOpen: boolean) => {
+    const input = node.querySelector("#companion-textarea");
+    const focused = input !== null && host.document?.activeElement === input;
+    const coarsePointer = host.matchMedia?.("(pointer: coarse)").matches ?? false;
+    const expanded = focused && (keyboardOpen || !coarsePointer);
+    const keyboardVisible = focused && keyboardOpen;
+    const changed =
+      node.hasAttribute("data-composer-expanded") !== expanded ||
+      node.hasAttribute("data-composer-keyboard-open") !== keyboardVisible;
+    node.toggleAttribute("data-composer-expanded", expanded);
+    node.toggleAttribute("data-composer-keyboard-open", keyboardVisible);
+    if (changed) onComposerModeChange();
+  };
   if (keyboard) keyboard.overlaysContent = true;
   const update = () => {
     frame = 0;
@@ -51,7 +65,14 @@ export function visibleViewport(
       "data-chat-orientation",
       restingWidth > restingHeight ? "landscape" : "portrait",
     );
-    if (keyboard) {
+    const height = viewport?.height ?? host.innerHeight;
+    const covered = focused
+      ? Math.max(0, restingHeight - height - (viewport?.offsetTop ?? 0))
+      : 0;
+    const coarsePointer = host.matchMedia?.("(pointer: coarse)").matches ?? false;
+    // Some hosts expose VirtualKeyboard but still resize the visual viewport
+    // without reporting keyboard bounds. Use that geometry when it happens.
+    if (keyboard && (keyboard.boundingRect.height > 0 || covered < 80)) {
       node.setAttribute("data-keyboard-overlay", "");
       const rect = keyboard.boundingRect;
       const bounds = (
@@ -70,6 +91,7 @@ export function visibleViewport(
         bottom > headerBottom;
       const docked =
         intersects && bottom === host.innerHeight && rect.y >= headerBottom;
+      setComposerMode(intersects || (coarsePointer && covered >= 80));
       // CSS env owns the docked case. A floating rectangle needs the space
       // below its top, not rect.height; a rectangle outside chat needs none.
       if (!docked && rect.height > 0) {
@@ -80,12 +102,9 @@ export function visibleViewport(
       }
       return;
     }
-    const height = viewport?.height ?? host.innerHeight;
     // Native resizes-content already shrinks innerHeight; visualViewport is
     // an absolute available height, never an additional height subtraction.
-    const covered = focused
-      ? Math.max(0, restingHeight - height - (viewport?.offsetTop ?? 0))
-      : 0;
+    setComposerMode(coarsePointer && covered >= 80);
     node.style.setProperty(
       "--companion-bottom-safe-area",
       `max(0px, calc(var(--companion-system-safe-area) - ${covered}px))`,
@@ -119,6 +138,8 @@ export function visibleViewport(
       if (frame) host.cancelAnimationFrame(frame);
       if (keyboard) keyboard.overlaysContent = previousOverlay!;
       node.removeAttribute("data-keyboard-overlay");
+      node.removeAttribute("data-composer-expanded");
+      node.removeAttribute("data-composer-keyboard-open");
       node.removeAttribute("data-chat-orientation");
       clear();
     },

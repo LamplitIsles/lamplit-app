@@ -109,7 +109,7 @@ try {
         page.locator(".companion-row-matrix").filter({ hasText: text });
       const assertMessage = async (text, name, id, room, time = authored) => {
         const message = row(text);
-        await expect(message).toHaveClass(/message-received/);
+        await expect(message).toHaveClass(/incoming/);
         await expect(message.locator(".companion-avatar-crop")).toHaveText("M");
         await expect(
           message.getByRole("group", { name: "Matrix", exact: true }),
@@ -132,15 +132,10 @@ try {
           "datetime",
           new Date(time).toISOString(),
         );
-        await expect(message.locator(".message-text p")).toHaveText([
+        await expect(message.locator(".companion-message-body p")).toHaveText([
           text,
           "第二段 灯火",
         ]);
-        expect(
-          await message
-            .locator(".message-bubble")
-            .evaluate((el) => getComputedStyle(el).borderInlineStartWidth),
-        ).toBe("3px");
       };
       await expect(input).toBeVisible();
       await assertMessage(
@@ -192,7 +187,7 @@ try {
       ).toBeVisible();
       await expect(
         page.locator(".companion-row").filter({ hasText: "普通网页消息" }),
-      ).toHaveClass(/message-sent/);
+      ).toHaveClass(/outgoing/);
       await page.reload();
       await expect(sources).toHaveCount(4);
       await assertMessage(

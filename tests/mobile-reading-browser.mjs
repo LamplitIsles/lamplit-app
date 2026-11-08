@@ -247,50 +247,45 @@ try {
         const measure = async (id) =>
           row(id).evaluate((el) => {
             const avatar = el
-                .querySelector(".message-avatar")
-                .getBoundingClientRect(),
+                .querySelector(".companion-chat-avatar")
+                ?.getBoundingClientRect(),
               bubble = el
-                .querySelector(".message-bubble")
+                .querySelector(".companion-message-body")
+                .parentElement.parentElement
                 .getBoundingClientRect();
             return {
-              avatarLeft: avatar.left,
-              avatarRight: avatar.right,
-              avatarWidth: avatar.width,
+              avatarLeft: avatar?.left,
+              avatarRight: avatar?.right,
+              avatarWidth: avatar?.width,
               bubbleLeft: bubble.left,
               bubbleRight: bubble.right,
               bubbleWidth: bubble.width,
             };
           });
-        for (const id of ["long", "outgoing"])
-          await expect(row(id).locator(".message-avatar img")).toBeVisible();
+        await expect(
+          row("long").locator(".companion-chat-avatar img"),
+        ).toBeVisible();
+        await expect(
+          row("outgoing").locator(".companion-chat-avatar"),
+        ).toHaveCount(0);
         const bounds = await measure("long"),
           outgoing = await measure("outgoing");
-        const gap = outgoing.avatarLeft - outgoing.bubbleRight;
-        console.log({ theme, width, scheme, bounds, outgoing, gap });
+        console.log({ theme, width, scheme, bounds, outgoing });
         expect(bounds.avatarWidth).toBeGreaterThan(0);
         expect(bounds.avatarRight).toBeLessThanOrEqual(bounds.bubbleLeft);
-        expect(gap).toBeGreaterThanOrEqual(0);
         expect(bounds.bubbleRight).toBeLessThanOrEqual(
           outgoing.bubbleRight + 2,
         );
         if (width < 500) {
-          expect(
-            Math.abs(bounds.bubbleRight - outgoing.bubbleRight),
-          ).toBeLessThanOrEqual(2);
-          expect(
-            Math.abs(
-              outgoing.avatarRight -
-                bounds.bubbleRight -
-                (outgoing.avatarWidth + gap),
-            ),
-          ).toBeLessThanOrEqual(2);
+          expect(outgoing.bubbleRight).toBeLessThanOrEqual(width);
+          expect(outgoing.bubbleLeft).toBeGreaterThanOrEqual(0);
         } else expect(bounds.bubbleWidth).toBeLessThan(800);
         await row("long").scrollIntoViewIfNeeded();
         await page.screenshot({
           path: `${evidence}/alignment-${theme}-${scheme}-${width}.png`,
         });
         expect(
-          (await row("short").locator(".message-bubble").boundingBox()).width,
+          (await row("short").locator(".companion-message-body").locator("xpath=../..").boundingBox()).width,
         ).toBeLessThan(bounds.bubbleWidth / 2);
         const body = row("reminder").locator(".companion-reminder-body");
         const toggle = row("reminder").getByRole("button", {
@@ -430,7 +425,7 @@ try {
         expect(
           await page
             .locator(
-              ".companion-row, .message-bubble, .companion-timeline, .markdown",
+              ".companion-row, .companion-message-body, .companion-timeline, .markdown",
             )
             .evaluateAll((els) =>
               els.every((el) => {

@@ -34,9 +34,6 @@
     f7ready,
     Button,
     Preloader,
-    Panel,
-    Popover,
-    Block,
     List,
     ListItem,
     Navbar,
@@ -44,12 +41,21 @@
     PageContent,
     Messages,
     Message,
-    Messagebar,
-    MessagebarAttachments,
-    MessagebarAttachment,
   } from "framework7-svelte";
+  import {
+    KonstaProvider,
+    Message as KonstaMessage,
+    Messagebar as KonstaMessagebar,
+    Button as KonstaButton,
+    Chip as KonstaChip,
+    Actions as KonstaActions,
+    ActionsGroup as KonstaActionsGroup,
+    ActionsButton as KonstaActionsButton,
+    Sheet as KonstaSheet,
+    Popover as KonstaPopover,
+  } from "konsta/svelte";
   import { syncSystemBars } from "./native-navigation.ts";
-  import Menu from "lucide-svelte/icons/menu";
+  import MessageCircle from "lucide-svelte/icons/message-circle";
   import Settings from "lucide-svelte/icons/settings";
   import ArrowLeft from "lucide-svelte/icons/arrow-left";
   import Palette from "lucide-svelte/icons/palette";
@@ -92,9 +98,11 @@
     dismissComposerOnTimelineTap,
   } from "./reading-focus.ts";
   import {
+    currentMessageMenu,
     messageMenu,
     dismissMessageMenu,
     messageMenuOpen,
+    runMessageMenuAction,
   } from "./message-menu.ts";
   import { Capacitor } from "@capacitor/core";
   import { Clipboard } from "@capacitor/clipboard";
@@ -243,6 +251,7 @@
   ] as const;
   let composer = createComposerState();
   let composerInput: HTMLTextAreaElement;
+  let composerPreview: HTMLElement | undefined;
   let photoLibraryInput: HTMLInputElement;
   let photoCaptureInput: HTMLInputElement;
   let fileInput: HTMLInputElement;
@@ -253,6 +262,12 @@
   let photoDisposed = false;
   let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
+  let konstaTheme: "ios" | "material" = "material";
+  onMount(() => {
+    f7ready(() => {
+      konstaTheme = f7.theme === "ios" ? "ios" : "material";
+    });
+  });
   let timeline: HTMLDivElement;
   let timelineReady = false;
   let timelineRevealFrame = 0;
@@ -354,12 +369,12 @@
   let liveAnnouncement: string | CompanionMessage = "";
 
   let lightboxReturnFocus: HTMLElement | undefined;
-  let relationshipDrawer: HTMLElement;
   let photoBrowser: PhotoBrowser.PhotoBrowser | undefined;
   let imageSessionGeneration = 0;
   let stickerClient: StickerClient | undefined;
   let unsubscribeStickerAuthorization: (() => void) | undefined;
   let stickerOpen = false;
+  let attachmentOpen = false;
   let stickerFavoritesRevision = 0;
   let searchOpen = false;
 
@@ -372,7 +387,7 @@
   let waitingRotationTimer: ReturnType<typeof setInterval> | undefined;
   let contextMeterOpen = false;
   let contextMeterButton: HTMLButtonElement;
-  let contextMeterPopover: HTMLElement;
+  let contextMeterRestoreFocus = true;
   let continuityStatus: CompactionLifecycleState | undefined;
   let imageDrafts: CompanionImageDraft[] = [];
   let fileDrafts: ChatFileDraft[] = [];
@@ -386,20 +401,35 @@
   let deferredPreviewReleases: CompanionImageDraft[] = [];
   let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
-  let messagebarComponent: Messagebar;
+  let messagebarInstance: ReturnType<typeof f7.messagebar.create> | undefined;
   let messagesComponent: Messages;
   let voiceInsertion = { start: 0, end: 0 };
   let voiceOriginDraft = "";
   let voiceStatus: VoiceRecordingStatus = "idle";
   const voiceCaptureAvailable = canCaptureVoice();
   let voiceFailure: CompanionLocaleKey | "" = "";
+  let voiceHoldActive = false;
+  let voiceHoldCancel = false;
+  let clearVoiceGesture: (() => void) | undefined;
+  let voicePermissionPending = false;
+  let voicePermissionVerified = false;
+  let voicePermissionNotice = false;
   let voiceController = new VoiceRecordingController({
     onStatus: (status) => {
       voiceStatus = status;
     },
-    onDurationLimit: () => void stopVoiceAndTranscribe(),
+    onDurationLimit: () => {
+      const send = voiceHoldActive && !voiceHoldCancel;
+      clearVoiceGesture?.();
+      voiceHoldActive = false;
+      if (voiceHoldCancel) void cancelVoiceInput();
+      else void stopVoiceAndTranscribe(send);
+    },
     onError: (error) => {
       if (error.code !== "cancelled") {
+        clearVoiceGesture?.();
+        voiceHoldActive = false;
+        voiceHoldCancel = false;
         voiceFailure = voiceErrorKey(error);
         liveAnnouncement = { key: voiceFailure };
       }
@@ -412,12 +442,13 @@
   $: effectiveSessionReadiness = sessionReadiness;
   $: if (sessionId !== panelSession) {
     resetStickerClient();
+    attachmentOpen = false;
     imageSessionGeneration++;
     dismissMessageMenu();
     imagePress?.destroy();
     imagePress = undefined;
     lightboxReturnFocus = undefined;
-    photoBrowser?.close();
+    closePhotoBrowser();
     lightbox = undefined;
     lightboxUrl = "";
     panelSession = sessionId;
@@ -512,21 +543,50 @@
   async function scheduleComposerResize(): Promise<void> {
     await tick();
     if (!composerInput?.isConnected) return;
+    if (composerPreview) {
+      const value = composerInput.value;
+      composerPreview.textContent = value.replace(/\s*\n\s*/g, " ").trim() +
+        (value.includes("\n") ? "…" : "");
+    }
     f7.input.resizeTextarea(composerInput);
-    messagebarComponent?.instance()?.resizePage();
+    messagebarInstance?.resizePage();
   }
 
   function connectMessagebar(
     node: HTMLElement,
-    options: { label: string; suggestions: boolean },
+    options: {
+      label: string;
+      suggestions: boolean;
+      readOnly: boolean;
+      hold: boolean;
+      cancel: boolean;
+      hint: string;
+    },
   ) {
-    const bar = node.parentElement!;
+    const bar = node.closest<HTMLElement>(".companion-composer")!;
     const input = bar.querySelector<HTMLTextAreaElement>("textarea")!;
     composerInput = input;
+    const preview = document.createElement("span");
+    preview.className = "companion-composer-preview";
+    preview.setAttribute("aria-hidden", "true");
+    input.parentElement?.append(preview);
+    composerPreview = preview;
+    const holdHint = document.createElement("span");
+    holdHint.className = "companion-voice-hold-hint";
+    holdHint.setAttribute("aria-hidden", "true");
+    input.parentElement?.append(holdHint);
+    input.classList.add("resizable");
     input.setAttribute("enterkeyhint", "send");
     input.addEventListener("focus", closeStickerPanel);
     const update = (value: typeof options) => {
       input.setAttribute("aria-label", value.label);
+      input.readOnly = value.readOnly;
+      input.parentElement?.toggleAttribute("data-voice-hold", value.hold);
+      input.parentElement?.toggleAttribute(
+        "data-voice-cancel",
+        value.hold && value.cancel,
+      );
+      holdHint.textContent = value.hint;
       if (value.suggestions) {
         input.setAttribute("aria-autocomplete", "list");
         input.setAttribute("aria-controls", "companion-command-suggestions");
@@ -536,25 +596,107 @@
       }
     };
     update(options);
-    // Framework7 Svelte 9.2 Messagebar expects Input callbacks wrapped in detail[0].
-    // Its Input currently forwards a native event, so adapt that boundary before it runs.
-    const wrapInput = (event: Event) =>
-      Object.defineProperty(event, "detail", {
-        value: [event],
-        configurable: true,
-      });
-    input.addEventListener("input", wrapInput, true);
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let pointer: {
+      id: number;
+      x: number;
+      y: number;
+      session: string | undefined;
+      activated: boolean;
+      moved: boolean;
+    } | undefined;
+    const clearHold = () => {
+      clearTimeout(holdTimer);
+      holdTimer = undefined;
+      pointer = undefined;
+      window.removeEventListener("pointermove", moveHold, true);
+      window.removeEventListener("pointerup", endHold, true);
+      window.removeEventListener("pointercancel", cancelHold, true);
+    };
+    clearVoiceGesture = clearHold;
+    const moveHold = (event: PointerEvent) => {
+      if (!pointer || event.pointerId !== pointer.id) return;
+      if (pointer.activated) {
+        voiceHoldCancel = event.clientY < pointer.y - 60;
+        event.preventDefault();
+      } else if (
+        Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 12
+      ) {
+        pointer.moved = true;
+        clearTimeout(holdTimer);
+      }
+    };
+    const endHold = (event: PointerEvent) => {
+      if (!pointer || event.pointerId !== pointer.id) return;
+      const { activated, moved } = pointer;
+      const cancel = voiceHoldCancel;
+      clearHold();
+      if (!activated) {
+        if (!moved) input.focus();
+        return;
+      }
+      event.preventDefault();
+      if (!voiceHoldActive) return;
+      voiceHoldActive = false;
+      voiceHoldCancel = false;
+      if (cancel || voiceStatus !== "recording") void cancelVoiceInput();
+      else void stopVoiceAndTranscribe(true);
+    };
+    const cancelHold = (event: PointerEvent) => {
+      if (!pointer || event.pointerId !== pointer.id) return;
+      const activated = pointer.activated;
+      clearHold();
+      if (activated) void cancelVoiceInput();
+    };
+    const startHold = (event: PointerEvent) => {
+      if (
+        !event.isPrimary || event.button !== 0 || pointer ||
+        input.readOnly || voiceBusy || voicePermissionPending || nativePhotoBusy ||
+        projection.canSubmit === false || voiceCapability !== "available" ||
+        !voiceCaptureAvailable ||
+        bar.closest(".page")?.hasAttribute("data-composer-expanded")
+      ) return;
+      event.preventDefault();
+      pointer = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        session: sessionId,
+        activated: false,
+        moved: false,
+      };
+      window.addEventListener("pointermove", moveHold, true);
+      window.addEventListener("pointerup", endHold, true);
+      window.addEventListener("pointercancel", cancelHold, true);
+      holdTimer = setTimeout(() => {
+        if (!pointer || pointer.moved || pointer.session !== sessionId) return;
+        pointer.activated = true;
+        voiceHoldActive = true;
+        voiceHoldCancel = false;
+        input.blur();
+        void toggleVoiceInput();
+      }, 450);
+    };
+    input.addEventListener("pointerdown", startHold);
+    let disposed = false;
+    f7ready(() => {
+      if (disposed) return;
+      // Framework7 accepts bottomOffset at runtime but omits it from its types.
+      const params = { el: bar, maxHeight: 144, bottomOffset: 12 };
+      messagebarInstance = f7.messagebar.create(params);
+      void scheduleComposerResize();
+    });
     input.addEventListener("paste", onPaste);
     input.addEventListener("keydown", onKeydown);
     input.addEventListener("compositionstart", onCompositionStart);
     input.addEventListener("compositionend", onCompositionEnd);
     const observer = new ResizeObserver(() => {
-      messagebarComponent?.instance()?.resizePage();
+      messagebarInstance?.resizePage();
       bar
         .closest<HTMLElement>(".page")
         ?.style.setProperty(
           "--companion-messagebar-height",
-          `${bar.offsetHeight}px`,
+          `${bar.offsetHeight + 12}px`,
         );
     });
     observer.observe(bar, { box: "border-box" });
@@ -563,8 +705,16 @@
       update,
       destroy() {
         observer.disconnect();
+        clearHold();
+        if (clearVoiceGesture === clearHold) clearVoiceGesture = undefined;
+        input.removeEventListener("pointerdown", startHold);
+        holdHint.remove();
+        preview.remove();
+        if (composerPreview === preview) composerPreview = undefined;
         input.removeEventListener("focus", closeStickerPanel);
-        input.removeEventListener("input", wrapInput, true);
+        disposed = true;
+        messagebarInstance?.destroy();
+        messagebarInstance = undefined;
         input.removeEventListener("paste", onPaste);
         input.removeEventListener("keydown", onKeydown);
         input.removeEventListener("compositionstart", onCompositionStart);
@@ -772,21 +922,35 @@
     continuityStatus = lifecycle?.status === "complete" ? undefined : lifecycle;
   }
 
-  function closePopover(node: HTMLElement | undefined): boolean {
-    const popover = node && f7.popover.get(node);
-    if (!popover) return false;
-    popover.close();
-    return true;
-  }
-
   function openContextMeter(): void {
     if (!contextCapacity) return;
+    contextMeterRestoreFocus = true;
     contextMeterOpen = true;
   }
 
   function closeContextMeter(restoreFocus = true): void {
-    if (restoreFocus && closePopover(contextMeterPopover)) return;
+    contextMeterRestoreFocus = restoreFocus;
     contextMeterOpen = false;
+  }
+  function contextMenuFocus(node: HTMLElement) {
+    const overlay = { el: node };
+    overlayOpening(overlay);
+    node.focus({ preventScroll: true });
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeContextMeter();
+      }
+    };
+    node.addEventListener("keydown", keydown);
+    return {
+      destroy() {
+        node.removeEventListener("keydown", keydown);
+        if (contextMeterRestoreFocus) overlayClosed(overlay);
+        else overlayDestroyed(overlay);
+      },
+    };
   }
 
   function toggleContextMeter(): void {
@@ -1135,7 +1299,7 @@
   }
 
   function connectViewport(node: HTMLElement): { destroy(): void } {
-    return visibleViewport(node.parentElement!);
+    return visibleViewport(node.parentElement!, window, () => void scheduleComposerResize());
   }
 
   // A marker can move as pages are inserted. Track the visibility visit by gap
@@ -1215,6 +1379,54 @@
   function closeStickerPanel(): void {
     stickerOpen = false;
   }
+  function closeComposerMenu(): void {
+    attachmentOpen = false;
+    closeStickerPanel();
+  }
+  function composerMenuFocus(node: HTMLElement) {
+    const overlay = { el: node };
+    overlayOpening(overlay);
+    overlayOpened(overlay);
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeComposerMenu();
+      }
+    };
+    node.addEventListener("keydown", keydown);
+    return {
+      destroy() {
+        node.removeEventListener("keydown", keydown);
+        overlayClosed(overlay);
+      },
+    };
+  }
+  function messageMenuPortal(node: HTMLElement) {
+    document.body.append(node);
+    return { destroy: () => node.remove() };
+  }
+  function messageMenuFocus(node: HTMLElement) {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        dismissMessageMenu();
+      } else if (event.key === "Tab") {
+        const buttons = [...node.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+        if (!buttons.length) return;
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        event.preventDefault();
+        const next = index < 0
+          ? (event.shiftKey ? buttons.length - 1 : 0)
+          : (index + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length;
+        buttons[next]?.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener("keydown", keydown, true);
+    queueMicrotask(() => node.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }));
+    return { destroy: () => document.removeEventListener("keydown", keydown, true) };
+  }
   function resetStickerClient(): void {
     unsubscribeStickerAuthorization?.();
     unsubscribeStickerAuthorization = undefined;
@@ -1237,6 +1449,7 @@
   function toggleStickerPanel(): void {
     if (stickerOpen) { closeStickerPanel(); return; }
     try {
+      attachmentOpen = false;
       currentStickerClient();
       composerInput?.blur();
       stickerOpen = true;
@@ -1336,21 +1549,65 @@
     return "voice.failed";
   }
 
-  function voiceUnavailableText(t: CompanionTranslate): string {
-    return voiceCaptureAvailable ? t("voice.install") : t("voice.unavailable");
-  }
-
   async function cancelVoiceInput(): Promise<void> {
+    clearVoiceGesture?.();
+    voiceHoldActive = false;
+    voiceHoldCancel = false;
     voiceGeneration += 1;
+    voiceFailure = "";
+    voicePermissionNotice = false;
     try {
       await voiceController.cancel();
     } catch {
       /* cleanup is best effort; the controller stops every known track */
     }
-    voiceFailure = "";
   }
 
-  async function stopVoiceAndTranscribe(): Promise<void> {
+  async function hasVoicePermission(generation: number): Promise<boolean> {
+    if (voicePermissionPending) return false;
+    voicePermissionPending = true;
+    const originSessionId = sessionId;
+    const canShowResult = () =>
+      sessionId === originSessionId && composerInput?.isConnected && !document.hidden;
+    let state: PermissionState | undefined;
+    try {
+      try {
+        state = (await navigator.permissions?.query({ name: "microphone" as PermissionName }))?.state;
+      } catch {
+        // Some browsers do not expose microphone permission through this API.
+      }
+      if (generation !== voiceGeneration) return false;
+      if (state === "granted" || (state === undefined && voicePermissionVerified)) {
+        voicePermissionVerified = true;
+        return true;
+      }
+      if (state === "denied") {
+        voiceFailure = "voice.permission";
+        liveAnnouncement = { key: "voice.permission" };
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      voicePermissionVerified = true;
+      if (canShowResult()) {
+        voicePermissionNotice = true;
+      }
+      return false;
+    } catch (error) {
+      if (canShowResult()) {
+        voiceFailure = error instanceof DOMException &&
+          (error.name === "NotAllowedError" || error.name === "SecurityError")
+          ? "voice.permission"
+          : "voice.failed";
+        liveAnnouncement = { key: voiceFailure };
+      }
+      return false;
+    } finally {
+      voicePermissionPending = false;
+    }
+  }
+
+  async function stopVoiceAndTranscribe(send = false): Promise<void> {
     const generation = voiceGeneration;
     const originSessionId = sessionId;
     const originDraft = voiceOriginDraft;
@@ -1361,10 +1618,33 @@
         !transcription ||
         generation !== voiceGeneration ||
         sessionId !== originSessionId ||
-        composer.draft !== originDraft
+        (!send && composer.draft !== originDraft)
       )
         return;
       const text = normalizeVoiceTranscription(transcription).text;
+      if (send) {
+        if (text.length > MAX_MESSAGE_LENGTH) {
+          setDraft(composer.draft ? `${composer.draft}\n${text}` : text);
+          liveAnnouncement = {
+            key: "message.tooLong",
+            params: { limit: MAX_MESSAGE_LENGTH, count: text.length },
+          };
+          return;
+        }
+        try {
+          await actions.send(text, []);
+          returnToLatest();
+        } catch (error) {
+          if (
+            error instanceof CompanionPreControllerError &&
+            sessionId === originSessionId
+          ) {
+            setDraft(composer.draft ? `${composer.draft}\n${text}` : text);
+            liveAnnouncement = { key: "error.restored" };
+          }
+        }
+        return;
+      }
       setDraft(
         originDraft.slice(0, insertion.start) +
           text +
@@ -1411,8 +1691,17 @@
       return;
     }
     voiceFailure = "";
+    voicePermissionNotice = false;
     const generation = ++voiceGeneration;
     try {
+      if (!(await hasVoicePermission(generation))) {
+        if (generation === voiceGeneration) {
+          voiceHoldActive = false;
+          voiceHoldCancel = false;
+        }
+        return;
+      }
+      if (generation !== voiceGeneration) return;
       voiceOriginDraft = composer.draft;
       voiceInsertion = {
         start: composerInput?.selectionStart ?? composer.draft.length,
@@ -1424,6 +1713,8 @@
       if (generation !== voiceGeneration) return;
       if (error instanceof VoiceRecordingError && error.code === "cancelled")
         return;
+      voiceHoldActive = false;
+      voiceHoldCancel = false;
       voiceFailure = voiceErrorKey(error);
       liveAnnouncement = { key: voiceFailure };
     }
@@ -1522,6 +1813,12 @@
     if (size < 1_000_000) return `${(size / 1000).toFixed(1)} KB`;
     return `${(size / 1_000_000).toFixed(1)} MB`;
   }
+  function fileNameParts(name: string): { stem: string; extension: string } {
+    const dot = name.lastIndexOf(".");
+    return dot > 0 && dot < name.length - 1
+      ? { stem: name.slice(0, dot), extension: name.slice(dot) }
+      : { stem: name, extension: "" };
+  }
   async function downloadFile(item: TimelineFile): Promise<void> {
     const ref = item.attachment;
     const originSession = sessionId;
@@ -1603,44 +1900,24 @@
     releaseSubmissionImages([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
-  function openAttachmentMenu(target: HTMLElement): void {
+  function openAttachmentMenu(): void {
     if (nativePhotoBusy || voiceBusy) return;
-    messageMenu(
-      target,
-      [
-        {
-          text: t("attachment.camera"),
-          disabled: !imageLimits,
-          run: () => {
-            if (!canIntakePhoto()) return;
-            if (hasNativeCamera()) void selectNativePhotos(true);
-            else photoCaptureInput?.click();
-          },
-        },
-        {
-          text: t("attachment.photos"),
-          disabled: !imageLimits,
-          run: () => {
-            if (!canIntakePhoto()) return;
-            if (hasNativeCamera()) void selectNativePhotos();
-            else photoLibraryInput?.click();
-          },
-        },
-        {
-          text: t("attachment.files"),
-          disabled: !fileLimits,
-          run: () => {
-            if (!fileLimits || projection.canSubmit === false) return;
-            filePickerSession = sessionId;
-            filePickerGeneration = nativePhotoGeneration;
-            fileInput?.click();
-          },
-        },
-      ],
-      t("actions.cancel"),
-      undefined,
-      true,
-    );
+    closeStickerPanel();
+    attachmentOpen = true;
+  }
+  function chooseAttachment(kind: "camera" | "photos" | "files"): void {
+    attachmentOpen = false;
+    if (kind === "files") {
+      if (!fileLimits || projection.canSubmit === false) return;
+      filePickerSession = sessionId;
+      filePickerGeneration = nativePhotoGeneration;
+      fileInput?.click();
+      return;
+    }
+    if (!canIntakePhoto()) return;
+    if (hasNativeCamera()) void selectNativePhotos(kind === "camera");
+    else if (kind === "camera") photoCaptureInput?.click();
+    else photoLibraryInput?.click();
   }
   function formatHistoryDate(value: string, locale: string): string {
     const date = new Date(value);
@@ -1693,7 +1970,6 @@
     }
   }
   function openSearch(): void {
-    if (detailOpen) closeDetail();
     searchOpen = true;
   }
   function openPreferences(): void {
@@ -1755,20 +2031,37 @@
   function closeSearch(): void {
     searchOpen = false;
   }
-  function openDetail(): void {
-    detailOpen = true;
-    refreshVisiblePanel();
-    onHistoryOpenChange?.(true);
-  }
   function finishDetailClose(_restoreFocus = true): void {
     detailOpen = false;
     panelGeneration++;
     onHistoryOpenChange?.(false);
+    void scheduleComposerResize();
   }
   function closeDetail(_restoreFocus = true): void {
-    const panel = relationshipDrawer && f7.panel.get(relationshipDrawer);
-    if (panel) panel.close(false);
-    else finishDetailClose();
+    finishDetailClose();
+  }
+  function selectSection(tab: "chat" | typeof drawerTab): void {
+    if (tab === "chat") {
+      if (detailOpen) closeDetail();
+      return;
+    }
+    composerInput?.blur();
+    closeStickerPanel();
+    if (!detailOpen) onHistoryOpenChange?.(true);
+    detailOpen = true;
+    if (tab === "history") {
+      drawerTab = "history";
+      panelGeneration++;
+      void actions.refreshRelationship?.(true);
+    } else if (tab === "diary") void openDiary();
+    else if (tab === "images") void openGallery();
+    else void openAlarms();
+  }
+  function closePhotoBrowser(browser = photoBrowser): void {
+    if (!browser) return;
+    const popup = browser.el?.closest<HTMLElement>(".popup");
+    if (popup) f7.popup.close(popup, false);
+    else browser.close();
   }
   function openLightbox(item: ImagePreviewTarget): void {
     lightboxReturnFocus = captureReadingFocus(document);
@@ -1806,7 +2099,7 @@
             closeLink.addEventListener("keydown", (event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                browser.close();
+                closePhotoBrowser(browser);
               }
             });
             closeLink.focus();
@@ -1846,7 +2139,7 @@
                   point.clientY < rect.top ||
                   point.clientY > rect.bottom)
               )
-                browser.close();
+                closePhotoBrowser(browser);
             },
           );
         },
@@ -1870,7 +2163,7 @@
     const photoKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !messageMenuOpen()) {
         event.preventDefault();
-        browser.close();
+        closePhotoBrowser(browser);
       }
       if (event.key === "Tab" && !messageMenuOpen()) {
         const targets = [
@@ -1889,10 +2182,6 @@
     browser.open();
   }
   let imagePress: ReturnType<typeof longPress> | undefined;
-  function toggleDetail(): void {
-    if (detailOpen) closeDetail();
-    else openDetail();
-  }
   function showLightbox(item: TimelineImage): void {
     openLightbox({
       id: item.id,
@@ -2150,8 +2439,6 @@
     imagePress?.destroy();
     panelGeneration++;
     photoBrowser?.destroy();
-    for (const el of [relationshipDrawer, contextMeterPopover])
-      if (el) overlayDestroyed({ el });
     if (copyToastTimer) clearTimeout(copyToastTimer);
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     releaseDeferredPreviewReleases();
@@ -2175,6 +2462,7 @@
   }}
 />
 
+<KonstaProvider theme={konstaTheme} dark>
 <Page
   name="companion"
   pageContent={false}
@@ -2185,31 +2473,7 @@
 >
   {#snippet fixedContent()}
     <Navbar class="companion-header">
-      <div>
-        {#if actions.refreshRelationship}<button
-            type="button"
-            class="button button-tonal button-round companion-history-toggle"
-            aria-label={t("relationship.view")}
-            aria-controls="companion-relationship-drawer"
-            aria-expanded={detailOpen}
-            on:click={toggleDetail}
-            ><Menu size={18} strokeWidth={1.8} aria-hidden="true" /></button
-          >
-        {/if}
-      </div>
-      <div class="companion-avatar-anchor" aria-hidden="true">
-        <div class="companion-avatar companion-avatar">
-          <div class="companion-avatar-crop">
-            {#if identity.companionAvatar}<img
-                src={identity.companionAvatar}
-                alt=""
-              />{:else}<span aria-hidden="true">✦</span>{/if}
-          </div>
-        </div>
-      </div>
-      <div class="companion-header-copy">
-        <div class="companion-name">{identity.companionName}</div>
-        <div class="companion-presence" aria-live="polite">
+      <div class="companion-presence companion-sr-only" aria-live="polite">
           <span
             class="companion-status {projection.status === 'offline'
               ? 'color-red'
@@ -2217,16 +2481,8 @@
                 ? 'color-orange'
                 : 'color-green'}"
           ></span>{statusText}
-        </div>
       </div>
-      {#if projection.running && actions.stop}<button
-          class="button button-tonal companion-reply-stop"
-          data-testid="companion-stop"
-          aria-label={t("reply.stop")}
-          on:click={() => void stop()}
-          disabled={stopping}
-          ><Square size={16} fill="currentColor" aria-hidden="true" /></button
-        >{/if}
+      <div class="companion-header-actions">
       {#if contextCapacity}
         <div class="companion-context-meter-wrap">
           <button
@@ -2265,39 +2521,6 @@
               ></circle></svg
             >
           </button>
-          <Popover
-            opened={contextMeterOpen}
-            targetEl={contextMeterButton}
-            closeOnEscape
-            onPopoverOpen={(instance) => {
-              if (instance) {
-                contextMeterPopover = instance.el;
-                overlayOpening(instance);
-              }
-            }}
-            onPopoverOpened={overlayOpened}
-            onPopoverClosed={(instance) => {
-              contextMeterOpen = false;
-              overlayClosed(instance);
-            }}
-            id="companion-context-popover"
-            class="popover companion-context-popover"
-            role="dialog"
-            aria-labelledby="companion-context-popover-title"
-            tabindex={-1}
-          >
-            <Block>
-              <p
-                id="companion-context-popover-title"
-                class="companion-context-summary"
-                aria-label={t("context.label")}
-              >
-                {formatTokenCount(contextCapacity.usedTokens)} / {formatTokenCount(
-                  contextCapacity.contextWindow,
-                )} ({contextCapacity.percentage}%)
-              </p>
-            </Block>
-          </Popover>
         </div>
       {/if}
       <button
@@ -2312,21 +2535,14 @@
         aria-label={t("preferences.open")} on:click={openPreferences}>
         <Settings size={18} strokeWidth={1.8} aria-hidden="true" />
       </button>
+      </div>
     </Navbar>
     {#if effectiveWorkspaceReadiness === "ready" && effectiveSessionReadiness === "ready" && projection.openState !== "error"}
-      <Messagebar
-        textareaId="companion-textarea"
-        bind:this={messagebarComponent}
-        class="companion-composer companion-compose-row"
-        value={composer.draft}
-        readonly={voiceBusy}
-        maxHeight={144}
-        attachmentsVisible={imageDrafts.length > 0 || fileDrafts.length > 0}
-        placeholder={t("composer.placeholder", {
-          name: identity.companionName,
-        })}
-        onInput={(event) => onInput(event.detail[0])}
+      <div
+        class="toolbar messagebar companion-composer companion-compose-row konsta-chat"
+        data-f7-slot="fixed"
       >
+        <div class="companion-compose-content" hidden={detailOpen}>
         {#snippet beforeInner()}
           {#if copyToast}
             <div class="companion-copy-toast" role="status">
@@ -2474,17 +2690,14 @@
             on:change={onFileInput}
           />
 
-          <MessagebarAttachments
-            class="companion-image-drafts"
-            role="group"
-            aria-label={t("attachment.pending")}
-          >
-            {#each imageDrafts as draft (draft.id)}
-              <MessagebarAttachment
-                class="companion-image-draft"
-                deletable={false}
-              >
-                {#snippet image()}
+          {#if imageDrafts.length || fileDrafts.length}
+            <div
+              class="companion-image-drafts"
+              role="group"
+              aria-label={t("attachment.pending")}
+            >
+              {#each imageDrafts as draft (draft.id)}
+                <div class="companion-image-draft">
                   <button
                     type="button"
                     class="companion-image-draft-preview"
@@ -2497,41 +2710,56 @@
                       alt={draft.file.name || t("image.pending")}
                     /></button
                   >
-                {/snippet}
-                <button
-                  type="button"
-                  class="button button-tonal button-round companion-image-draft-remove"
-                  aria-label={t("image.remove")}
-                  on:click={() => removeImage(draft)}
-                  ><X size={16} aria-hidden="true" /></button
-                >
-              </MessagebarAttachment>
-            {/each}
-            {#each fileDrafts as draft (draft.id)}
-              <div class="companion-file-draft" data-testid="file-draft">
-                <div class="companion-file-details">
-                  <span>{draft.file.name}</span><small
-                    >{formatFileSize(draft.file.size)}</small
+                  <KonstaButton
+                    type="button"
+                    class="companion-image-draft-remove"
+                    tonal rounded
+                    aria-label={t("image.remove")}
+                    onClick={() => removeImage(draft)}
+                    ><X size={16} aria-hidden="true" /></KonstaButton
                   >
                 </div>
-                <button
-                  class="button button-tonal button-round"
-                  type="button"
-                  aria-label={t("file.remove", { name: draft.file.name })}
-                  on:click={() =>
-                    (fileDrafts = fileDrafts.filter((item) => item !== draft))}
-                >
-                  <X size={16} aria-hidden="true" />
-                </button>
-              </div>
-            {/each}
-          </MessagebarAttachments>
+              {/each}
+              {#each fileDrafts as draft (draft.id)}
+                {@const fileName = fileNameParts(draft.file.name)}
+                <KonstaChip class="companion-file-draft" data-testid="file-draft" title={draft.file.name}>
+                  <FileText size={18} aria-hidden="true" />
+                  <div class="companion-file-details">
+                    <span class="companion-file-name" aria-label={draft.file.name}><span class="companion-file-name-stem">{fileName.stem}</span><span class="companion-file-name-extension">{fileName.extension}</span></span><small
+                      >{formatFileSize(draft.file.size)}</small
+                    >
+                  </div>
+                  <KonstaButton
+                    class="companion-file-draft-remove"
+                    clear rounded
+                    type="button"
+                    aria-label={t("file.remove", { name: draft.file.name })}
+                    onClick={() =>
+                      (fileDrafts = fileDrafts.filter((item) => item !== draft))}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </KonstaButton>
+                </KonstaChip>
+              {/each}
+            </div>
+          {/if}
         {/snippet}
-        {#snippet innerEnd()}
-          <button
-            class="button button-tonal button-round companion-microphone"
-            class:companion-microphone-recording={voiceStatus === "recording"}
-            class:companion-microphone-stopping={voiceStatus === "stopping"}
+        {#snippet composerActions()}
+          {#if projection.running && actions.stop}
+            <KonstaButton
+              class="companion-reply-stop"
+              tonal rounded
+              type="button"
+              data-testid="companion-stop"
+              aria-label={t("reply.stop")}
+              onClick={() => void stop()}
+              disabled={stopping}
+              ><Square size={16} fill="currentColor" aria-hidden="true" /></KonstaButton
+            >
+          {/if}
+          <KonstaButton
+            class={`companion-microphone ${voiceStatus === "recording" ? "companion-microphone-recording" : ""} ${voiceStatus === "stopping" ? "companion-microphone-stopping" : ""}`}
+            tonal rounded
             type="button"
             data-state={voiceStatus}
             aria-label={voiceStatus === "recording"
@@ -2540,22 +2768,23 @@
                 ? t("voice.transcribing")
                 : voiceCapability === "loading"
                   ? t("voice.preparing")
-                  : voiceCapability === "available" && voiceCaptureAvailable
+                  : voiceCapability === "available" && voiceCaptureAvailable && voiceStatus !== "unavailable"
                     ? t("voice.start")
                     : t("voice.micUnavailable")}
             title={voiceStatus === "recording"
               ? t("voice.stop")
-              : voiceCapability === "available" && voiceCaptureAvailable
+              : voiceCapability === "available" && voiceCaptureAvailable && voiceStatus !== "unavailable"
                 ? t("voice.start")
-                : voiceUnavailableText(t)}
-            disabled={nativePhotoBusy ||
+                : undefined}
+            disabled={nativePhotoBusy || voicePermissionPending ||
               voiceStatus === "starting" ||
               voiceStatus === "stopping" ||
               voiceStatus === "transcribing" ||
+              voiceStatus === "unavailable" ||
               projection.canSubmit === false ||
               voiceCapability !== "available" ||
               !voiceCaptureAvailable}
-            on:click={() => void toggleVoiceInput()}
+            onClick={() => void toggleVoiceInput()}
           >
             {#if voiceStatus === "starting" || voiceStatus === "transcribing" || voiceStatus === "stopping"}<Preloader
                 class="preloader  "
@@ -2565,30 +2794,33 @@
                 fill="currentColor"
                 aria-hidden="true"
               />{:else}<Mic size={19} strokeWidth={2} aria-hidden="true" />{/if}
-          </button>
-          <button class="button button-tonal button-round companion-stickers" type="button"
+          </KonstaButton>
+          <KonstaButton class="companion-stickers" tonal rounded type="button"
             aria-label={t("stickers.open")} aria-pressed={stickerOpen}
+            aria-haspopup="dialog" aria-expanded={stickerOpen}
             disabled={voiceBusy || nativePhotoBusy || !actions.openStickers}
-            on:click={toggleStickerPanel}
-            ><Smile size={20} aria-hidden="true" /></button
+            onClick={toggleStickerPanel}
+            ><Smile size={20} aria-hidden="true" /></KonstaButton
           >
-          {#if imageLimits || fileLimits || voiceBusy}<button
-              class="button button-tonal button-round companion-attach"
+          {#if imageLimits || fileLimits || voiceBusy}<KonstaButton
+              class={`companion-attach ${voiceBusy ? "companion-voice-cancel" : ""}`}
+              tonal rounded
               type="button"
               aria-label={t(voiceBusy ? "voice.cancel" : "attachment.open")}
               title={t(voiceBusy ? "voice.cancel" : "attachment.open")}
               aria-haspopup="dialog"
+              aria-expanded={attachmentOpen}
               disabled={!voiceBusy &&
                 ((!imageLimits && !fileLimits) || nativePhotoBusy)}
-              on:click={(event) =>
+              onClick={() =>
                 voiceBusy
                   ? void cancelVoiceInput()
-                  : openAttachmentMenu(event.currentTarget)}
+                  : openAttachmentMenu()}
               >{#if voiceBusy}<X size={20} aria-hidden="true" />{:else}<Plus
                   size={19}
                   strokeWidth={2}
                   aria-hidden="true"
-                />{/if}</button
+                />{/if}</KonstaButton
             >
           {/if}
         {/snippet}
@@ -2611,6 +2843,10 @@
             use:connectMessagebar={{
               label: t("composer.label"),
               suggestions: !!commandSuggestion,
+              readOnly: voiceBusy,
+              hold: voiceHoldActive && voiceStatus === "recording",
+              cancel: voiceHoldCancel,
+              hint: t(voiceHoldCancel ? "voice.holdCancel" : "voice.holdRecording"),
             }}
           ></div>
           {#if composer.draft.trim().length > MAX_MESSAGE_LENGTH}
@@ -2624,15 +2860,7 @@
               })}
             </div>
           {/if}
-          {#if voiceCapability === "unavailable" || !voiceCaptureAvailable}
-            <div
-              class="companion-voice-input-status companion-voice-input-unavailable"
-              data-testid="companion-voice-unavailable-status"
-              role="status"
-            >
-              {voiceUnavailableText(t)}
-            </div>
-          {:else if voiceFailure || voiceStatus === "unavailable"}
+          {#if voiceCapability !== "unavailable" && voiceCaptureAvailable && (voiceFailure || voiceStatus === "unavailable")}
             <div
               class="companion-voice-input-status companion-voice-input-error"
               data-testid="companion-voice-error-status"
@@ -2641,11 +2869,58 @@
               {t(voiceFailure || "voice.failed")}
             </div>
           {/if}
-          {#if stickerOpen && stickerClient && actions.sendSticker}
-            <StickerPanel client={stickerClient} {t} send={actions.sendSticker} favoritesRevision={stickerFavoritesRevision} canSend={projection.canSubmit !== false && !voiceBusy} />
+          {#if voicePermissionNotice}
+            <div class="companion-voice-input-status" data-testid="voice-permission-ready" role="status">{t("voice.permissionReady")}</div>
           {/if}
         {/snippet}
-      </Messagebar>
+        {@render beforeInner()}
+        {@render beforeArea()}
+        <KonstaMessagebar
+          class="companion-konsta-messagebar"
+          textareaId="companion-textarea"
+          value={composer.draft}
+          placeholder={t(
+            voiceCapability === "available" && voiceCaptureAvailable
+              ? "composer.placeholder"
+              : "composer.textOnlyPlaceholder",
+          )}
+          right={composerActions}
+          onInput={onInput}
+        />
+        {@render afterInner()}
+        </div>
+        <nav class="companion-bottom-nav" aria-label={t("navigation.label")}>
+          <KonstaButton class="companion-nav-item" type="button" rounded
+            tonal={!detailOpen} clear={detailOpen} aria-pressed={!detailOpen}
+            onClick={() => selectSection("chat")}>
+            <MessageCircle size={22} aria-hidden="true" /><span>{t("navigation.chat")}</span>
+          </KonstaButton>
+          <KonstaButton id="companion-history-tab" class="companion-nav-item" type="button" rounded
+            tonal={detailOpen && drawerTab === "history"} clear={!(detailOpen && drawerTab === "history")}
+            aria-pressed={detailOpen && drawerTab === "history"} disabled={voiceBusy || !actions.refreshRelationship}
+            onClick={() => selectSection("history")}>
+            <Heart size={22} aria-hidden="true" /><span>{t("navigation.memories")}</span>
+          </KonstaButton>
+          <KonstaButton id="companion-diary-tab" class="companion-nav-item" type="button" rounded
+            tonal={detailOpen && drawerTab === "diary"} clear={!(detailOpen && drawerTab === "diary")}
+            aria-pressed={detailOpen && drawerTab === "diary"} disabled={voiceBusy || !actions.readPanel}
+            onClick={() => selectSection("diary")}>
+            <BookOpen size={22} aria-hidden="true" /><span>{t("navigation.diary")}</span>
+          </KonstaButton>
+          <KonstaButton id="companion-images-tab" class="companion-nav-item" type="button" rounded
+            tonal={detailOpen && drawerTab === "images"} clear={!(detailOpen && drawerTab === "images")}
+            aria-pressed={detailOpen && drawerTab === "images"} disabled={voiceBusy || !actions.readPanel}
+            onClick={() => selectSection("images")}>
+            <Images size={22} aria-hidden="true" /><span>{t("navigation.album")}</span>
+          </KonstaButton>
+          <KonstaButton id="companion-alarms-tab" class="companion-nav-item" type="button" rounded
+            tonal={detailOpen && drawerTab === "alarms"} clear={!(detailOpen && drawerTab === "alarms")}
+            aria-pressed={detailOpen && drawerTab === "alarms"} disabled={voiceBusy || !actions.readPanel}
+            onClick={() => selectSection("alarms")}>
+            <AlarmClock size={22} aria-hidden="true" /><span>{t("navigation.wake")}</span>
+          </KonstaButton>
+        </nav>
+      </div>
     {/if}
   {/snippet}
   <div class="companion-app" use:connectViewport>
@@ -2706,7 +2981,7 @@
             >
           </section>
         {:else}
-          <div class="companion-timeline-region">
+          <div class="companion-timeline-region" hidden={detailOpen}>
             {#if backgrounds}
               <div class="companion-chat-background" aria-hidden="true">
                 {#key backgroundVersion}
@@ -2732,7 +3007,7 @@
               onscroll={onScroll}
             >
               <div class="companion-timeline-content" use:connectTimeline>
-                <Messages bind:this={messagesComponent} scrollMessages={false}>
+                <Messages class="konsta-chat" bind:this={messagesComponent} scrollMessages={false}>
                   {#if displayedProjection.historySyncFailed}
                     <div class="companion-media-failure" role="alert">
                       <span>{t("history.loadFailed")}</span>
@@ -2930,18 +3205,20 @@
                               </div>
                             {:else if part.item.kind === "file"}
                               {@const item = part.item}
+                              {@const fileName = fileNameParts(item.name)}
                               <button
                                 class="companion-file-message"
                                 type="button"
                                 data-testid="file-message"
                                 aria-label={t("file.actions", { name: item.name })}
+                                title={item.name}
                                 disabled={!unit.failed && item.attachment?.availability !== "available"}
                                 on:click={(event) => showFileMenu(item, event.currentTarget)}
                                 use:longPress={{ run: (node) => showFileMenu(item, node) }}
                               >
                                 <FileText size={20} aria-hidden="true" />
                                 <div class="companion-file-details">
-                                  <span>{item.name}</span><small
+                                  <span class="companion-file-name" aria-label={item.name}><span class="companion-file-name-stem">{fileName.stem}</span><span class="companion-file-name-extension">{fileName.extension}</span></span><small
                                     >{formatFileSize(item.size)}</small
                                   >
                                 </div>
@@ -3111,36 +3388,8 @@
                               >{/if}
                           {/if}
                         {/snippet}
-                        <Message
-                          header={partIndex === 0 &&
-                          (unit.keet || unit.matrix || unit.post || unit.alarm)
-                            ? messageSource
-                            : undefined}
-                          footer={(independentMessage ||
-                            partIndex === parts.length - 1) &&
-                          (unit.time !== undefined || unit.pendingLabel)
-                            ? messageMetadata
-                            : undefined}
-                          first={independentMessage || partIndex === 0}
-                          last={independentMessage ||
-                            partIndex === parts.length - 1}
-                          tail={independentMessage ||
-                            partIndex === parts.length - 1}
-                          type={unit.side === "incoming" ? "received" : "sent"}
-                          image={part.kind === "images"
-                            ? imageContent
-                            : undefined}
-                          text={part.kind !== "images"
-                            ? textContent
-                            : undefined}
-                          class={`companion-row ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""} ${unit.items.some((item) => item.kind === "file") ? "companion-has-files" : ""}`}
-                          data-pending={unit.pending || undefined}
-                          data-testid={partIndex === 0
-                            ? unitTestId(unit)
-                            : undefined}
-                        >
-                          {#snippet avatar()}
-                            <div class="companion-avatar-crop">
+                        {#snippet messageAvatar()}
+                          <div class="companion-chat-avatar companion-avatar-crop">
                               {#if unit.keet}<span aria-hidden="true">K</span
                                 >{:else if unit.matrix}<span aria-hidden="true"
                                   >M</span
@@ -3151,20 +3400,40 @@
                                 >{:else if unit.alarm}<AlarmClock
                                   size={16}
                                   aria-hidden="true"
-                                />{:else if unit.side === "incoming" && identity.companionAvatar}<img
+                                />{:else if identity.companionAvatar}<img
                                   src={identity.companionAvatar}
                                   alt=""
-                                />{:else if unit.side === "outgoing" && identity.userAvatar}<img
-                                  src={identity.userAvatar}
-                                  alt=""
-                                />{:else}<span aria-hidden="true"
-                                  >{unit.side === "incoming"
-                                    ? "✦"
-                                    : t("you")}</span
-                                >{/if}
-                            </div>
-                          {/snippet}
-                        </Message>
+                                />{:else}<span aria-hidden="true">✦</span>{/if}
+                          </div>
+                        {/snippet}
+                        {#snippet messageBody()}
+                          <div class="companion-message-body">
+                            {#if part.kind === "images"}
+                              {@render imageContent()}
+                            {:else}
+                              {@render textContent()}
+                            {/if}
+                          </div>
+                        {/snippet}
+                        <KonstaMessage
+                          header={partIndex === 0 &&
+                          (unit.keet || unit.matrix || unit.post || unit.alarm)
+                            ? messageSource
+                            : undefined}
+                          footer={(independentMessage ||
+                            partIndex === parts.length - 1) &&
+                          (unit.time !== undefined || unit.pendingLabel)
+                            ? messageMetadata
+                            : undefined}
+                          type={unit.side === "incoming" ? "received" : "sent"}
+                          text={messageBody}
+                          avatar={unit.side === "incoming" ? messageAvatar : undefined}
+                          class={`companion-row ${independentMessage || partIndex === 0 ? "companion-message-first" : ""} ${independentMessage || partIndex === parts.length - 1 ? "companion-message-last" : ""} ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""} ${unit.items.some((item) => item.kind === "file") ? "companion-has-files" : ""}`}
+                          data-pending={unit.pending || undefined}
+                          data-testid={partIndex === 0
+                            ? unitTestId(unit)
+                            : undefined}
+                        />
                       {/each}
                     {/if}
                   {/each}
@@ -3209,111 +3478,13 @@
               >
             {/if}
           </div>
+          {#if detailOpen}{@render detailPage()}{/if}
         {/if}
-      </main>
-    </div>
-  </div>
-  <Panel
-    left
-    cover
-    swipe={!!actions.refreshRelationship}
-    swipeOnlyClose
-    opened={detailOpen}
-    closeByBackdropClick={false}
-    onPanelOpen={(args) => {
-      relationshipDrawer = args[0].el;
-      overlayOpening(args[0]);
-    }}
-    onPanelOpened={(args) => overlayOpened(args[0])}
-    onPanelClosed={(args) => {
-      finishDetailClose();
-      overlayClosed(args[0]);
-    }}
-    onPanelBackdropClick={() => closeDetail()}
-    onkeydown={(event) => {
-      if (event.key === "Escape") closeDetail();
-    }}
-    id="companion-relationship-drawer"
-    class="companion-history-drawer"
-    role="dialog"
-    aria-modal="true"
-    aria-label={t("relationship.named", { name: identity.companionName })}
-    data-testid="companion-relationship-drawer"
-  >
-    <div class="companion-history-controls">
-      <h2>{identity.companionName}</h2>
-      <button
-        type="button"
-        class="button button-tonal button-round button-small"
-        aria-label={t("relationship.close")}
-        on:click={() => closeDetail()}
-        ><X size={16} strokeWidth={2} aria-hidden="true" /></button
-      >
-    </div>
-    <div class="companion-diary-tabs" role="tablist">
-      <button
-        type="button"
-        role="tab"
-        id="companion-history-tab"
-        aria-controls="companion-drawer-panel"
-        aria-selected={drawerTab === "history"}
-        class="button"
-        class:button-tonal={drawerTab === "history"}
-        aria-label={t("drawer.history")}
-        on:click={() => {
-          panelGeneration++;
-          drawerTab = "history";
-          void actions.refreshRelationship?.(true);
-        }}
-        ><Heart size={20} aria-hidden="true" /><span>{t("drawer.history")}</span
-        ></button
-      >
-      <button
-        type="button"
-        role="tab"
-        id="companion-diary-tab"
-        aria-controls="companion-drawer-panel"
-        aria-selected={drawerTab === "diary"}
-        class="button"
-        class:button-tonal={drawerTab === "diary"}
-        aria-label={t("drawer.diary")}
-        on:click={() => void openDiary()}
-        ><BookOpen size={20} aria-hidden="true" /><span
-          >{t("drawer.diary")}</span
-        ></button
-      >
-      <button
-        type="button"
-        role="tab"
-        id="companion-images-tab"
-        aria-controls="companion-drawer-panel"
-        aria-selected={drawerTab === "images"}
-        aria-label={t("drawer.images")}
-        class="button"
-        class:button-tonal={drawerTab === "images"}
-        on:click={() => void openGallery()}
-        ><Images size={20} aria-hidden="true" /><span>{t("drawer.images")}</span
-        ></button
-      >
-      <button
-        type="button"
-        role="tab"
-        id="companion-alarms-tab"
-        aria-controls="companion-drawer-panel"
-        aria-selected={drawerTab === "alarms"}
-        aria-label={t("drawer.alarms")}
-        class="button"
-        class:button-tonal={drawerTab === "alarms"}
-        on:click={() => void openAlarms()}
-        ><AlarmClock size={20} aria-hidden="true" /><span
-          >{t("drawer.alarms")}</span
-        ></button
-      >
-    </div>
+{#snippet detailPage()}
     <div
       id="companion-drawer-panel"
       class="companion-history-scroll"
-      role="tabpanel"
+      role="region"
       aria-labelledby={drawerTab === "history"
         ? "companion-history-tab"
         : drawerTab === "diary"
@@ -3563,7 +3734,12 @@
         </section>
       {/if}
     </div>
-  </Panel>
+{/snippet}
+
+      </main>
+    </div>
+  </div>
+
   {#if searchOpen}<ConversationSearch
       {actions}
       {t}
@@ -3571,7 +3747,76 @@
       companionName={identity.companionName}
       onClose={closeSearch}
     />{/if}
+  {#if $currentMessageMenu}
+    {#key $currentMessageMenu.id}
+      <div class="konsta-chat companion-composer-overlay companion-message-overlay" use:messageMenuPortal>
+        <KonstaPopover
+          class="companion-action-menu"
+          opened
+          target={$currentMessageMenu.target}
+          onBackdropClick={dismissMessageMenu}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={$currentMessageMenu.confirmation ?? $currentMessageMenu.actions.map((action) => action.text).join(", ")}
+            data-testid="message-action-menu"
+            use:messageMenuFocus
+          >
+            {#if $currentMessageMenu.confirmation}
+              <p class="companion-message-menu-label">{$currentMessageMenu.confirmation}</p>
+            {/if}
+            {#each $currentMessageMenu.actions as action}
+              <KonstaActionsButton onClick={() => runMessageMenuAction(action)}>{action.text}</KonstaActionsButton>
+            {/each}
+            <KonstaActionsButton bold onClick={dismissMessageMenu}>{$currentMessageMenu.cancelLabel}</KonstaActionsButton>
+          </div>
+        </KonstaPopover>
+      </div>
+    {/key}
+  {/if}
+  {#if contextMeterOpen && contextCapacity}
+    <div class="konsta-chat companion-composer-overlay">
+      <KonstaPopover opened target={contextMeterButton} onBackdropClick={() => closeContextMeter()}>
+        <div id="companion-context-popover" class="companion-context-popover" role="dialog" aria-labelledby="companion-context-popover-title" tabindex={-1} use:contextMenuFocus>
+          <p id="companion-context-popover-title" class="companion-context-summary" aria-label={t("context.label")}>
+            {formatTokenCount(contextCapacity.usedTokens)} / {formatTokenCount(contextCapacity.contextWindow)} ({contextCapacity.percentage}%)
+          </p>
+        </div>
+      </KonstaPopover>
+    </div>
+  {/if}
+  {#if attachmentOpen}
+    <div class="konsta-chat companion-composer-overlay">
+      <KonstaActions opened onBackdropClick={closeComposerMenu}>
+        <div role="dialog" aria-modal="true" aria-label={t("attachment.open")} data-testid="attachment-menu" use:composerMenuFocus>
+          <KonstaActionsGroup>
+            <KonstaActionsButton disabled={!imageLimits} onClick={() => chooseAttachment("camera")}>{t("attachment.camera")}</KonstaActionsButton>
+            <KonstaActionsButton disabled={!imageLimits} onClick={() => chooseAttachment("photos")}>{t("attachment.photos")}</KonstaActionsButton>
+            <KonstaActionsButton disabled={!fileLimits} onClick={() => chooseAttachment("files")}>{t("attachment.files")}</KonstaActionsButton>
+          </KonstaActionsGroup>
+          <KonstaActionsGroup>
+            <KonstaActionsButton bold onClick={closeComposerMenu}>{t("actions.cancel")}</KonstaActionsButton>
+          </KonstaActionsGroup>
+        </div>
+      </KonstaActions>
+    </div>
+  {/if}
+  {#if stickerOpen && stickerClient && actions.sendSticker}
+    <div class="konsta-chat companion-composer-overlay">
+      <KonstaSheet class="companion-sticker-sheet" opened onBackdropClick={closeComposerMenu}>
+        <div role="dialog" aria-modal="true" aria-label={t("stickers.open")} use:composerMenuFocus>
+          <div class="companion-sticker-sheet-header">
+            <strong>{t("stickers.open")}</strong>
+            <KonstaButton type="button" clear onClick={closeComposerMenu} aria-label={t("actions.cancel")}><X size={20} aria-hidden="true" /></KonstaButton>
+          </div>
+          <StickerPanel client={stickerClient} {t} send={actions.sendSticker} favoritesRevision={stickerFavoritesRevision} canSend={projection.canSubmit !== false && !voiceBusy} />
+        </div>
+      </KonstaSheet>
+    </div>
+  {/if}
 </Page>
+</KonstaProvider>
 
 <section id="companion-preferences-panel" class="settings-screen" hidden={!preferencesOpen} aria-label={t("preferences.open")}>
   <div class="settings-container">

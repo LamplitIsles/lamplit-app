@@ -9,7 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 // Exercise the real socket → Partner → Companion → Markdown DOM path.
 async function atomicStreamingChecks(page, control) {
   await control("session");
-  const bubbles = page.locator(".message-received .companion-text-bubble");
+  const bubbles = page.locator(".k-message.incoming .companion-text-bubble");
   await expect(bubbles).toHaveCount(0);
   const previewDelivered = async (text) => {
     // Wait for this exact authoritative preview to reach the browser before
@@ -164,8 +164,8 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(url);
-    const bubbles = page.locator(".message-received .companion-text-bubble");
-    const userBubbles = page.locator(".message-sent .companion-text-bubble");
+    const bubbles = page.locator(".k-message.incoming .companion-text-bubble");
+    const userBubbles = page.locator(".k-message.outgoing .companion-text-bubble");
     if (process.argv.includes("--gap-only")) {
       await expect(bubbles.filter({ hasText: /^消息 64$/ })).toHaveCount(1);
       await page.getByRole("button", { name: "查看更早的消息", exact: true }).click();
@@ -228,14 +228,13 @@ try {
     await expect(bubbles.filter({ hasText: /^更早第二行。$/ })).toHaveCount(1);
     const rowFor = (bubble) =>
       bubble.locator(
-        "xpath=ancestor::div[contains(concat(' ', @class, ' '), ' message ')][1]",
+        "xpath=ancestor::div[contains(concat(' ', @class, ' '), ' companion-row ')][1]",
       );
     const independent = async (bubble) => {
       const row = rowFor(bubble);
-      await expect(row).toHaveClass(/message-first/);
-      await expect(row).toHaveClass(/message-last/);
-      await expect(row).toHaveClass(/message-tail/);
-      for (const selector of [".message-avatar", "time"]) {
+      await expect(row).toHaveClass(/companion-message-first/);
+      await expect(row).toHaveClass(/companion-message-last/);
+      for (const selector of [".companion-chat-avatar", "time"]) {
         const el = row.locator(selector);
         await expect(el).toBeVisible();
         expect(

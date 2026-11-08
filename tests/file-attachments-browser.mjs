@@ -144,11 +144,9 @@ try {
     await expect(composer).toBeVisible();
     const add = page.getByRole("button", { name: "添加附件" });
     await add.click();
-    const menu = page.locator(".companion-action-menu.modal-in");
+    const menu = page.getByTestId("attachment-menu");
     await expect(menu).toBeVisible();
-    const buttons = menu.locator(
-      ".actions-button:not(.disabled), .list-button:not(.disabled), .item-link:not(.disabled)",
-    );
+    const buttons = menu.getByRole("button");
     await expect(buttons).toHaveText(["拍照", "照片", "上传文件", "取消"]);
     await page.screenshot({ path: `${evidence}/menu-${viewport.width}.png` });
     await page.keyboard.press("Escape");
@@ -219,7 +217,9 @@ try {
       const row = file.closest(".companion-row");
       const next = row?.nextElementSibling;
       if (!next) throw new Error("Missing text bubble");
-      return next.querySelector(".message-bubble").getBoundingClientRect().top - row.querySelector(".message-bubble").getBoundingClientRect().bottom;
+      const bubble = (message) =>
+        message.querySelector(".companion-message-body").parentElement.parentElement;
+      return bubble(next).getBoundingClientRect().top - bubble(row).getBoundingClientRect().bottom;
     });
     await expect.poll(gap).toBeGreaterThanOrEqual(6);
     await page.screenshot({
@@ -236,7 +236,7 @@ try {
       buffer: Buffer.alloc(0),
     });
     await expect(page.getByTestId("file-draft")).toHaveCount(1);
-    await expect(page.locator(".companion-action-menu")).toHaveCount(0);
+    await expect(page.getByTestId("attachment-menu")).toHaveCount(0);
     await composer.press("Enter");
     const emptyFile = page.getByTestId("file-message")
       .filter({ hasText: `only-${viewport.width}.bin` }).last();
@@ -266,17 +266,29 @@ try {
         page.waitForEvent("filechooser"),
         page.getByRole("button", { name: "上传文件", exact: true }).click(),
       ]);
-      const names = ["项目报告-2026-最终版本.txt", "项目报告-2026-最终版本.pdf"];
+      const names = ["项目报告-2026-最终版本.txt", "项目报告-2026-最终版本.pdf", "项目报告-2026-最终版本.docx"];
       await mixedPicker.setFiles(names.map(name => ({ name, mimeType: "text/plain", buffer: Buffer.from("together") })));
       await expect(page.locator(".companion-image-draft-preview img")).toHaveCount(1);
-      await expect(page.getByTestId("file-draft")).toHaveCount(2);
-      await expect(page.locator(".companion-action-menu")).toHaveCount(0);
+      await expect(page.getByTestId("file-draft")).toHaveCount(3);
+      await expect(page.getByTestId("attachment-menu")).toHaveCount(0);
+      const draftLayout = await page.locator(".companion-image-drafts").evaluate((node) => {
+        const items = [...node.children].map((item) => item.getBoundingClientRect());
+        return {
+          direction: getComputedStyle(node).flexDirection,
+          scrollable: node.scrollHeight > node.clientHeight,
+          ordered: items.every((item, index) => index === 0 || item.top >= items[index - 1].bottom),
+        };
+      });
+      expect(draftLayout).toEqual({ direction: "column", scrollable: true, ordered: true });
       for (const name of names) {
         const draft = page.getByTestId("file-draft").filter({ hasText: name });
         await draft.scrollIntoViewIfNeeded();
-        const detail = draft.locator(".companion-file-details span");
+        const detail = draft.locator(".companion-file-name");
         await expect(detail).toHaveText(name);
-        expect(await detail.evaluate((node) => ({ width: node.scrollWidth <= node.clientWidth, height: node.scrollHeight <= node.clientHeight, wrapped: getComputedStyle(node).whiteSpace !== "nowrap" }))).toEqual({ width: true, height: true, wrapped: true });
+        await expect(draft).toHaveAttribute("title", name);
+        await expect(detail.locator(".companion-file-name-extension")).toHaveText(name.slice(name.lastIndexOf(".")));
+        expect(await detail.locator(".companion-file-name-extension").evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+        expect(await detail.locator(".companion-file-name-stem").evaluate((node) => ({ clipped: node.scrollWidth > node.clientWidth, singleLine: getComputedStyle(node).whiteSpace === "nowrap", ellipsis: getComputedStyle(node).textOverflow === "ellipsis" }))).toEqual({ clipped: true, singleLine: true, ellipsis: true });
         expect(await detail.evaluate((node) => {
           const text = node.getBoundingClientRect(), area = node.closest(".companion-image-drafts").getBoundingClientRect();
           return text.left >= area.left && text.right <= area.right && text.top >= area.top && text.bottom <= area.bottom;
@@ -294,10 +306,13 @@ try {
       await expect(page.getByTestId("file-draft")).toHaveCount(0);
       await page.reload();
       for (const name of names) {
-        const detail = page.getByTestId("file-message").filter({ hasText: name }).last().locator(".companion-file-details span");
+        const detail = page.getByTestId("file-message").filter({ hasText: name }).last().locator(".companion-file-name");
         await detail.scrollIntoViewIfNeeded();
         await expect(detail).toHaveText(name);
-        expect(await detail.evaluate((node) => ({ width: node.scrollWidth <= node.clientWidth, height: node.scrollHeight <= node.clientHeight, wrapped: getComputedStyle(node).whiteSpace !== "nowrap" }))).toEqual({ width: true, height: true, wrapped: true });
+        await expect(detail.locator("xpath=ancestor::button[1]")).toHaveAttribute("title", name);
+        await expect(detail.locator(".companion-file-name-extension")).toHaveText(name.slice(name.lastIndexOf(".")));
+        expect(await detail.locator(".companion-file-name-extension").evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+        expect(await detail.locator(".companion-file-name-stem").evaluate((node) => ({ clipped: node.scrollWidth > node.clientWidth, singleLine: getComputedStyle(node).whiteSpace === "nowrap", ellipsis: getComputedStyle(node).textOverflow === "ellipsis" }))).toEqual({ clipped: true, singleLine: true, ellipsis: true });
       }
       await page.screenshot({ path: `${evidence}/long-file-history-390.png` });
     }
@@ -483,6 +498,8 @@ try {
       { data: { sessionId } },
     );
     await expect(capacityInput).toHaveValue("");
+    // The composer hides attachment controls while the editor is focused.
+    await capacityInput.blur();
   }
   for (let index = 0; index < 20; index++) {
     await switchCapacitySession(`capacity-${index}`);
@@ -650,9 +667,9 @@ try {
   await page.getByRole("button", { name: "添加附件" }).click();
   await expect(
     page
-      .locator(".companion-action-menu .disabled")
-      .filter({ hasText: "上传文件" }),
-  ).toHaveAttribute("aria-disabled", "true");
+      .getByTestId("attachment-menu")
+      .getByRole("button", { name: "上传文件", exact: true }),
+  ).toBeDisabled();
   await context.close();
   console.log(
     "file attachment browser: mobile and desktop menu, photo/camera pickers, drafts, send, download, reload passed",

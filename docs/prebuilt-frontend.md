@@ -66,6 +66,9 @@ The browser also imports `@capacitor-community/media` 9.1.0, whose package
 declares MIT but contains no license or copyright notice. The archive includes
 its versioned upstream metadata, canonical MIT permission text, and an explicit
 statement that no upstream copyright statement was found.
+The Konsta 5.5.0 package omits its MIT license file; its
+[upstream notice](https://github.com/konstaui/konsta/blob/v5.5.0/LICENSE) is
+maintained in `docs/licenses/` and included in the frontend archive.
 
 The pipeline needs Woodpecker enabled for this repository and two secrets:
 `forgejo_packages_token` with access to write and read the LamplitIsles generic

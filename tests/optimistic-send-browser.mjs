@@ -135,7 +135,7 @@ try {
       const input = page.locator("#companion-textarea");
       const recovery = page.getByTestId("input-recovery");
       const bubble = (text) =>
-        page.locator(".message-sent").filter({ hasText: text });
+        page.locator(".k-message.outgoing").filter({ hasText: text });
       const pending = (operationId) =>
         page.evaluate((id) => {
           for (const key of Object.keys(localStorage))

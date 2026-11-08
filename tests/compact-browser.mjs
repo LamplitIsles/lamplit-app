@@ -107,6 +107,8 @@ try {
       "0 / 0 (0%)",
     );
     await page.keyboard.press("Escape");
+    await expect(page.locator("#companion-context-popover")).toHaveCount(0);
+    await expect(ring).toBeFocused();
     await control({ action: "usage", tokens: 50000, capacity: 100000 });
     await expect(ring).toHaveAttribute("aria-label", /50%/);
     await control({ action: "usage", tokens: null, capacity: 100000 });

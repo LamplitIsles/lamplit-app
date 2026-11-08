@@ -149,7 +149,9 @@ try {
     await expect(
       page.getByText("private reply", { exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".companion-name")).toHaveText("Displayed Mica");
+    await expect(
+      page.locator(".companion-header .companion-name"),
+    ).toHaveCount(0);
     const state = () =>
       page.evaluate(() => ({
         requests: notificationFake.requests,

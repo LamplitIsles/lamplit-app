@@ -13,9 +13,15 @@
   name="Lamplit"
   id="org.lamplit.app"
   {colors}
-  theme="auto"
+  theme={import.meta.env.DEV ? "ios" : "auto"}
   darkMode="auto"
-  touch={{ tapHold: true, tapHoldDelay: 450, tapHoldPreventClicks: true }}
+  touch={{
+    tapHold: true,
+    tapHoldDelay: 450,
+    tapHoldPreventClicks: true,
+    touchRipple: false,
+    activeState: false,
+  }}
 >
   <View
     main

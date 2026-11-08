@@ -304,6 +304,136 @@ try {
         )
         .toBe(true);
     const latest = async () => (await state()).takes.at(-1);
+    // A held composer sends only the recognized text; existing draft stays put.
+    await expect(mic).toBeEnabled();
+    await input.fill("keep this draft");
+    await input.blur();
+    const holdAt = async () => {
+      await expect(page.locator("#dsh-companion")).not.toHaveAttribute("data-composer-expanded", "");
+      const box = await input.boundingBox();
+      if (!box) throw new Error("Composer is not visible");
+      await page.mouse.move(box.x + 30, box.y + box.height / 2);
+      await page.mouse.down();
+      return box;
+    };
+    const beforeHold = (await state()).executions;
+    // First permission grant requests access only: no recording UI or voice transport.
+    await page.evaluate(() => {
+      window.originalPermissionQuery = navigator.permissions.query.bind(navigator.permissions);
+      navigator.permissions.query = (descriptor) => descriptor.name === "microphone"
+        ? Promise.resolve({ state: "prompt" })
+        : window.originalPermissionQuery(descriptor);
+      const get = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      window.originalPermissionGet = get;
+      window.releaseInitialPermission = undefined;
+      navigator.mediaDevices.getUserMedia = async (...args) => {
+        const stream = await get(...args);
+        await new Promise((resolve) => { window.releaseInitialPermission = resolve; });
+        return stream;
+      };
+    });
+    await holdAt();
+    await expect.poll(() => page.evaluate(() => Boolean(window.releaseInitialPermission))).toBe(true);
+    await expect(page.locator(".k-glass[data-voice-hold]")).toHaveCount(0);
+    expect((await state()).takes.length).toBe(0);
+    await page.evaluate(() => window.releaseInitialPermission());
+    await expect(page.getByTestId("voice-permission-ready")).toHaveText("麦克风已允许，请重新长按说话。");
+    await expect(page.locator(".k-glass[data-voice-hold]")).toHaveCount(0);
+    await released();
+    await page.mouse.up();
+    expect((await state()).executions).toBe(beforeHold);
+    await page.evaluate(() => {
+      navigator.permissions.query = window.originalPermissionQuery;
+      navigator.mediaDevices.getUserMedia = window.originalPermissionGet;
+    });
+    // Dismissing the hold while the system prompt is open still reports its result.
+    await page.evaluate(() => {
+      navigator.permissions.query = (descriptor) => descriptor.name === "microphone"
+        ? Promise.resolve({ state: "prompt" })
+        : window.originalPermissionQuery(descriptor);
+      window.releaseInitialPermission = undefined;
+      navigator.mediaDevices.getUserMedia = async (...args) => {
+        const stream = await window.originalPermissionGet(...args);
+        await new Promise((resolve) => { window.releaseInitialPermission = resolve; });
+        return stream;
+      };
+    });
+    await holdAt();
+    await expect.poll(() => page.evaluate(() => Boolean(window.releaseInitialPermission))).toBe(true);
+    await page.mouse.up();
+    await page.evaluate(() => window.releaseInitialPermission());
+    await expect(page.getByTestId("voice-permission-ready")).toHaveText("麦克风已允许，请重新长按说话。");
+    await expect(page.locator(".k-glass[data-voice-hold]")).toHaveCount(0);
+    expect((await state()).takes.length).toBe(0);
+    await released();
+    await page.evaluate(() => {
+      navigator.permissions.query = window.originalPermissionQuery;
+      navigator.mediaDevices.getUserMedia = window.originalPermissionGet;
+    });
+    // A fresh hold after permission is required before recording and sending.
+    await holdAt();
+    await expect(mic).toHaveAttribute("data-state", "recording");
+    await expect(page.locator(".companion-voice-hold-hint")).toHaveText("松开发送，上滑取消");
+    await expect.poll(async () => (await latest())?.bytes ?? 0).toBeGreaterThan(0);
+    await page.screenshot({ path: `${screenshots}/hold-recording-${width}.png` });
+    await page.mouse.up();
+    await expect.poll(async () => (await state()).executions).toBe(beforeHold + 1);
+    await expect(input).toHaveValue("keep this draft");
+    await released();
+    await control({ action: "complete", text: "fake reply" });
+    const box = await holdAt();
+    await expect(mic).toHaveAttribute("data-state", "recording");
+    await page.mouse.move(box.x + 30, box.y + box.height / 2 - 80);
+    await expect(page.locator(".companion-voice-hold-hint")).toHaveText("松开取消");
+    await page.mouse.up();
+    await expect(mic).toHaveAttribute("data-state", "idle");
+    await released();
+    expect((await state()).executions).toBe(beforeHold + 1);
+    await expect(input).toHaveValue("keep this draft");
+    // Releasing before permission resolves cancels the take and never sends later.
+    await page.evaluate(() => {
+      const get = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      window.originalHoldGet = get;
+      window.releaseHoldPermission = undefined;
+      navigator.mediaDevices.getUserMedia = async (...args) => {
+        const stream = await get(...args);
+        await new Promise((resolve) => { window.releaseHoldPermission = resolve; });
+        return stream;
+      };
+    });
+    await holdAt();
+    await expect(mic).toHaveAttribute("data-state", "starting");
+    await expect(page.locator(".k-glass[data-voice-hold]")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => Boolean(window.releaseHoldPermission))).toBe(true);
+    await page.mouse.up();
+    await page.evaluate(() => {
+      window.releaseHoldPermission();
+      navigator.mediaDevices.getUserMedia = window.originalHoldGet;
+    });
+    await expect(mic).toHaveAttribute("data-state", "idle");
+    await released();
+    expect((await state()).executions).toBe(beforeHold + 1);
+    await expect(input).toHaveValue("keep this draft");
+    await input.click();
+    await expect(input).toBeFocused();
+    if (width === 390) {
+      await input.blur();
+      const touchBox = await input.boundingBox();
+      if (!touchBox) throw new Error("Composer is not visible");
+      const touch = await context.newCDPSession(page);
+      const point = { x: touchBox.x + 30, y: touchBox.y + touchBox.height / 2 };
+      await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+      await expect(mic).toHaveAttribute("data-state", "recording");
+      await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...point, y: point.y - 80 }] });
+      await expect(page.locator(".companion-voice-hold-hint")).toHaveText("松开取消");
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await expect(mic).toHaveAttribute("data-state", "idle");
+      await released();
+      expect((await state()).executions).toBe(beforeHold + 1);
+      await touch.detach();
+    }
+    await control({ action: "reset" });
+    await page.reload();
     const start = async () => {
       const count = (await state()).takes.length;
       await expect(mic).toBeEnabled();
@@ -687,6 +817,15 @@ try {
     await expect(input).toHaveValue("shortened");
     await expect(input).toBeEditable();
     await released();
+    await input.blur();
+    const beforeDeniedHold = (await state()).takes.length;
+    await holdAt();
+    await expect.poll(async () => (await state()).takes.length).toBeGreaterThan(beforeDeniedHold);
+    await expect(page.locator('[data-testid="companion-voice-error-status"]')).toBeVisible();
+    await page.mouse.up();
+    await expect(page.locator('[data-testid="companion-voice-error-status"]')).toBeVisible();
+    await expect(input).toHaveValue("shortened");
+    expect((await state()).executions).toBe(before + 1);
 
     // Navigation closes an in-flight take, preventing results on a disposed page.
     await page.reload();
@@ -705,7 +844,7 @@ try {
     await expect(mic).toBeDisabled();
     await expect(
       page.locator('[data-testid="companion-voice-unavailable-status"]'),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await input.fill(`disabled text ${width}`);
     await input.press("Enter");
     await expect.poll(async () => (await state()).executions).toBe(before + 2);

@@ -231,7 +231,7 @@ for local checks, frozen artifact preparation and both-host acceptance gates.
 Incoming replies retain side avatars with wider mobile bubbles and a desktop
 reading cap. Code and wide tables scroll locally. Only long timeline reminders
 use a two-line expand/collapse preview; copy keeps full original text and the
-scheduled-reminder drawer stays unchanged. See [reading layout and immutable
+scheduled-reminder view stays separate. See [reading layout and immutable
 focused acceptance](docs/mobile-reading-layout.md).
 
 ### Structured chat interfaces

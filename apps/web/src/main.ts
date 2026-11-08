@@ -1,5 +1,6 @@
 import { mount } from "svelte";
 import "./lib/companion/client/framework7.ts";
+import "./lib/companion/client/konsta.css";
 import "./style.css";
 import App from "./App.svelte";
 // Modal URLs are transient: a fresh load always starts with the chat page.

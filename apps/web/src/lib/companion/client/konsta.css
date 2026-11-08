@@ -1,0 +1,14 @@
+/* Framework7 owns global styles; omit Tailwind preflight and Konsta base rules. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "../../../../node_modules/konsta/styles/colors.css";
+@import "../../../../node_modules/konsta/styles/glass.css";
+@import "../../../../node_modules/konsta/styles/touch-ripple.css";
+@source "../../../../node_modules/konsta/svelte";
+@source "../../../../node_modules/konsta/shared";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Restrict Konsta utilities to the chat component regions. */
+.konsta-chat {
+  @import "tailwindcss/utilities.css" layer(utilities) source(none);
+}

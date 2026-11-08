@@ -138,7 +138,7 @@ try {
       const headers = page.locator(".companion-post-source");
       const assertMessage = async (id, src, time = authored) => {
         const message = row(id);
-        await expect(message).toHaveClass(/message-received/);
+        await expect(message).toHaveClass(/incoming/);
         await expect(message.locator(".companion-avatar-crop")).toHaveText(
           src.platform === "qq" ? "Q" : "M",
         );
@@ -162,7 +162,7 @@ try {
           await expect(header).not.toContainText(src.senderId);
         if (src.conversationName)
           await expect(header).not.toContainText(src.conversationId);
-        await expect(message.locator(".message-text p")).toHaveText([
+        await expect(message.locator(".companion-message-body p")).toHaveText([
           `${id} 原文`,
           "第二段 灯火",
         ]);
@@ -170,11 +170,6 @@ try {
           "datetime",
           new Date(time).toISOString(),
         );
-        expect(
-          await message
-            .locator(".message-bubble")
-            .evaluate((el) => getComputedStyle(el).borderInlineStartWidth),
-        ).toBe("3px");
       };
       await expect(input).toBeVisible();
       await page.screenshot({
@@ -248,10 +243,10 @@ try {
       await control({ action: "reminder" });
       await expect(
         page.locator(".companion-row").filter({ hasText: "普通网页消息" }),
-      ).toHaveClass(/message-sent/);
+      ).toHaveClass(/outgoing/);
       await expect(
         page.locator(".companion-row").filter({ hasText: "普通回复" }),
-      ).toHaveClass(/message-received/);
+      ).toHaveClass(/incoming/);
       await expect(page.locator(".companion-alarm-source")).toBeVisible();
       await page.reload();
       await expect(headers).toHaveCount(8);

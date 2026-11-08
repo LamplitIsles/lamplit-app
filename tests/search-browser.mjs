@@ -294,7 +294,7 @@ try {
     await expect(draft).toHaveValue("");
     await expect(
       page
-        .locator(".message-text")
+        .locator(".companion-message-body")
         .filter({ hasText: "保留草稿 unsent" })
         .first(),
     ).toBeVisible();

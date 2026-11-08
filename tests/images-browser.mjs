@@ -287,6 +287,7 @@ try {
         return route.fulfill({ json: { stickers: [sticker], nextCursor: null } });
       });
       await input.fill("保留草稿");
+      await input.blur();
       await page.getByRole("button", { name: "表情", exact: true }).click();
       await expect.poll(() => stickerReads.filter((path) => path.endsWith("/packs")).length).toBeGreaterThanOrEqual(1);
       await expect.poll(() => stickerReads.filter((path) => path.endsWith("/favorites")).length).toBeGreaterThanOrEqual(2);
@@ -304,10 +305,18 @@ try {
       await page.mouse.down();
       await page.waitForTimeout(500);
       await expect(page.locator(".sticker-preview-name")).toHaveText("小猫");
+      const preview = page.locator(".sticker-preview");
+      await expect(preview).toBeVisible();
+      const bounds = await preview.boundingBox();
+      const sheetBounds = await page.locator(".companion-sticker-sheet").boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y).toBeGreaterThanOrEqual(sheetBounds.y);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(sheetBounds.y + sheetBounds.height);
       await page.mouse.up();
       await expect(page.locator(".sticker-preview")).toHaveCount(0);
       expect(stages).toBe(0);
-      await page.getByRole("button", { name: "表情", exact: true }).click();
+      await page.getByRole("dialog", { name: "表情" }).getByRole("button", { name: "取消", exact: true }).click();
       await expect(input).toHaveValue("保留草稿");
       denied = true;
       await page.getByRole("button", { name: "表情", exact: true }).click();
@@ -483,11 +492,8 @@ try {
     let state = await control({ action: "state" });
     expect(state.album.some((image) => image.origin === "human")).toBe(true);
     expect(state.album.some((image) => image.origin === "agent")).toBe(true);
-    await page
-      .getByRole("button", { name: "查看 Companion 关系资料", exact: true })
-      .click();
-    const drawer = page.getByTestId("companion-relationship-drawer");
-    await drawer.getByRole("tab", { name: "相册", exact: true }).click();
+    await page.getByRole("button", { name: "相册", exact: true }).click();
+    const drawer = page.locator("#companion-drawer-panel");
     await expect(
       drawer.getByRole("button", { name: "pasted.png", exact: true }),
     ).toBeVisible();
@@ -510,7 +516,7 @@ try {
       path: `${evidence}/album-${width}.png`,
       fullPage: true,
     });
-    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "聊天", exact: true }).click();
     await expect(drawer).not.toBeVisible();
     await page.screenshot({
       path: `${evidence}/history-${width}.png`,
@@ -579,7 +585,7 @@ try {
     await expect(drafts).toHaveCount(0);
     await expect(
       page
-        .locator(".message-sent")
+        .locator(".k-message.outgoing")
         .filter({ hasText: "上传失败保留" })
         .getByTestId(/failed-/),
     ).toBeVisible();
@@ -593,7 +599,7 @@ try {
     await control({ action: "uploadFailure", enabled: false });
     await control({ action: "mode", state: "withdrawn" });
     await page
-      .locator(".message-sent")
+      .locator(".k-message.outgoing")
       .filter({ hasText: "上传失败保留" })
       .getByTestId(/failed-/)
       .click();
@@ -736,7 +742,7 @@ try {
     await expect(drafts).toHaveCount(0);
     await expect(
       page
-        .locator(".message-sent")
+        .locator(".k-message.outgoing")
         .filter({ hasText: "较早上传失败" })
         .getByTestId(/failed-/),
     ).toBeVisible();
@@ -762,7 +768,7 @@ try {
     await expect(input).toHaveValue("");
     await expect(
       page
-        .locator(".message-sent")
+        .locator(".k-message.outgoing")
         .filter({ hasText: "拒绝输入" })
         .getByTestId(/failed-/),
     ).toBeVisible();

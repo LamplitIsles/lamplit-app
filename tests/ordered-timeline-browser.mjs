@@ -203,7 +203,7 @@ try {
   await page.locator("#companion-textarea").press("Enter");
   const retryImages = page.locator(".companion-image-entry img[alt='retry.png']");
   await expect(retryImages).toHaveCount(2);
-  const failed = page.locator(".message-sent").filter({ hasText: "重试图片" }).getByTestId(/failed-/);
+  const failed = page.locator(".k-message.outgoing").filter({ hasText: "重试图片" }).getByTestId(/failed-/);
   await expect(failed).toBeVisible();
   const retrySrc = await retryImages.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("src")));
   await retryImages.evaluateAll((nodes) => { window.__retryPreviews = nodes; });

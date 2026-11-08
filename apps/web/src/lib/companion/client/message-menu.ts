@@ -1,95 +1,59 @@
+import { writable } from "svelte/store";
 import { captureReadingFocus } from "./reading-focus.ts";
-import { f7 } from "framework7-svelte";
-let closeCurrent: (() => void) | undefined;
 
-export function messageMenuOpen() {
-  return !!closeCurrent;
+interface MenuAction {
+  text: string;
+  run(): void | Promise<void>;
 }
-export function dismissMessageMenu() {
-  closeCurrent?.();
+interface MenuState {
+  id: number;
+  target: HTMLElement;
+  actions: MenuAction[];
+  cancelLabel: string;
+  confirmation?: string;
+}
+
+export const currentMessageMenu = writable<MenuState | undefined>();
+let current: MenuState | undefined;
+let returnFocus: HTMLElement | undefined;
+let nextId = 0;
+
+export function messageMenuOpen(): boolean {
+  return !!current;
+}
+
+export function dismissMessageMenu(): void {
+  if (!current) return;
+  current = undefined;
+  currentMessageMenu.set(undefined);
+  const target = returnFocus;
+  returnFocus = undefined;
+  queueMicrotask(() => {
+    if (!current && target?.isConnected) target.focus({ preventScroll: true });
+  });
 }
 
 export function messageMenu(
   target: HTMLElement,
-  actions: { text: string; run(): void | Promise<void>; disabled?: boolean }[],
+  actions: MenuAction[],
   cancelLabel: string,
   confirmation?: string,
-  preferSheet = false,
-) {
-  closeCurrent?.();
+): void {
+  if (!current) returnFocus = captureReadingFocus(document);
   document.getSelection()?.removeAllRanges();
-  const returnFocus = captureReadingFocus(document);
-  const modal = f7.actions.create({
-    cssClass: "companion-action-menu",
-    convertToPopover: true,
-    forceToPopover: !preferSheet,
-    targetEl: target,
-    closeOnEscape: true,
-    buttons: [
-      ...(confirmation ? [{ text: confirmation, label: true }] : []),
-      ...actions.map((action) => ({
-        text: action.text,
-        disabled: action.disabled,
-        onClick: () => {
-          void action.run();
-        },
-      })),
-      { text: cancelLabel, strong: true },
-    ],
-    on: {
-      opened() {
-        const root = modal.$el[0] as HTMLElement;
-        root.setAttribute("role", "dialog");
-        root.setAttribute("aria-modal", "true");
-        root.setAttribute(
-          "aria-label",
-          confirmation ?? actions.map((action) => action.text).join(", "),
-        );
-        const buttons = [
-          ...root.querySelectorAll<HTMLElement>(
-            ".list-button:not(.disabled), .item-link:not(.disabled), .actions-button:not(.disabled)",
-          ),
-        ];
-        for (const disabled of root.querySelectorAll<HTMLElement>(
-          ".list-button.disabled, .item-link.disabled, .actions-button.disabled",
-        )) {
-          disabled.setAttribute("role", "button");
-          disabled.setAttribute("aria-disabled", "true");
-        }
-        for (const button of buttons) {
-          button.setAttribute("role", "button");
-          button.tabIndex = 0;
-          button.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              close();
-            }
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              button.click();
-            }
-            if (event.key === "Tab") {
-              event.preventDefault();
-              const index = buttons.indexOf(button);
-              buttons[
-                (index + (event.shiftKey ? buttons.length - 1 : 1)) %
-                  buttons.length
-              ].focus();
-            }
-          });
-        }
-        buttons[0]?.focus({ preventScroll: true });
-      },
-      closed() {
-        if (closeCurrent === close) closeCurrent = undefined;
-        if (returnFocus?.isConnected)
-          returnFocus.focus({ preventScroll: true });
-        queueMicrotask(() => modal.destroy());
-      },
-    },
-  });
-  const close = () => modal.close(false);
-  closeCurrent = close;
-  modal.open();
+  current = { id: ++nextId, target, actions, cancelLabel, confirmation };
+  currentMessageMenu.set(current);
+}
+
+export function runMessageMenuAction(action: MenuAction): void {
+  const opened = current;
+  if (!opened) return;
+  try {
+    const result = action.run();
+    if (current === opened) dismissMessageMenu();
+    void result;
+  } catch (error) {
+    if (current === opened) dismissMessageMenu();
+    throw error;
+  }
 }

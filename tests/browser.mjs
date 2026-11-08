@@ -176,29 +176,26 @@ try {
     const input = page.locator("#companion-textarea");
     await expect(input).toBeVisible();
     if (!external) {
-      await expect(page.locator(".companion-name")).toHaveText("Mica Display");
-      await expect(page.locator(".companion-avatar img")).toHaveAttribute(
-        "src",
-        "/api/test/companion.png",
-      );
+      await expect(
+        page.locator(".companion-header .companion-avatar"),
+      ).toHaveCount(0);
+      await expect(
+        page.locator(".companion-header .companion-name"),
+      ).toHaveCount(0);
       await expect(page.locator(".companion-chat-background img")).toHaveCount(
         2,
       );
       for (const image of await page
-        .locator(".companion-avatar img, .companion-chat-background img")
+        .locator(".companion-chat-background img")
         .all())
         await expect
           .poll(() =>
             image.evaluate((img) => img.complete && img.naturalWidth > 0),
           )
           .toBe(true);
-      await page
-        .getByRole("button", { name: "查看 Companion 关系资料", exact: true })
-        .click();
-      await expect(
-        page.locator(".companion-history-controls button"),
-      ).toHaveCount(1);
-      await page.locator(".companion-history-controls button").click();
+      await page.getByRole("button", { name: "纪念", exact: true }).click();
+      await expect(page.locator("#companion-drawer-panel")).toBeVisible();
+      await page.getByRole("button", { name: "聊天", exact: true }).click();
     }
     await input.fill(`hello-${width}`);
     if (!external)
@@ -228,13 +225,9 @@ try {
       page.getByText(`hello-${width}`, { exact: true }),
     ).toBeVisible();
     if (!external) {
-      const avatar = page.locator(".message-sent .message-avatar img").first();
-      await expect(avatar).toHaveAttribute("src", "/api/test/user.png");
-      await expect
-        .poll(() =>
-          avatar.evaluate((img) => img.complete && img.naturalWidth > 0),
-        )
-        .toBe(true);
+      await expect(
+        page.locator(".k-message.outgoing .companion-chat-avatar"),
+      ).toHaveCount(0);
     }
     await expect(
       page.locator('[data-testid="companion-typing-indicator"]'),
@@ -342,7 +335,7 @@ try {
       "xpath=ancestor::div[contains(@class, 'companion-text-bubble')]",
     );
     await bubble.click({ button: "right" });
-    const menu = page.locator(".companion-action-menu.modal-in");
+    const menu = page.locator(".companion-action-menu.k-popover");
     await expect(menu).toBeVisible();
     await expect(
       menu.getByRole("button", { name: "复制消息", exact: true }),

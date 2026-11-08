@@ -83,3 +83,12 @@ The chat interface renderer uses `svelte-a2ui` 0.2.0 from
 application validates its supported A2UI 1.0 Candidate subset before adapting
 it to the package's renderer dialect. Media, text, button and modal components
 are host implementations; the library does not receive a live agent transport.
+
+## Konsta UI and Tailwind
+
+The web build uses `konsta` 5.5.0 from <https://github.com/konstaui/konsta>
+and Tailwind CSS 4.3.4 from <https://github.com/tailwindlabs/tailwindcss>, both
+MIT-licensed dependencies. Konsta's published package omits its license file;
+the versioned upstream notice is retained in `docs/licenses/` and included in
+the frontend archive. Tailwind's packages include their license notices. No
+Konsta or Tailwind source is vendored.

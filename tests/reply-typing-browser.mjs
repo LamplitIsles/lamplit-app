@@ -110,7 +110,7 @@ try {
     };
     await control("session");
     await page.goto(`http://127.0.0.1:${server.port}/`);
-    const bubbles = page.locator(".message-received .companion-text-bubble");
+    const bubbles = page.locator(".k-message.incoming .companion-text-bubble");
     const typing = page.getByTestId("companion-typing-indicator");
     const stop = page.getByTestId("companion-stop");
     await control("start", "");
