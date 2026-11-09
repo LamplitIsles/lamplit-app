@@ -145,6 +145,14 @@ try {
     await settings.getByRole("button", { name: "刷新", exact: true }).click();
     await expect(landscape).toBeEnabled();
     expect(postCount).toBe(3);
+    await settings.getByRole("button", { name: "返回", exact: true }).click();
+    await settings.getByRole("button", { name: "返回", exact: true }).click();
+    await page.getByRole("link", { name: "纪念", exact: true }).click();
+    const backdrop = page.locator(".companion-detail-background");
+    await expect(backdrop.locator(".companion-background-portrait")).toHaveAttribute("src", "/api/backgrounds/portrait");
+    await expect(page.locator("#companion-drawer-panel")).toHaveClass(/k-glass/);
+    await page.getByRole("link", { name: "日记", exact: true }).click();
+    await expect(backdrop.locator(".companion-background-landscape")).toHaveAttribute("src", "/api/backgrounds/landscape");
     expect(errors).toEqual([]);
     await context.close();
   }

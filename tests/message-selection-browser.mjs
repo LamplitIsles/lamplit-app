@@ -177,6 +177,9 @@ try {
   await expect(menu).toHaveCount(0);
   const image = page.locator(".companion-media-button");
   await expect(image).toBeVisible();
+  await expect(
+    image.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' companion-glass-bubble ')]"),
+  ).toHaveCount(0);
   const imageBox = await image.boundingBox();
   const imagePoint = {
     x: imageBox.x + imageBox.width / 2,

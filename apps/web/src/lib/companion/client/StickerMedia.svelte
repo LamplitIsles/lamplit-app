@@ -42,5 +42,5 @@
 <style>
   img { display: block; width: 100%; height: 100%; object-fit: contain; }
   .sticker-media-placeholder { display: block; width: 100%; height: 100%; }
-  .sticker-media-error { color: var(--f7-text-color); opacity: .45; }
+  .sticker-media-error { color: var(--companion-color-text); opacity: .45; }
 </style>

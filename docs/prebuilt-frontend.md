@@ -58,13 +58,17 @@ A lockfile should also pin the package and its dependencies for frozen installs.
 A matching compiled-contract hash proves byte equality, not application behavior.
 The license directory includes App attribution and the license and notice files
 found in the installed Bun package store, organized by dependency and version.
-The pinned Chord and Skeleton Elements packages omit their license files, so
-their versioned upstream notices are maintained in `docs/licenses/` and copied
-into the archive: [Chord 1.0.0](https://github.com/earendil-works/pi/blob/v1.0.0/LICENSE)
-and [Skeleton Elements 4.0.1](https://github.com/nolimits4web/skeleton-elements/blob/v4.0.1/LICENSE).
+Only package identities in the current Bun lockfile are collected from the store,
+so notices from stale local installations do not enter the archive. The pinned
+Chord package omits its license file, so its [upstream notice](https://github.com/earendil-works/pi/blob/v1.0.0/LICENSE)
+is maintained in `docs/licenses/` and copied into the archive.
 The Konsta 5.5.0 package omits its MIT license file; its
 [upstream notice](https://github.com/konstaui/konsta/blob/v5.5.0/LICENSE) is
 maintained in `docs/licenses/` and included in the frontend archive.
+The PhotoSwipe 5.4.4 and TanStack Virtual MIT notices are also maintained in
+`docs/licenses/` and included, independently of the package-store notices.
+The `sv-router` 0.19.0 MIT notice is collected from its installed package at
+`licenses/dependencies/sv-router/0.19.0/LICENSE`.
 
 The pipeline needs Woodpecker enabled for this repository and two secrets:
 `forgejo_packages_token` with access to write and read the LamplitIsles generic

@@ -1,6 +1,7 @@
 # Native durable submission handoff — spec #3435
 
-App owns the only public schema and the complete shared Framework7 frontend.
+App owns the only public schema and the shared Svelte frontend. References to
+Framework7 styling in this historical handoff predate spec #108.
 Pi (#3436) and CFL (#3437) consume the same Orc-approved source/build/contracts/
 runner identity. App fixture success establishes local readiness; actual Pi DO and
 CFL handler/socket joint acceptance remains pending Orc. Do not merge or deploy

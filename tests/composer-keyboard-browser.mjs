@@ -155,6 +155,7 @@ try {
       );
     }
     expect(collapsed.stickers.left - collapsed.input.right).toBeGreaterThanOrEqual(8);
+    expect(collapsed.stickers.left - collapsed.input.right).toBeLessThanOrEqual(12);
     expect(collapsed.attach.left).toBeGreaterThanOrEqual(collapsed.input.right);
     const inputSurface = await input.evaluate((node) => {
       const style = getComputedStyle(node.closest(".k-glass"));

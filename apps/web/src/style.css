@@ -9,15 +9,9 @@ body,
   height: 100%;
   margin: 0;
 }
-:root:root {
-  --f7-font-family: "Noto Sans SC", system-ui, sans-serif;
-  --f7-font-size: 16px;
-  --f7-line-height: 1.55;
-  --f7-message-bubble-font-size: 16px;
-  --f7-message-bubble-line-height: 1.55;
-}
 body {
-  background: var(--f7-page-bg-color);
+  font: 16px/1.55 "Noto Sans SC", system-ui, sans-serif;
+  background: var(--companion-color-canvas);
 }
 button {
   cursor: pointer;

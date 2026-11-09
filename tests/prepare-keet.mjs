@@ -7,6 +7,8 @@ import {
   rm,
 } from "node:fs/promises";
 import { resolve, join, relative, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { stageFrontendLicenses } from "../scripts/package-frontend.mjs";
 
 const root = resolve(import.meta.dir, "..");
 const output = join(root, ".scratch/keet-source-restoration/candidate");
@@ -61,9 +63,21 @@ for (const name of ["package.json", "LICENSE"])
   );
 const acceptance = join(stage, "acceptance");
 await mkdir(join(acceptance, "docs"), { recursive: true });
+const require = createRequire(join(root, "apps/web/package.json"));
+await stageFrontendLicenses(
+  root,
+  join(acceptance, "licenses"),
+  join(
+    dirname(require.resolve("@fontsource/noto-sans-sc/package.json")),
+    "LICENSE",
+  ),
+  join(root, "node_modules/.bun"),
+);
 for (const name of [
   "keet-browser.mjs",
   "keet-fixture.ts",
+  "ui-test-host.ts",
+  "direct-test-host.ts",
   "fixture.ts",
   "panels-fixture.ts",
   "search-fixture.ts",
@@ -78,7 +92,11 @@ for (const name of [
         "../packages/contracts/src/server.ts",
         "@lamplit/contracts/server",
       )
-      .replaceAll("../packages/contracts/src/index.ts", "@lamplit/contracts"),
+      .replaceAll("../packages/contracts/src/index.ts", "@lamplit/contracts")
+      .replaceAll(
+        "../packages/contracts/src/client.ts",
+        "@lamplit/contracts/client",
+      ),
   );
 }
 await writeFile(

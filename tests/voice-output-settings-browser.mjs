@@ -60,21 +60,28 @@ try {
     await settings.getByRole("button", { name: "语音输出", exact: true }).click();
     const provider = settings.locator("#tts-provider");
     async function chooseSmart(id, value) {
-      const picker = settings.locator(`.smart-select:has(#${id})`);
+      const trigger = settings.locator(`#${id}`);
       if (id === "tts-provider" && value === "minimax") {
-        await picker.focus();
-        await expect(picker).toBeFocused();
-        await picker.press("Enter");
-      } else await picker.click();
-      const popover = page.locator(".popover.smart-select-popover.modal-in");
-      await expect(popover).toBeVisible();
+        await trigger.focus();
+        await expect(trigger).toBeFocused();
+        await trigger.press("Enter");
+      } else await trigger.click();
+      const picker = page.getByTestId("voice-settings-picker");
+      await expect(picker).toBeVisible();
       if ((id === "tts-provider" && value === "minimax") || (id === "tts-saved-voices" && value === "saved:v2"))
         await page.screenshot({ path: `${evidence}/${width}-${id}-open.png`, animations: "disabled" });
-      await popover.locator(`label:has(input[value="${value}"])`).click();
-      await expect(page.locator(".popover.smart-select-popover")).toHaveCount(0);
+      await picker.locator(`[data-value="${value}"]`).click();
+      await expect(picker).toHaveCount(0);
     }
-    await expect(provider).toHaveValue("alibaba");
-    await expect(settings.locator(".smart-select:has(#tts-provider)")).toBeVisible();
+    async function expectVoiceChoices(count) {
+      await settings.locator("#tts-saved-voices").click();
+      const picker = page.getByTestId("voice-settings-picker");
+      await expect(picker.locator("[data-value]")).toHaveCount(count);
+      await picker.getByRole("button", { name: "取消" }).click();
+      await expect(settings.locator("#tts-saved-voices")).toBeFocused();
+    }
+    await expect(provider).toHaveAttribute("data-value", "alibaba");
+    await expect(provider).toBeVisible();
     await expect(settings.locator("#tts-voice")).toHaveValue("Cherry");
     await chooseSmart("tts-provider", "minimax");
     await expect(settings.locator("#tts-key")).toHaveCount(0);
@@ -84,7 +91,7 @@ try {
     await page.goBack();
     await page.goForward();
     await page.goForward();
-    await expect(provider).toHaveValue("minimax");
+    await expect(provider).toHaveAttribute("data-value", "minimax");
     await expect(settings.locator("#tts-speed")).toHaveValue("1.4");
     await chooseSmart("tts-provider", "bytedance");
     await expect(settings.locator("#tts-voice")).toHaveValue("byte-id");
@@ -96,14 +103,14 @@ try {
     await input.fill("synthetic-key");
     await settings.getByRole("button", { name: "保存 Key", exact: true }).click();
     await expect(input).toHaveValue("");
-    await expect(settings.locator("#tts-saved-voices option")).toHaveCount(3);
+    await expectVoiceChoices(3);
     await expect(settings.locator("#tts-voice")).toHaveValue("old-id");
-    await expect(settings.locator("#tts-saved-voices")).toHaveValue("manual");
+    await expect(settings.locator("#tts-saved-voices")).toHaveAttribute("data-value", "manual");
     await settings.getByRole("button", { name: "加载更多" }).click();
-    await expect(settings.locator("#tts-saved-voices option")).toHaveCount(4);
+    await expectVoiceChoices(4);
     await chooseSmart("tts-saved-voices", "saved:v2");
     await expect(settings.locator("#tts-voice")).toHaveCount(0);
-    await expect(settings.locator("#tts-saved-voices")).toHaveValue("saved:v2");
+    await expect(settings.locator("#tts-saved-voices")).toHaveAttribute("data-value", "saved:v2");
     await page.screenshot({ path: `${evidence}/${width}-saved-voice.png`, animations: "disabled" });
     await settings.getByRole("button", { name: "保存", exact: true }).click();
     await expect(settings.getByRole("status")).toContainText("设置已保存并启用");

@@ -1,38 +1,20 @@
 <script lang="ts">
-  import { App, View } from "framework7-svelte";
-  import Partner from "./Partner.svelte";
+  import { App } from "konsta/svelte";
+  import { Router } from "sv-router";
+  import "./router.ts";
   import AuthGate from "./AuthGate.svelte";
-  const colors = {
-    primary: getComputedStyle(document.documentElement)
-      .getPropertyValue("--companion-color-accent")
-      .trim(),
-  };
+  import { onMount } from "svelte";
+  import { get } from "svelte/store";
+  import { applyUiTheme, uiTheme, watchUiTheme } from "./lib/companion/client/ui-theme.js";
+  import { initialPreferences, resolveScheme } from "./lib/companion/client/preferences.ts";
+  applyUiTheme(get(uiTheme));
+  $effect(() => applyUiTheme($uiTheme));
+  onMount(watchUiTheme);
+  const preferences = initialPreferences();
+  document.documentElement.classList.toggle("dark", resolveScheme(preferences.appearance, preferences.systemDark) === "dark");
+  document.documentElement.lang = preferences.language === "zh" ? "zh-Hans" : "en";
 </script>
 
-<App
-  name="Lamplit"
-  id="org.lamplit.app"
-  {colors}
-  theme={import.meta.env.DEV ? "ios" : "auto"}
-  darkMode="auto"
-  touch={{
-    tapHold: true,
-    tapHoldDelay: 450,
-    tapHoldPreventClicks: true,
-    touchRipple: false,
-    activeState: false,
-  }}
->
-  <View
-    main
-    url="/"
-    browserHistory
-    browserHistorySeparator="#!"
-    browserHistoryStoreHistory={false}
-    browserHistoryOnLoad={false}
-    iosSwipeBack={false}
-    mdSwipeBack={false}
-  >
-    <AuthGate><Partner /></AuthGate>
-  </View>
+<App theme={$uiTheme} class="konsta-chat">
+  <AuthGate><Router /></AuthGate>
 </App>

@@ -1,5 +1,8 @@
 # Image sending and submitted-input recovery
 
+Framework7 presentation references below describe the historical baseline
+before the spec #108 migration.
+
 Spec #3096 owns this app contract. The public root exports the TypeBox schemas,
 DTO types, `validateUpload`, `validateRecovery`, `mediaUrl`, `UPLOAD_PATH`, and
 `MAX_UPLOAD_BODY_BYTES`; `/server` exports `imageHttp` and `ImageBackend`. Both

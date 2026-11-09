@@ -1,11 +1,12 @@
-/* Framework7 owns component styling; these rules own chat geometry and media. */
+/* Chat layout and media styles. */
 .settings-screen {
   position: fixed;
   z-index: 1000;
   inset: 0;
   overflow-y: auto;
-  background: var(--f7-page-bg-color);
-  color: var(--f7-text-color);
+  color: #000;
+  touch-action: auto;
+  box-shadow: none;
   padding: max(24px, env(safe-area-inset-top)) 20px
     max(32px, env(safe-area-inset-bottom));
 }
@@ -26,72 +27,15 @@
   place-items: center;
   cursor: pointer;
   color: inherit;
-  background: color-mix(
-    in srgb,
-    var(--f7-text-color) 7%,
-    var(--f7-page-bg-color)
-  );
+  background: color-mix(in srgb, currentColor 7%, transparent);
 }
 .settings-container h1 {
   margin: 30px 0 24px;
   font-size: clamp(28px, 5vw, 36px);
   line-height: 1.15;
 }
-.settings-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.settings-card {
-  position: relative;
-  overflow: hidden;
-  min-height: 154px;
-  border: 0;
-  border-radius: 22px;
-  background: color-mix(
-    in srgb,
-    var(--f7-text-color) 7%,
-    var(--f7-page-bg-color)
-  );
-  color: inherit;
-  padding: 22px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: 1fr auto;
-  align-items: end;
-  text-align: start;
-  cursor: pointer;
-}
-.settings-card > svg:first-of-type {
-  align-self: start;
-  grid-column: 1 / -1;
-}
-.settings-card > svg:last-of-type {
-  opacity: 0.45;
-}
-.settings-card > span:not(.ripple-wave) {
-  font-size: 20px;
-  font-weight: 650;
-}
-.settings-card > .ripple-wave {
-  position: absolute;
-  pointer-events: none;
-}
-.settings-card-appearance > svg:first-of-type {
-  color: #a15deb;
-}
-.settings-card-models > svg:first-of-type {
-  color: #ed9c34;
-}
-.settings-card-voice > svg:first-of-type {
-  color: #398bdf;
-}
-.settings-card-voice-output > svg:first-of-type {
-  color: #2b9c7b;
-}
-.settings-card:focus-visible,
 .settings-back:focus-visible {
-  outline: 3px solid var(--f7-theme-color);
+  outline: 3px solid var(--k-color-primary);
   outline-offset: 3px;
 }
 .settings-detail {
@@ -104,7 +48,8 @@
   margin: 0 0 14px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--f7-list-item-footer-text-color);
+  color: inherit;
+  opacity: 0.65;
 }
 .background-settings-grid {
   display: grid;
@@ -118,15 +63,11 @@
   justify-content: space-between;
   min-height: 136px;
   overflow: hidden;
-  border: 1px dashed color-mix(in srgb, var(--f7-text-color) 28%, transparent);
+  border: 1px dashed color-mix(in srgb, currentColor 28%, transparent);
   border-radius: 16px;
   padding: 16px;
-  background: color-mix(
-    in srgb,
-    var(--f7-text-color) 5%,
-    var(--f7-page-bg-color)
-  );
-  color: var(--f7-text-color);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
   font-weight: 600;
   cursor: pointer;
 }
@@ -161,7 +102,7 @@
   z-index: 2;
 }
 .background-upload:has(input:focus-visible) {
-  outline: 3px solid var(--f7-theme-color);
+  outline: 3px solid var(--k-color-primary);
   outline-offset: 3px;
 }
 .background-disabled {
@@ -169,14 +110,11 @@
   cursor: default;
 }
 .background-settings p {
-  color: var(--f7-list-item-footer-text-color);
+  color: inherit;
   margin: 12px 0;
 }
 .background-settings .button {
   width: fit-content;
-}
-.settings-detail .list {
-  margin-top: 0;
 }
 .settings-voice form {
   display: grid;
@@ -190,23 +128,11 @@
   font-weight: 600;
   margin-top: 12px;
 }
-.settings-voice form > input,
-.settings-voice form > select {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 48px;
-  border-radius: 12px;
-  border: 1px solid var(--f7-list-border-color, #9998);
-  padding: 0 14px;
-  background: var(--f7-list-bg-color);
-  color: inherit;
-  font: inherit;
-}
 .settings-voice .voice-output-list {
   margin: 0;
 }
 .settings-voice p {
-  color: var(--f7-list-item-footer-text-color);
+  color: inherit;
   margin: 0 0 8px;
 }
 .settings-save {
@@ -214,18 +140,22 @@
   min-width: 100px;
   margin-top: 12px;
 }
-@media (max-width: 380px) {
-  .settings-card {
-    min-height: 132px;
-    padding: 18px;
-  }
+.dark .settings-screen { color: #fff; }
+.md .settings-screen {
+  background: color-mix(in srgb, var(--k-color-md-light-surface) 88%, transparent);
+  color: var(--k-color-md-light-on-surface);
+  backdrop-filter: blur(16px);
+}
+.md.dark .settings-screen, .md .dark .settings-screen {
+  background: color-mix(in srgb, var(--k-color-md-dark-surface) 88%, transparent);
+  color: var(--k-color-md-dark-on-surface);
 }
 #dsh-companion {
   --companion-system-safe-area: env(safe-area-inset-bottom, 0px);
   --companion-bottom-safe-area: var(--companion-system-safe-area);
   box-sizing: border-box;
-  background: var(--f7-page-bg-color);
-  color: var(--f7-text-color);
+  background: var(--companion-color-canvas);
+  color: var(--companion-color-text);
 }
 #dsh-companion.companion-shell {
   position: fixed;
@@ -258,20 +188,18 @@
 }
 .companion-header.navbar {
   position: absolute;
-  height: calc(var(--f7-navbar-height) + env(safe-area-inset-top));
+  inset: 0 0 auto;
+  z-index: 10;
+  box-sizing: border-box;
+  height: calc(var(--companion-navbar-height) + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
   pointer-events: none;
-  --f7-navbar-bg-color: transparent;
-  --f7-navbar-border-color: transparent;
-}
-.companion-header .navbar-bg,
-.companion-header .navbar-bg::after {
-  background: transparent;
-  box-shadow: none;
 }
 .companion-header .navbar-inner {
   position: relative;
   display: flex;
+  align-items: center;
+  height: 100%;
   justify-content: space-between;
   padding: 0 12px;
 }
@@ -282,7 +210,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: var(--f7-bars-bg-color);
+  background: var(--companion-color-surface);
 }
 .companion-avatar-crop img {
   width: 100%;
@@ -320,7 +248,7 @@
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: var(--f7-list-item-footer-text-color);
+  color: var(--companion-color-text-muted);
 }
 .companion-header-actions-region {
   margin-left: auto;
@@ -345,9 +273,9 @@
 .ios #dsh-companion.dark .companion-header-actions {
   color: #fff;
 }
-.ios.dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar, .companion-glass-bubble),
-.ios .dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar, .companion-glass-bubble),
-.ios #dsh-companion.dark :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar, .companion-glass-bubble) {
+.ios.dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
+.ios .dark #dsh-companion :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar),
+.ios #dsh-companion.dark :is(.companion-identity-chip, .companion-header-actions, .companion-composer.messagebar) {
   box-shadow:
     inset 0 0 0 0.5px rgb(255 255 255 / 0.12),
     inset 0 1px 4px rgb(255 255 255 / 0.08);
@@ -356,13 +284,13 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--f7-color-green);
+  background: var(--companion-color-success);
 }
 .companion-status-error {
-  background: var(--f7-color-red);
+  background: var(--companion-color-error);
 }
 .companion-status-warning {
-  background: var(--f7-color-orange);
+  background: var(--companion-color-warning);
 }
 .companion-timeline-region {
   position: absolute;
@@ -371,12 +299,17 @@
   overflow: hidden;
 }
 .companion-timeline.page-content {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding-top: calc(var(--companion-navbar-height) + env(safe-area-inset-top, 0px));
   overscroll-behavior: contain;
   user-select: none;
   -webkit-user-select: none;
   background: transparent;
   scrollbar-gutter: stable;
-  padding-bottom: calc(var(--companion-messagebar-height, var(--f7-messagebar-height)) + 12px);
+  padding-bottom: calc(var(--companion-messagebar-height, var(--companion-messagebar-default-height)) + 12px);
 }
 .companion-timeline:not(.timeline-ready) {
   visibility: hidden;
@@ -387,35 +320,25 @@
   padding-inline: max(12px, env(safe-area-inset-left, 0px)) max(12px, env(safe-area-inset-right, 0px));
 }
 
-/* Restore the original soft shadows; iOS masks require shadowing the outer content. */
-.companion-row .message-bubble {
-  box-shadow: 0 5px 18px var(--companion-message-shadow-color);
-}
 #dsh-companion .companion-has-files + .companion-row {
   margin-top: 10px;
 }
 #dsh-companion .companion-has-files.companion-message-last + .companion-row {
   margin-top: 24px;
 }
-.ios .companion-row .message-bubble {
-  box-shadow: none;
-}
-.ios .companion-row .message-content {
-  filter: drop-shadow(0 5px 9px var(--companion-message-shadow-color));
-}
-/* Original 20px daisyUI dots, using Framework7's typing markup. */
+/* Typing indicator. */
 .companion-row .message-typing-indicator {
   display: inline-flex;
   align-items: center;
   justify-content: space-around;
   width: 20px;
   height: 20px;
-  --f7-message-typing-indicator-bg-color: currentColor;
-  --f7-message-typing-indicator-opacity: 1;
 }
 .companion-row.message-typing .message-typing-indicator > div {
   width: 5px;
   height: 5px;
+  border-radius: 50%;
+  background: currentColor;
   animation: companion-typing-hop 1.05s linear infinite;
 }
 .companion-row.message-typing .message-typing-indicator > div + div {
@@ -460,22 +383,55 @@
   padding: 6px 16px;
   border-radius: 16px;
   touch-action: auto;
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.4), 0 2px 10px rgb(0 0 0 / 0.06);
 }
 .ios #dsh-companion .companion-row.incoming .companion-glass-bubble {
-  background: rgb(229 229 234 / 0.78);
+  background: rgb(245 245 248 / 0.68);
 }
 .ios #dsh-companion .companion-row.outgoing .companion-glass-bubble {
-  background: color-mix(in srgb, var(--k-color-primary, #007aff) 20%, rgb(255 255 255 / 0.88));
+  background: color-mix(in srgb, var(--k-color-primary, #007aff) 15%, rgb(255 255 255 / 0.65));
 }
 .ios.dark #dsh-companion .companion-row.incoming .companion-glass-bubble,
 .ios .dark #dsh-companion .companion-row.incoming .companion-glass-bubble,
 .ios #dsh-companion.dark .companion-row.incoming .companion-glass-bubble {
-  background: rgb(37 37 37 / 0.88);
+  background: rgb(28 28 30 / 0.74);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.12);
 }
 .ios.dark #dsh-companion .companion-row.outgoing .companion-glass-bubble,
 .ios .dark #dsh-companion .companion-row.outgoing .companion-glass-bubble,
 .ios #dsh-companion.dark .companion-row.outgoing .companion-glass-bubble {
-  background: color-mix(in srgb, var(--k-color-primary, #007aff) 35%, rgb(20 20 20 / 0.92));
+  background: color-mix(in srgb, var(--k-color-primary, #007aff) 28%, rgb(20 20 20 / 0.72));
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.12);
+}
+.companion-structured-surface {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--companion-color-surface);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .ios #dsh-companion .companion-glass-bubble {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .ios #dsh-companion .companion-row.incoming .companion-glass-bubble {
+    background: rgb(245 245 248);
+  }
+  .ios #dsh-companion .companion-row.outgoing .companion-glass-bubble {
+    background: color-mix(in srgb, var(--k-color-primary, #007aff) 15%, white);
+  }
+  .ios.dark #dsh-companion .companion-row.incoming .companion-glass-bubble,
+  .ios .dark #dsh-companion .companion-row.incoming .companion-glass-bubble,
+  .ios #dsh-companion.dark .companion-row.incoming .companion-glass-bubble {
+    background: rgb(28 28 30);
+  }
+  .ios.dark #dsh-companion .companion-row.outgoing .companion-glass-bubble,
+  .ios .dark #dsh-companion .companion-row.outgoing .companion-glass-bubble,
+  .ios #dsh-companion.dark .companion-row.outgoing .companion-glass-bubble {
+    background: color-mix(in srgb, var(--k-color-primary, #007aff) 28%, rgb(20 20 20));
+  }
 }
 .companion-text-bubble {
   white-space: normal;
@@ -498,7 +454,7 @@
   max-width: 100%;
   padding: 8px;
   background: color-mix(in srgb, currentColor 8%, transparent);
-  border-radius: var(--f7-message-bubble-border-radius);
+  border-radius: var(--companion-bubble-radius);
 }
 .markdown pre code {
   white-space: pre;
@@ -522,15 +478,8 @@
   padding-left: 10px;
   border-left: 2px solid currentColor;
 }
-.companion-message-time {
-  display: block;
-}
-.companion-row.outgoing .companion-message-time {
-  text-align: right;
-  padding-inline-end: 16px;
-}
 .companion-chat-day {
-  margin-bottom: 12px;
+  margin: 20px 0 12px;
 }
 .companion-meta {
   margin-top: 4px;
@@ -543,7 +492,7 @@
   gap: 6px;
   align-items: center;
   overflow-wrap: anywhere;
-  color: var(--f7-message-text-header-text-color);
+  color: var(--companion-color-text);
   font-size: 11px;
   line-height: 1.3;
 }
@@ -581,11 +530,11 @@
 }
 .companion-empty {
   margin: auto;
-  color: var(--f7-list-item-footer-text-color);
+  color: var(--companion-color-text-muted);
 }
 .companion-media {
   overflow: hidden;
-  border-radius: var(--f7-message-bubble-border-radius);
+  border-radius: var(--companion-bubble-radius);
 }
 .companion-media button {
   display: block;
@@ -611,7 +560,7 @@
   display: grid;
   place-content: center;
   font-size: 12px;
-  background: var(--f7-bars-bg-color);
+  background: var(--companion-color-surface);
 }
 .companion-history-gap {
   display: flex;
@@ -620,7 +569,7 @@
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
-  color: var(--f7-text-color);
+  color: var(--companion-color-text);
   font-size: 12px;
 }
 .companion-media-pending {
@@ -628,8 +577,7 @@
   height: 112px;
   display: grid;
   place-items: center;
-  background: var(--f7-bars-bg-color);
-  --f7-preloader-size: 24px;
+  background: var(--companion-color-surface);
 }
 .companion-media-spinner {
   margin: 20px;
@@ -644,6 +592,7 @@
 .companion-composer-region {
   position: absolute;
   inset: 0;
+  z-index: 20;
   pointer-events: none;
 }
 .companion-composer-region .companion-composer {
@@ -671,7 +620,7 @@
   overflow-wrap: anywhere;
   overflow-x: hidden;
 }
-/* Konsta's colors apply to the chat surface; Framework7 still owns the shell. */
+/* Chat surface colors. */
 #dsh-companion .companion-timeline-region {
   background: var(--k-color-md-light-surface);
   color: var(--k-color-md-light-on-surface);
@@ -748,6 +697,7 @@
 #dsh-companion .companion-bottom-nav .companion-nav-item {
   flex: 1;
   min-width: 0;
+  max-height: none;
   padding-inline: 2px;
   border: 0;
   background: transparent;
@@ -782,7 +732,8 @@
   }
 }
 .companion-message-overlay {
-  z-index: 20000;
+  /* PhotoSwipe's viewer is at 100000; image actions must remain above it. */
+  z-index: 100010;
 }
 .companion-message-overlay.compact {
   pointer-events: none;
@@ -812,7 +763,7 @@
 .companion-message-menu-label {
   margin: 0;
   padding: 16px;
-  color: var(--f7-list-item-footer-text-color);
+  color: var(--companion-color-text-muted);
   font-size: 14px;
   text-align: center;
 }
@@ -1013,6 +964,9 @@
   visibility: visible;
   transition: width 200ms ease, min-width 200ms ease, margin-inline-start 200ms ease, opacity 150ms ease, visibility 0s;
 }
+#dsh-companion .companion-konsta-messagebar .companion-stickers {
+  margin-inline-start: 0;
+}
 #dsh-companion[data-composer-expanded] .companion-konsta-messagebar :is(
   .companion-stickers,
   .companion-attach
@@ -1030,14 +984,10 @@
     transition-delay: 0s !important;
   }
 }
-.companion-row .message-content {
-  min-width: 0;
-  max-width: 100%;
-}
-.companion-row :is(.message-text, .companion-message-body) {
+.companion-row .companion-message-body {
   overflow-wrap: anywhere;
 }
-.companion-row :is(.message-bubble, .companion-message-body):has(.companion-voice) {
+.companion-row .companion-message-body:has(.companion-voice) {
   min-width: 200px;
 }
 .companion-command-suggestions,
@@ -1084,7 +1034,7 @@
   max-width: min(300px, 75vw);
   padding: 8px 10px;
   border-radius: 12px;
-  background: var(--f7-list-bg-color, rgba(127, 127, 127, 0.15));
+  background: var(--companion-color-surface, rgba(127, 127, 127, 0.15));
 }
 .companion-file-draft {
   display: inline-flex;
@@ -1167,7 +1117,7 @@
 .companion-return-latest {
   position: absolute;
   bottom: calc(
-    var(--companion-messagebar-height, var(--f7-messagebar-height)) + 12px
+    var(--companion-messagebar-height, var(--companion-messagebar-default-height)) + 12px
   );
   right: 12px;
   z-index: 2;
@@ -1188,11 +1138,11 @@
   stroke-width: 2;
 }
 .companion-context-meter-track {
-  stroke: var(--f7-list-item-footer-text-color);
+  stroke: var(--companion-color-text-muted);
   opacity: 0.25;
 }
 .companion-context-meter-value {
-  stroke: var(--f7-theme-color);
+  stroke: var(--companion-color-action);
   stroke-dasharray: 100;
   transform: rotate(-90deg);
   transform-origin: center;
@@ -1205,29 +1155,46 @@
 .companion-context-facts dd {
   margin: 0;
 }
+.companion-detail-background {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--k-color-md-light-surface);
+  pointer-events: none;
+}
+.companion-detail-background img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dark .companion-detail-background { background: var(--k-color-md-dark-surface); }
+.ios .companion-detail-background { background: var(--color-ios-light-surface); }
+.ios.dark .companion-detail-background, .ios .dark .companion-detail-background {
+  background: var(--color-ios-dark-surface);
+}
 .companion-history-scroll {
   position: absolute;
   inset: 0;
   box-sizing: border-box;
   overflow: auto;
-  background: var(--k-color-md-light-surface);
-  color: var(--k-color-md-light-on-surface);
-  padding: calc(var(--f7-navbar-height) + env(safe-area-inset-top) + 16px)
+  color: #000;
+  touch-action: auto;
+  box-shadow: none;
+  padding: calc(var(--companion-navbar-height) + env(safe-area-inset-top) + 16px)
     max(20px, calc((100% - 760px) / 2))
     calc(var(--companion-messagebar-height, 100px) + 16px);
 }
-.dark .companion-history-scroll {
-  background: var(--k-color-md-dark-surface);
+.dark .companion-history-scroll { color: #fff; }
+.md .companion-history-scroll {
+  background: color-mix(in srgb, var(--k-color-md-light-surface) 88%, transparent);
+  color: var(--k-color-md-light-on-surface);
+  backdrop-filter: blur(16px);
+}
+.md.dark .companion-history-scroll, .md .dark .companion-history-scroll {
+  background: color-mix(in srgb, var(--k-color-md-dark-surface) 88%, transparent);
   color: var(--k-color-md-dark-on-surface);
-}
-.ios .companion-history-scroll {
-  background: var(--color-ios-light-surface);
-  color: #000;
-}
-.ios.dark .companion-history-scroll,
-.ios .dark .companion-history-scroll {
-  background: var(--color-ios-dark-surface);
-  color: #fff;
 }
 .companion-history-current-list {
   display: grid;
@@ -1241,8 +1208,8 @@
 .companion-history-entry {
   padding: 16px;
   margin: 12px 0;
-  background: var(--f7-card-bg-color);
-  border-radius: var(--f7-card-border-radius);
+  border-radius: var(--companion-card-radius);
+  touch-action: auto;
 }
 .companion-history-entry ul {
   padding: 0;
@@ -1251,7 +1218,8 @@
 .companion-history-entry > time,
 .companion-history-reason {
   font-size: 12px;
-  color: var(--f7-list-item-footer-text-color);
+  color: inherit;
+  opacity: 0.65;
 }
 .companion-history-values {
   display: flex;
@@ -1259,7 +1227,7 @@
   gap: 8px;
 }
 .companion-history-growth {
-  color: var(--f7-color-green);
+  color: var(--companion-color-success);
 }
 .companion-history-earlier {
   width: 100%;
@@ -1277,8 +1245,16 @@
 }
 .companion-diary-page {
   padding: 16px;
-  background: var(--f7-card-bg-color);
+  border-radius: var(--companion-card-radius);
+  touch-action: auto;
   overflow-wrap: anywhere;
+}
+.md .companion-history-entry, .md .companion-diary-page {
+  background: var(--k-color-md-light-surface-2);
+}
+.md.dark .companion-history-entry, .md.dark .companion-diary-page,
+.md .dark .companion-history-entry, .md .dark .companion-diary-page {
+  background: var(--k-color-md-dark-surface-3);
 }
 .companion-diary-page > time {
   display: block;
@@ -1318,34 +1294,21 @@
 }
 .companion-alarm-list {
   margin: 0;
-  --f7-list-bg-color: transparent;
-  --f7-list-item-padding-horizontal: 0;
-  --f7-list-media-item-padding-horizontal: 0;
-  --f7-list-item-text-font-size: 16px;
-  --f7-list-item-text-line-height: 24.8px;
-  --f7-list-item-text-text-color: var(--companion-color-text);
 }
-.companion-alarm-list .item-media {
-  align-self: flex-start;
-  width: 74px;
-  min-width: 74px;
-}
-.companion-alarm-list .item-media + .item-inner {
-  margin-left: 12px;
-}
-.companion-alarm-list .item-title {
+.companion-alarm-list .companion-alarm-entry {
+  height: auto;
+  min-height: 80px;
+  padding: 12px;
+  justify-content: flex-start;
+  gap: 12px;
+  text-align: left;
   white-space: normal;
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 1.5;
-  color: var(--companion-color-text-muted);
-}
-.companion-alarm-list .item-text {
-  white-space: pre-wrap;
+  color: inherit;
 }
 .companion-alarm-time {
   display: flex;
   flex-direction: column;
+  flex: 0 0 74px;
   gap: 6px;
   font-size: 13px;
   color: var(--companion-color-text-muted);
@@ -1356,9 +1319,6 @@
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
   color: var(--companion-color-text);
-}
-.companion-alarm-list .accordion-item-opened .item-text {
-  display: none;
 }
 .companion-alarm-message {
   margin: 0;
@@ -1433,7 +1393,7 @@
   border: 0;
   padding: 0;
   overflow: hidden;
-  background: var(--f7-bars-bg-color);
+  background: var(--companion-color-surface);
   border-radius: 8px;
   cursor: zoom-in;
 }
@@ -1444,7 +1404,7 @@
 }
 .companion-gallery-tile:disabled {
   opacity: 1;
-  color: var(--f7-text-color);
+  color: var(--companion-color-text);
   cursor: default;
   padding: 8px;
   overflow-wrap: anywhere;
@@ -1500,7 +1460,7 @@
   justify-content: space-between;
 }
 .companion-input-error {
-  color: var(--f7-color-red);
+  color: var(--companion-color-error);
 }
 .companion-chat-background {
   position: absolute;
@@ -1521,7 +1481,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--f7-page-bg-color) 36%, transparent);
+  background: color-mix(in srgb, var(--companion-color-canvas) 36%, transparent);
 }
 .companion-background-landscape {
   display: none;
@@ -1667,7 +1627,7 @@
   cursor: pointer;
 }
 .companion-thinking summary:focus-visible {
-  outline: 2px solid var(--f7-theme-color);
+  outline: 2px solid var(--companion-color-action);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -1691,32 +1651,27 @@
   min-width: 0;
 }
 .companion-row.incoming {
-  margin-right: calc(8px + var(--f7-safe-area-right));
+  margin-right: calc(8px + var(--companion-safe-area-right));
   max-width: min(
     calc(
-      100% - 16px - var(--f7-safe-area-left) - var(--f7-safe-area-right)
+      100% - 16px - var(--companion-safe-area-left) - var(--companion-safe-area-right)
     ),
     76ch
   );
 }
 .ios .companion-row.incoming {
-  margin-right: calc(16px + var(--f7-safe-area-right));
+  margin-right: calc(16px + var(--companion-safe-area-right));
   max-width: min(
     calc(
-      100% - 32px - var(--f7-safe-area-left) - var(--f7-safe-area-right)
+      100% - 32px - var(--companion-safe-area-left) - var(--companion-safe-area-right)
     ),
     76ch
   );
 }
-.companion-row .message-bubble,
-.companion-row .message-text,
 .companion-row .companion-message-body {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-}
-.companion-row .message-content {
-  flex-shrink: 1;
 }
 .companion-reminder-body.collapsed {
   max-height: 2lh;
@@ -1735,11 +1690,11 @@
 .companion-failed-action {
   background: none;
   border: 0;
-  color: var(--f7-text-color);
+  color: var(--companion-color-text);
   opacity: 0.65;
   cursor: pointer;
   min-height: 32px;
 }
 .companion-failed-action:focus-visible {
-  outline: 2px solid var(--f7-theme-color);
+  outline: 2px solid var(--companion-color-action);
 }

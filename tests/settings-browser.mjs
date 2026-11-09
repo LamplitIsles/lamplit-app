@@ -12,6 +12,7 @@ try {
     const context = await browser.newContext({
       viewport: { width, height: 844 },
       locale: "zh-CN",
+      userAgent: process.env.LAM_TEST_IOS ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" : undefined,
     });
     await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
@@ -47,6 +48,12 @@ try {
     const settings = page.locator(".settings-screen");
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(settings.getByRole("button", { name: "外观" })).toBeVisible();
+    await expect(settings).toHaveClass(/k-glass/);
+    const appearanceRow = settings.getByRole("button", { name: "外观" });
+    const listBounds = await appearanceRow.locator("xpath=ancestor::div[contains(@class, 'k-list')][1]").boundingBox();
+    const rowBounds = await appearanceRow.boundingBox();
+    expect(rowBounds.width).toBeGreaterThan(listBounds.width - 2);
+    expect((await appearanceRow.locator("svg").first().boundingBox()).x).toBeGreaterThan(listBounds.x + 8);
     await expect(settings.getByRole("button", { name: "模型" })).toBeVisible();
     await expect(settings.getByRole("button", { name: "语音输入" })).toHaveCount(0);
     await page.screenshot({ path: `${evidence}/${width}-home.png` });
@@ -76,10 +83,8 @@ try {
     await expect
       .poll(async () => {
         const icon = await appearanceCard.locator("svg").first().boundingBox();
-        const label = await appearanceCard
-          .locator("span:not(.ripple-wave)")
-          .boundingBox();
-        return icon && label && icon.y < label.y;
+        const label = await appearanceCard.getByText("外观", { exact: true }).boundingBox();
+        return icon && label && icon.x < label.x && Math.abs(icon.y + icon.height / 2 - label.y - label.height / 2) < 3;
       })
       .toBe(true);
     await page.screenshot({ path: `${evidence}/${width}-dark.png` });

@@ -65,9 +65,9 @@ _Avoid_: Lifetime token total, cost, memory size
 An engine operation that condenses the active conversation context so the same conversation can continue. It does not create a new companion identity or delete the owner's conversation archive.
 _Avoid_: New conversation, archive deletion, memory erasure
 
-**CFL UI baseline（CFL 界面基准）**:
-The existing CFL Framework7 chat design and interaction that the shared frontend preserves when replacing native frontends. Superseded Composer mockups are historical material rather than an alternative baseline.
-_Avoid_: New Composer design, Pi-specific frontend
+**Shared chat baseline（共享聊天基准）**:
+The conversation, attachment and recovery behaviors that the shared frontend provides across supported hosts. Its visual presentation may evolve without changing those behaviors.
+_Avoid_: Treating one host's historical appearance as a permanent requirement
 
 **Message submission（消息提交）**:
 The owner's message being received for conversation, independently of the companion's reply. A failed or stopped reply does not make a received message fail.

@@ -23,6 +23,13 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
         rewriteWsOrigin: true,
+        configure(proxy) {
+          proxy.on("proxyReq", (proxyRequest, request) => {
+            // HTTP authentication compares Origin with the browser-facing Host.
+            if (request.headers.host)
+              proxyRequest.setHeader("host", request.headers.host);
+          });
+        },
       },
     },
   },

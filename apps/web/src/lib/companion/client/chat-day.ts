@@ -3,6 +3,9 @@ import type {
   CompanionProjection,
 } from "../projection.js";
 import type { CompanionTranslate } from "./locale.js";
+import { formatMessageTime, messageTimeDateTime } from "../message-time.js";
+
+const GROUP_INTERVAL_MS = 15 * 60 * 1000;
 
 /** The local calendar date on which this chat day began. */
 export function chatDay(value: number): Date | undefined {
@@ -36,17 +39,19 @@ export function chatDayLabel(
   }).format(day);
 }
 
-/** Headings are a view of loaded messages, never a change to message identity. */
-export function chatDayHeadings(
+/** Separators follow adjacent loaded messages; gaps and unknown times break a group. */
+export function chatTimeHeadings(
   units: readonly TimelineMessageUnit[],
   gaps: CompanionProjection["historyGaps"],
   now: number,
   locale: string,
   t: CompanionTranslate,
-): Record<string, string> {
-  const headings: Record<string, string> = Object.create(null);
+): Record<string, { label: string; datetime: string }> {
+  const headings: Record<string, { label: string; datetime: string }> =
+    Object.create(null);
   const gapStarts = new Set((gaps ?? []).map((gap) => gap.beforeId));
   let previous: number | undefined;
+  const today = chatDay(now);
   for (const unit of units) {
     if (unit.sourceId && gapStarts.has(unit.sourceId)) previous = undefined;
     if (
@@ -59,9 +64,21 @@ export function chatDayHeadings(
       previous = undefined;
       continue;
     }
-    const key = Date.UTC(day.getFullYear(), day.getMonth(), day.getDate());
-    if (key !== previous) headings[unit.id] = chatDayLabel(day, now, locale, t);
-    previous = key;
+    const time = unit.time!;
+    if (
+      previous === undefined ||
+      Math.abs(time - previous) >= GROUP_INTERVAL_MS
+    ) {
+      const date =
+        today && day.getTime() === today.getTime()
+          ? ""
+          : chatDayLabel(day, now, locale, t);
+      headings[unit.id] = {
+        label: [date, formatMessageTime(time)].filter(Boolean).join(" "),
+        datetime: messageTimeDateTime(time),
+      };
+    }
+    previous = time;
   }
   return headings;
 }

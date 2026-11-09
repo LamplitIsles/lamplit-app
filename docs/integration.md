@@ -1,6 +1,6 @@
 # Backend integration
 
-One Framework7/Svelte browser build and one compiled contracts package serve Pi
+One Svelte/Konsta browser build and one compiled contracts package serve Pi
 and CFL. Adapters and native execution stay in their backend repositories; there
 is no separate App Worker, execution service or transcript database. Standalone
 entry is `/`, hosted entry `/chat`, and common assets use root-relative paths.

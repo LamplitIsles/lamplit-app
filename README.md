@@ -6,7 +6,7 @@ Hosts with the optional model API expose a model picker and Fast switch in Setti
 choices apply to the next reply and preserve the conversation and draft.
 See the [model settings contract and verification](docs/model-settings.md).
 
-This repository owns the shared Framework7/Svelte frontend and the TypeScript
+This repository owns the shared Svelte/Konsta frontend and the TypeScript
 contracts package. A deployment selects one engine; the frontend does not select
 or switch engines inside a conversation.
 
@@ -157,8 +157,9 @@ compactions. Completion clears stale usage until fresh native data arrives.
 Reconnect reads native state and never automatically repeats the command.
 
 See [native contract and common acceptance](docs/quiet-compaction.md).
-The complete old Composer redesign, including its attachment mockup, is superseded
-by native CFL Framework7 presentation. No deployment or native release is included.
+The old Composer redesign, including its attachment mockup, is historical.
+The current shared interface uses Svelte and Konsta and follows subsequent product
+decisions. No deployment or native release is included.
 
 ## Conversation archive search
 

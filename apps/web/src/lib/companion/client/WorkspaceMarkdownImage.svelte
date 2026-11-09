@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
+  import { Button } from "konsta/svelte";
   import { defaultRenderers } from "@humanspeak/svelte-markdown";
   import { workspaceImageUrl } from "@lamplit/contracts";
   import type { CompanionTranslate } from "./locale.js";
@@ -47,14 +48,13 @@
     {#if text}<span>{text}</span>{/if}
     <span>{context.t("gallery.unavailable")}</span>
     {#if url}
-      <button
-        class="button button-tonal button-small"
+      <Button tonal small
         type="button"
-        onclick={(event) => {
+        onClick={(event: MouseEvent) => {
           event.stopPropagation();
           attempt++;
           failed = false;
-        }}>{context.t("retry")}</button
+        }}>{context.t("retry")}</Button
       >
     {/if}
   </span>
@@ -73,6 +73,6 @@
     gap: 8px;
     max-width: 100%;
     overflow-wrap: anywhere;
-    color: var(--f7-text-color);
+    color: var(--companion-color-text);
   }
 </style>

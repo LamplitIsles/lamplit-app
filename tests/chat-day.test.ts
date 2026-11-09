@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   chatDay,
-  chatDayHeadings,
+  chatTimeHeadings,
   chatDayLabel,
   nextChatDayBoundary,
 } from "../apps/web/src/lib/companion/client/chat-day.ts";
@@ -61,30 +61,76 @@ describe("chat day headings", () => {
     expect(chatDay(NaN)).toBeUndefined();
   });
 
-  test("recomputes boundaries after history prepend and across a gap", () => {
+  test("groups adjacent messages at the 15 minute boundary", () => {
     const now = at(2026, 11, 8, 10);
-    const old = unit("old", at(2026, 11, 7, 22));
+    const first = unit("first", at(2026, 11, 8, 8));
+    const next = unit("next", at(2026, 11, 8, 8, 14));
+    const later = unit("later", at(2026, 11, 8, 8, 29));
+    const headings = chatTimeHeadings([first, next, later], [], now, "en", t);
+    expect(Object.keys(headings)).toEqual(["first", "later"]);
+    expect(headings.first).toEqual({
+      label: "08:00",
+      datetime: new Date(first.time!).toISOString(),
+    });
+    expect(headings.later.label).toBe("08:29");
+    // An out-of-order timestamp is still an interval, never silently merged.
+    expect(
+      Object.keys(chatTimeHeadings([later, first], [], now, "en", t)),
+    ).toEqual(["later", "first"]);
+  });
+
+  test("formats yesterday and older dates under the existing 04:00 chat-day rule", () => {
+    const now = at(2026, 11, 8, 10);
+    const previous = unit("previous", at(2026, 11, 7, 22));
+    const earlier = unit("earlier", at(2026, 10, 30, 10, 15));
+    const nextYear = unit("nextYear", at(2025, 10, 30, 10));
+    expect(
+      chatTimeHeadings([previous], [], now, "zh", (key) =>
+        key === "chatDay.yesterday" ? "昨天" : key,
+      ).previous.label,
+    ).toBe("昨天 22:00");
+    expect(chatTimeHeadings([earlier], [], now, "en", t).earlier.label).toBe(
+      "30 October 10:15",
+    );
+    expect(chatTimeHeadings([nextYear], [], now, "en", t).nextYear.label).toBe(
+      "30 October 2025 10:00",
+    );
     const late = unit("late", at(2026, 11, 8, 3, 59));
     const fresh = unit("fresh", at(2026, 11, 8, 4));
-    expect(chatDayHeadings([late, fresh], [], now, "en", t)).toEqual({
-      late: "Yesterday",
-      fresh: "Today",
-    });
-    expect(chatDayHeadings([old, late, fresh], [], now, "en", t)).toEqual({
-      old: "Yesterday",
-      fresh: "Today",
-    });
     expect(
-      chatDayHeadings(
-        [old, late, fresh],
-        [{ id: 1, afterId: "old", beforeId: "late", status: "pending" }],
-        now,
-        "en",
-        t,
+      Object.keys(chatTimeHeadings([late, fresh], [], now, "en", t)),
+    ).toEqual(["late"]);
+    expect(chatTimeHeadings([late], [], now, "en", t).late.label).toBe(
+      "Yesterday 03:59",
+    );
+  });
+
+  test("recomputes after history prepend and separates gaps or unknown times", () => {
+    const now = at(2026, 11, 8, 10);
+    const old = unit("old", at(2026, 11, 8, 8));
+    const late = unit("late", at(2026, 11, 8, 8, 5));
+    const fresh = unit("fresh", at(2026, 11, 8, 8, 25));
+    expect(
+      Object.keys(chatTimeHeadings([late, fresh], [], now, "en", t)),
+    ).toEqual(["late", "fresh"]);
+    expect(
+      Object.keys(chatTimeHeadings([old, late, fresh], [], now, "en", t)),
+    ).toEqual(["old", "fresh"]);
+    expect(
+      Object.keys(
+        chatTimeHeadings(
+          [old, late, fresh],
+          [{ id: 1, afterId: "old", beforeId: "late", status: "pending" }],
+          now,
+          "en",
+          t,
+        ),
       ),
-    ).toEqual({ old: "Yesterday", late: "Yesterday", fresh: "Today" });
+    ).toEqual(["old", "late", "fresh"]);
     expect(
-      chatDayHeadings([old, unit("unknown"), late], [], now, "en", t),
-    ).toEqual({ old: "Yesterday", late: "Yesterday" });
+      Object.keys(
+        chatTimeHeadings([old, unit("unknown"), late], [], now, "en", t),
+      ),
+    ).toEqual(["old", "late"]);
   });
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import {
     overlayOpening,
     overlayOpened,
@@ -15,15 +15,10 @@
     ListItem,
     Message,
     Messages,
-    Navbar,
-    Page,
-    PageContent,
     Preloader,
     Popup,
     Searchbar,
-    Subnavbar,
-    f7,
-  } from "framework7-svelte";
+  } from "konsta/svelte";
   import ArrowLeft from "lucide-svelte/icons/arrow-left";
   import X from "lucide-svelte/icons/x";
   import type { CompanionTranslate } from "./locale.js";
@@ -68,7 +63,30 @@
   });
 
   function close() {
-    f7.popup.get(dialog)?.close();
+    overlayClosed({ el: dialog });
+    onClose();
+  }
+  onMount(() => {
+    overlayOpening({ el: dialog });
+    overlayOpened({ el: dialog });
+  });
+  function configureSearchForm(node: HTMLFormElement) {
+    let mounted = true;
+    void tick().then(() => {
+      if (!mounted) return;
+      const input = node.querySelector<HTMLInputElement>("input");
+      if (input) {
+        input.type = "search";
+        input.enterKeyHint = "search";
+        input.maxLength = 500;
+        input.autocomplete = "off";
+        input.setAttribute("aria-label", t("search.open"));
+      }
+    });
+    return { destroy() { mounted = false; } };
+  }
+  function keydown(event: KeyboardEvent) {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
   }
   function date(value?: string): string {
     if (!value || Number.isNaN(Date.parse(value))) return "";
@@ -166,32 +184,19 @@
   }
 </script>
 
-<Popup
-  opened
-  closeOnEscape
-  class="companion-search-dialog"
+<svelte:window onkeydown={keydown} />
+<Popup opened onBackdropClick={close}>
+  <div bind:this={dialog} class="companion-search-dialog konsta-chat h-full"
   role="dialog"
   aria-modal="true"
   aria-label={t("search.title")}
-  onPopupOpen={(instance) => {
-    if (instance) {
-      dialog = instance.el;
-      overlayOpening(instance);
-    }
-  }}
-  onPopupOpened={overlayOpened}
-  onPopupClosed={(instance) => {
-    overlayClosed(instance);
-    onClose();
-  }}
 >
-  <Page class="companion-search-page" pageContent={false} subnavbar={!selected}>
-    <Navbar class="companion-search-header" title={t("search.title")}>
-      {#snippet navLeft()}
+  <div class="companion-search-page h-full flex flex-col">
+    <header class="companion-search-header">
         <Button
           type="button"
           tonal
-          round
+          rounded
           class="companion-search-back"
           aria-label={selected ? t("search.back") : t("close")}
           onClick={selected ? backToResults : close}
@@ -201,13 +206,11 @@
               aria-hidden="true"
             />{/if}
         </Button>
-      {/snippet}
+      <h2>{t("search.title")}</h2>
       {#if !selected}
-        <Subnavbar>
+        <form class="flex items-center" use:configureSearchForm onsubmit={search}>
           <Searchbar
             class="companion-search-form"
-            customSearch
-            backdrop={false}
             disableButton={false}
             value={query}
             placeholder={t("search.placeholder")}
@@ -220,32 +223,27 @@
               input.maxLength = 500;
               input.autocomplete = "off";
               input.setAttribute("aria-label", t("search.open"));
-              f7.input.checkEmptyState(input);
             }}
-            onSearchbarClear={() => (query = "")}
-            onSubmit={search}
+            onClear={() => (query = "")}
           />
           <Button
-            fill
-            type="button"
+            type="submit"
             class="companion-search-submit"
-            disabled={!query.trim() || searching}
-            onClick={() => void search()}>{t("search.submit")}</Button
+            disabled={!query.trim()}>{t("search.submit")}</Button
           >
-        </Subnavbar>
+        </form>
       {/if}
-    </Navbar>
+    </header>
 
     {#if selected}
-      <PageContent
+      <div
         class="companion-search-reader"
-        messagesContent
         role="region"
         aria-label={t("search.reader")}
       >
         {#if reading}
           <Block class="companion-search-state" role="status"
-            ><Preloader size={24} /><span>{t("loading")}</span></Block
+            ><Preloader class="w-6 h-6" /><span>{t("loading")}</span></Block
           >
         {:else if readError}
           <Block class="text-align-center" role="alert"
@@ -262,15 +260,12 @@
             expanded.context.targetSourceRecordIndex,
             expanded.context.items,
           )}
-          <Messages scrollMessages={false}>
+          <Messages>
             <div class="messages-title">{date(expanded.record.createdAt)}</div>
             {#if targetIndex < 0}
               <Message
                 type={expanded.record.role === "user" ? "sent" : "received"}
                 name={sender(expanded.record)}
-                first
-                last
-                tail
                 class="companion-search-message search-target"
               >
                 {#snippet text()}
@@ -287,9 +282,6 @@
               <Message
                 type={item.role === "user" ? "sent" : "received"}
                 name={sender(item)}
-                first
-                last
-                tail
                 class={active
                   ? "companion-search-message search-target"
                   : "companion-search-message"}
@@ -308,16 +300,16 @@
               >{t("search.contextTruncated")}</BlockFooter
             >{/if}
         {/if}
-      </PageContent>
+      </div>
     {:else}
-      <PageContent
+      <div
         class="companion-search-results"
         role="region"
         aria-label={t("search.results")}
       >
         {#if searching}
           <Block class="companion-search-state" role="status"
-            ><Preloader size={24} /><span>{t("search.searching")}</span></Block
+            ><Preloader class="w-6 h-6" /><span>{t("search.searching")}</span></Block
           >
         {:else if searchError}
           <Block class="text-align-center" role="alert"
@@ -337,25 +329,27 @@
             })}{#if limited || (estimatedTotal !== null && estimatedTotal > results.length)}
               · {t("search.limit")}{/if}</BlockTitle
           >
-          <List mediaList strong inset dividers class="companion-search-list">
+          <List strong inset dividers class="companion-search-list">
             {#each results as card (card.id)}
               <ListItem
-                link="#"
+                link
+                linkComponent="button"
+                linkProps={{ type: "button" }}
                 title={sender(card)}
                 subtitle={date(card.createdAt)}
                 class="companion-search-result"
                 onClick={() => void openRecord(card)}
               >
                 {#snippet text()}
-                  {#each card.snippet.segments as part}{#if part.highlighted}<mark
+                  <span class="companion-search-snippet">{#each card.snippet.segments as part}{#if part.highlighted}<mark
                         >{part.text}</mark
-                      >{:else}{part.text}{/if}{/each}
+                      >{:else}{part.text}{/if}{/each}</span>
                 {/snippet}
               </ListItem>
             {/each}
           </List>
         {/if}
-      </PageContent>
+      </div>
     {/if}
-  </Page>
+  </div></div>
 </Popup>

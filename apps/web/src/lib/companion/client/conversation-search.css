@@ -1,4 +1,19 @@
-.companion-search-header .button {
+.companion-search-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 12px 12px;
+}
+.companion-search-header h2 {
+  flex: 1;
+  margin: 0;
+}
+.companion-search-header form {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.companion-search-header .companion-search-back {
   width: 44px;
   min-width: 44px;
   height: 44px;
@@ -6,16 +21,15 @@
   display: grid;
   place-items: center;
 }
-.companion-search-form.searchbar {
+.companion-search-form {
   flex: 1;
   min-width: 0;
   width: auto;
 }
-.companion-search-form .searchbar-input-wrap {
-  min-width: 0;
-}
 .companion-search-submit {
   flex: none;
+  width: auto;
+  white-space: nowrap;
   margin-inline-start: 8px;
 }
 .companion-search-state {
@@ -29,6 +43,9 @@
 }
 .companion-search-reader,
 .companion-search-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   overscroll-behavior: contain;
 }
 .companion-search-bubble {
@@ -37,6 +54,6 @@
 }
 .companion-search-reader mark,
 .companion-search-results mark {
-  background: var(--f7-color-yellow);
+  background: var(--companion-color-highlight);
   color: var(--companion-color-on-highlight);
 }

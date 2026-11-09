@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Button } from "konsta/svelte";
   import { auth } from "./auth-client.ts";
   import { initialPreferences } from "./lib/companion/client/preferences.ts";
 
@@ -137,21 +138,21 @@
         {/each}
       </ul>
       {#if error}<p class="consent-error" role="alert">{error}</p>{/if}
-      <button
-        class="button button-fill consent-primary"
+      <Button
+        class="consent-primary"
         disabled={busy}
-        onclick={() => void decide(true)}>{text.allow}</button
+        onclick={() => void decide(true)}>{text.allow}</Button
       >
-      <button
-        class="button consent-secondary"
+      <Button clear
+        class="consent-secondary"
         disabled={busy}
-        onclick={() => void decide(false)}>{text.deny}</button
+        onclick={() => void decide(false)}>{text.deny}</Button
       >
     {:else}
       <p class="consent-error" role="alert">{error}</p>
-      {#if error === text.unavailable}<button
-          class="button button-fill consent-primary"
-          onclick={() => void load()}>{text.retry}</button
+      {#if error === text.unavailable}<Button
+          class="consent-primary"
+          onclick={() => void load()}>{text.retry}</Button
         >{/if}
     {/if}
   </section>
@@ -199,11 +200,11 @@
   li {
     margin: 6px 0;
   }
-  .consent-primary {
+  :global(.consent-primary) {
     width: 100%;
     min-height: 48px;
   }
-  .consent-secondary {
+  :global(.consent-secondary) {
     display: block;
     margin: 14px auto 0;
     min-height: 44px;

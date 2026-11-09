@@ -1,5 +1,8 @@
 # CFL UI baseline and shared compaction
 
+Framework7 presentation references in this historical baseline predate the
+spec #108 migration to Svelte and Konsta.
+
 Status: #3119 implemented, jointly accepted on isolated Pi/CFL hosts and merged.
 Canonical-root delivery #3162 requires fresh exact-artifact native acceptance.
 Recorded 2026-10-03.

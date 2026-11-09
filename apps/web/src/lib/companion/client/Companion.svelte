@@ -16,27 +16,22 @@
   export let backgroundVersion = 0;
   export let refreshBackgrounds: () => Promise<boolean> = async () => false;
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { setUiTheme, uiTheme, type UiTheme } from "./ui-theme.js";
+  import { navigate, route } from "../../../router.ts";
   import AlarmDrawer from "./AlarmDrawer.svelte";
   import ReminderBody from "./ReminderBody.svelte";
   import type { AlarmView } from "./alarm-view.ts";
   import Plus from "lucide-svelte/icons/plus";
   import ChevronDown from "lucide-svelte/icons/chevron-down";
-  import ChevronRight from "lucide-svelte/icons/chevron-right";
   import Smile from "lucide-svelte/icons/smile";
   import {
-    f7,
-    f7ready,
     Button,
     Preloader,
     List,
     ListItem,
-    Navbar,
+    Radio,
     Page,
-    PageContent,
     Messages,
-    Message,
-  } from "framework7-svelte";
-  import {
     KonstaProvider,
     Message as KonstaMessage,
     MessagesTitle as KonstaMessagesTitle,
@@ -52,6 +47,8 @@
     ActionsButton as KonstaActionsButton,
     Sheet as KonstaSheet,
     Popover as KonstaPopover,
+    Popup as KonstaPopup,
+    Toast as KonstaToast,
   } from "konsta/svelte";
   import MessageCircle from "lucide-svelte/icons/message-circle";
   import Settings from "lucide-svelte/icons/settings";
@@ -102,8 +99,8 @@
     runMessageMenuAction,
   } from "./message-menu.ts";
   import { saveImage } from "./save-image.ts";
-  type Swiper = ReturnType<typeof f7.swiper.create>;
-  import type { PhotoBrowser } from "framework7/components/photo-browser";
+  import PhotoSwipe from "photoswipe";
+  import "photoswipe/style.css";
   import {
     galleryRows,
     type GalleryGrouping,
@@ -158,8 +155,7 @@
   import Markdown from "./Markdown.svelte";
   import Thinking from "./Thinking.svelte";
   import ConversationSearch from "./ConversationSearch.svelte";
-  import { formatMessageTime, messageTimeDateTime } from "../message-time.js";
-  import { chatDayHeadings, nextChatDayBoundary } from "./chat-day.js";
+  import { chatTimeHeadings, nextChatDayBoundary } from "./chat-day.js";
   import { resolveImageDisplaySize } from "../media.js";
   interface CompanionIdentityView {
     companionName: string;
@@ -197,6 +193,8 @@
     affinityStage: t("affinity.familiar"),
   };
   export let actions: CompanionActions = { send: async () => undefined };
+  export let navigationPath = "/";
+  export let navigationDiaryEntry: string | undefined;
   export let workspaceReadiness: CompanionReadiness = "loading";
   export let sessionReadiness: CompanionReadiness = "loading";
   export let sessionId: string | undefined;
@@ -249,7 +247,7 @@
   let attachmentDisposed = false;
   let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
-  let konstaTheme: "ios" | "material" = "material";
+  $: konstaTheme = $uiTheme;
   let chatDayNow = Date.now();
   onMount(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -268,11 +266,6 @@
       window.removeEventListener("focus", refresh);
     };
   });
-  onMount(() => {
-    f7ready(() => {
-      konstaTheme = f7.theme === "ios" ? "ios" : "material";
-    });
-  });
   let timeline: HTMLDivElement;
   let timelineReady = false;
   let timelineRevealFrame = 0;
@@ -283,40 +276,20 @@
     | "appearance"
     | "models"
     | "voice-output";
-  function preferencesTabFromLocation(): PreferencesTab | undefined {
+  function preferencesTabFromPath(path: string): PreferencesTab | undefined {
     const routes: Record<string, PreferencesTab> = {
-      "#settings": "home", "#settings/appearance": "appearance",
-      "#settings/models": "models", "#settings/voice": "home",
-      "#settings/voice-output": "voice-output",
+      "/settings": "home", "/settings/appearance": "appearance",
+      "/settings/models": "models", "/settings/voice-output": "voice-output",
     };
-    return routes[window.location.hash];
+    return routes[path];
   }
-  let preferencesTab: PreferencesTab = preferencesTabFromLocation() ?? "home";
-  let preferencesOpen = preferencesTabFromLocation() !== undefined;
+  let preferencesTab: PreferencesTab = preferencesTabFromPath(navigationPath) ?? "home";
+  let preferencesOpen = preferencesTabFromPath(navigationPath) !== undefined;
   let preferencesButton: HTMLButtonElement;
   let preferencesBack: HTMLButtonElement;
   let modelSettingsSupported = false;
   let voiceOutputSettingsSupported = false;
-  onMount(() => {
-    const tab = preferencesTabFromLocation();
-    if (!tab || window.history.state?.companionSettings) return;
-    const state = { ...window.history.state };
-    window.history.replaceState(
-      { ...state, companionSettings: false }, "", location.pathname + location.search,
-    );
-    window.history.pushState(
-      { ...state, companionSettings: true },
-      "",
-      "#settings",
-    );
-    if (tab !== "home") {
-      window.history.pushState(
-        { ...state, companionSettings: true },
-        "",
-        `#settings/${tab}`,
-      );
-    }
-  });
+  let appliedSection = "";
   let drawerTab: "history" | "diary" | "images" | "alarms" = "history";
   let alarms: AlarmView[] = [];
   let alarmsLoading = false;
@@ -367,10 +340,16 @@
   let imageLoads: Record<string, string> = {};
   let imageDimensions: Record<string, { width: number; height: number }> = {};
   let wasNearBottom = true;
+  let preservingHistoryPosition = false;
   let liveAnnouncement: string | CompanionMessage = "";
+  let toastText = "";
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   let lightboxReturnFocus: HTMLElement | undefined;
-  let photoBrowser: PhotoBrowser.PhotoBrowser | undefined;
+  let photoBrowser: PhotoSwipe | undefined;
+  let photoLoading = false;
+  let photoError = false;
+  let photoGeneration = 0;
   let imageSessionGeneration = 0;
   let stickerClient: StickerClient | undefined;
   let unsubscribeStickerAuthorization: (() => void) | undefined;
@@ -405,9 +384,7 @@
   let deferredPreviewReleases: CompanionImageDraft[] = [];
   let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
-  let messagebarInstance: ReturnType<typeof f7.messagebar.create> | undefined;
   let composerExpanded = false;
-  let messagesComponent: Messages;
   $: effectiveWorkspaceReadiness = workspaceReadiness;
   $: effectiveSessionReadiness = sessionReadiness;
   $: if (sessionId !== panelSession) {
@@ -444,6 +421,8 @@
   }
   $: if (detailOpen && effectiveWorkspaceReadiness !== "ready")
     finishDetailClose(false);
+  $: syncNavigation(navigationPath, navigationDiaryEntry, sessionId,
+    effectiveWorkspaceReadiness === "ready" && effectiveSessionReadiness === "ready");
   $: statusText =
     projection.status === "offline"
       ? t("status.offline")
@@ -473,7 +452,7 @@
   );
   $: displayedProjection = projection;
   $: visibleMessageUnits = displayedProjection.messageUnits.filter((unit) => unit.items[0]?.kind !== "continuity");
-  $: dayHeadings = chatDayHeadings(visibleMessageUnits, displayedProjection.historyGaps, chatDayNow, locale, t);
+  $: timeHeadings = chatTimeHeadings(visibleMessageUnits, displayedProjection.historyGaps, chatDayNow, locale, t);
   $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
     sessionGeneration += 1;
@@ -511,8 +490,10 @@
       composerPreview.textContent = value.replace(/\s*\n\s*/g, " ").trim() +
         (value.includes("\n") ? "…" : "");
     }
-    f7.input.resizeTextarea(composerInput);
-    messagebarInstance?.resizePage();
+    // Measure the content rather than the browser's default two textarea rows.
+    composerInput.style.height = "0px";
+    composerInput.style.height = `${Math.min(144, Math.max(48, composerInput.scrollHeight))}px`;
+    composerInput.style.overflowY = composerInput.scrollHeight > 144 ? "auto" : "hidden";
   }
 
   function connectMessagebar(
@@ -544,14 +525,6 @@
       }
     };
     update(options);
-    let disposed = false;
-    f7ready(() => {
-      if (disposed) return;
-      // Framework7 accepts bottomOffset at runtime but omits it from its types.
-      const params = { el: bar, maxHeight: 144, bottomOffset: 12 };
-      messagebarInstance = f7.messagebar.create(params);
-      void scheduleComposerResize();
-    });
     input.addEventListener("paste", onPaste);
     input.addEventListener("keydown", onKeydown);
     input.addEventListener("compositionstart", onCompositionStart);
@@ -564,7 +537,6 @@
     };
     bar.addEventListener("transitionend", resizeAfterActions);
     const observer = new ResizeObserver(() => {
-      messagebarInstance?.resizePage();
       bar
         .closest<HTMLElement>(".page")
         ?.style.setProperty(
@@ -582,9 +554,6 @@
         preview.remove();
         if (composerPreview === preview) composerPreview = undefined;
         input.removeEventListener("focus", closeStickerPanel);
-        disposed = true;
-        messagebarInstance?.destroy();
-        messagebarInstance = undefined;
         input.removeEventListener("paste", onPaste);
         input.removeEventListener("keydown", onKeydown);
         input.removeEventListener("compositionstart", onCompositionStart);
@@ -950,10 +919,11 @@
           const previous = lightboxUrl;
           lightboxUrl = url;
           if (photoBrowser) {
-            photoBrowser.params.photos = [{ url }];
-            photoBrowser.el
-              ?.querySelector(".swiper-slide-active img")
-              ?.setAttribute("src", url);
+            const slide = photoBrowser.currSlide;
+            if (slide) {
+              slide.data.src = url;
+              slide.content.element?.setAttribute("src", url);
+            }
           }
           if (previous && previous !== url) {
             deferredImageUrls.delete(previous);
@@ -1171,7 +1141,7 @@
       geometry.viewport !== timelineGeometry.viewport;
     timelineGeometry = geometry;
     // Layout-driven scroll events must not turn a follower into a history reader.
-    if (!timelineReady || (resized && wasNearBottom)) return;
+    if (!timelineReady || preservingHistoryPosition || (resized && wasNearBottom)) return;
     wasNearBottom =
       geometry.height - geometry.viewport - timeline.scrollTop < 96;
   }
@@ -1212,7 +1182,7 @@
     const follow = followTimelineResize(
       node,
       timeline,
-      () => timelineReady && wasNearBottom,
+      () => timelineReady && wasNearBottom && !preservingHistoryPosition,
     );
     void reconcileProjection(displayedProjection);
     return {
@@ -1225,9 +1195,7 @@
 
   function returnToLatest(): void {
     wasNearBottom = true;
-    messagesComponent
-      ?.instance()
-      ?.scroll(0, timeline.scrollHeight - timeline.clientHeight);
+    timeline.scrollTo({ top: timeline.scrollHeight, behavior: "smooth" });
   }
 
   function closeStickerPanel(): void {
@@ -1271,9 +1239,10 @@
   }
   function compactMessageMenu(node: HTMLElement, active: boolean) {
     let listening = false;
-    const overlay = node.closest<HTMLElement>(".companion-message-overlay");
-    const popover = node.closest<HTMLElement>(".companion-action-menu");
+    let frame = 0;
     const alignToBubble = () => {
+      const overlay = node.closest<HTMLElement>(".companion-message-overlay");
+      const popover = node.closest<HTMLElement>(".companion-action-menu");
       const target = $currentMessageMenu?.target;
       if (!overlay || !popover || !target?.isConnected) return;
       const edge = 8;
@@ -1300,7 +1269,7 @@
         event.target instanceof HTMLButtonElement &&
         node.contains(event.target)
       ) {
-        // Framework7 may suppress the synthetic click after a prior touch hold.
+        // A touch hold can suppress the following synthetic click.
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;
@@ -1314,9 +1283,13 @@
       if (listening === next) return;
       listening = next;
       if (next) {
-        alignToBubble();
-        if (popover) resize.observe(popover);
-        if ($currentMessageMenu?.target) resize.observe($currentMessageMenu.target);
+        frame = requestAnimationFrame(() => {
+          if (!listening) return;
+          alignToBubble();
+          const popover = node.closest<HTMLElement>(".companion-action-menu");
+          if (popover) resize.observe(popover);
+          if ($currentMessageMenu?.target) resize.observe($currentMessageMenu.target);
+        });
         window.addEventListener("resize", alignToBubble);
         document.addEventListener("scroll", alignToBubble, true);
         document.addEventListener("pointerdown", pointerdown, true);
@@ -1327,6 +1300,7 @@
               node.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
           });
       } else {
+        cancelAnimationFrame(frame);
         resize.disconnect();
         window.removeEventListener("resize", alignToBubble);
         document.removeEventListener("scroll", alignToBubble, true);
@@ -1604,7 +1578,6 @@
       await response.body?.cancel();
       if (sessionId !== originSession || generation !== sessionGeneration || attachmentDisposed) return;
       const link = document.createElement("a");
-      link.className = "external";
       link.href = url.href;
       link.download =
         ref.name.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, "-").trim() ||
@@ -1707,47 +1680,51 @@
   }
   function openPreferences(): void {
     if (preferencesOpen) return;
-    window.history.pushState(
-      { ...window.history.state, companionSettings: true },
-      "",
-      "#settings",
-    );
-    preferencesTab = "home";
-    preferencesOpen = true;
-    void tick().then(() => preferencesBack?.focus());
+    void navigate("/settings", {
+      state: { companionSettings: true }, search: location.search, scrollToTop: false,
+    });
   }
   function openPreferencesTab(tab: Exclude<PreferencesTab, "home">): void {
-    window.history.pushState(
-      { ...window.history.state, companionSettings: true },
-      "",
-      `#settings/${tab}`,
-    );
-    preferencesTab = tab;
-    void tick().then(() => preferencesBack?.focus());
+    const path = tab === "appearance" ? "/settings/appearance"
+      : tab === "models" ? "/settings/models" : "/settings/voice-output";
+    void navigate(path, {
+      state: { companionSettings: true }, search: location.search, scrollToTop: false,
+    });
   }
   function closePreferences(): void {
-    if (window.history.state?.companionSettings && preferencesTabFromLocation()) {
-      window.history.back();
-    } else if (preferencesTab !== "home") {
-      window.history.replaceState(window.history.state, "", "#settings");
-      preferencesTab = "home";
+    if ((route.state as { companionSettings?: boolean } | null)?.companionSettings) {
+      void navigate(-1);
     } else {
-      window.history.replaceState(
-        window.history.state,
-        "",
-        location.pathname + location.search,
-      );
-      preferencesOpen = false;
-      void tick().then(() => preferencesButton?.focus());
+      void navigate(preferencesTab === "home" ? "/chat" : "/settings", {
+        replace: true, search: location.search, scrollToTop: false,
+      });
     }
   }
-  function syncPreferencesLocation(): void {
-    const tab = preferencesTabFromLocation();
+  function syncNavigation(path: string, entry: string | undefined, session: string | undefined, ready: boolean): void {
+    const tab = preferencesTabFromPath(path);
+    const changed = preferencesOpen !== (tab !== undefined) || (tab && preferencesTab !== tab);
     preferencesOpen = tab !== undefined;
     if (tab) preferencesTab = tab;
-    void tick().then(() =>
-      (tab ? preferencesBack : preferencesButton)?.focus(),
-    );
+    if (changed) void tick().then(() => (tab ? preferencesBack : preferencesButton)?.focus());
+    if (tab) return;
+    if (!ready || !session) {
+      appliedSection = "";
+      return;
+    }
+    const section = path === "/memories" ? "history"
+      : path === "/diary" || path.startsWith("/diary/") ? "diary"
+      : path === "/album" ? "images"
+      : path === "/wake" ? "alarms" : "chat";
+    const key = JSON.stringify([session, section, section === "diary" ? entry : undefined]);
+    if (appliedSection === key) return;
+    appliedSection = key;
+    if (section === "diary" && entry) {
+      composerInput?.blur();
+      closeStickerPanel();
+      if (!detailOpen) onHistoryOpenChange?.(true);
+      detailOpen = true;
+      void openDiaryEntry(entry);
+    } else applySection(section);
   }
   function setPreferencesSupport(
     tab: "models" | "voice-output",
@@ -1756,8 +1733,9 @@
     if (tab === "models") modelSettingsSupported = supported;
     else voiceOutputSettingsSupported = supported;
     if (!supported && preferencesOpen && preferencesTab === tab) {
-      window.history.replaceState(window.history.state, "", "#settings");
-      preferencesTab = "home";
+      void navigate("/settings", {
+        replace: true, state: { companionSettings: true }, search: location.search, scrollToTop: false,
+      });
     }
   }
   function closeSearch(): void {
@@ -1773,6 +1751,15 @@
     finishDetailClose();
   }
   function selectSection(tab: "chat" | typeof drawerTab): void {
+    const path = tab === "history" ? "/memories" : tab === "diary" ? "/diary"
+      : tab === "images" ? "/album" : tab === "alarms" ? "/wake" : "/chat";
+    if (navigationPath === path || (tab === "chat" && navigationPath === "/")) {
+      if (tab !== "chat") applySection(tab);
+      return;
+    }
+    void navigate(path, { search: location.search, scrollToTop: false });
+  }
+  function applySection(tab: "chat" | typeof drawerTab): void {
     if (tab === "chat") {
       if (detailOpen) closeDetail();
       return;
@@ -1789,130 +1776,116 @@
     else if (tab === "images") void openGallery();
     else void openAlarms();
   }
-  function closePhotoBrowser(browser = photoBrowser): void {
-    if (!browser) return;
-    const popup = browser.el?.closest<HTMLElement>(".popup");
-    if (popup) f7.popup.close(popup, false);
-    else browser.close();
+  function selectDiaryEntry(entry: string): void {
+    void navigate("/diary/:entry", {
+      params: { entry }, state: { fromDiary: true }, search: location.search, scrollToTop: false,
+    });
   }
-  function openLightbox(item: ImagePreviewTarget): void {
+  function backToDiary(): void {
+    if ((route.state as { fromDiary?: boolean } | null)?.fromDiary) void navigate(-1);
+    else void navigate("/diary", { replace: true, search: location.search, scrollToTop: false });
+  }
+  let imagePress: ReturnType<typeof longPress> | undefined;
+  function finishPhotoBrowser(): void {
+    dismissMessageMenu();
+    imagePress?.destroy();
+    imagePress = undefined;
+    photoBrowser = undefined;
+    photoLoading = false;
+    photoError = false;
+    lightbox = undefined;
+    lightboxUrl = "";
+    releaseDeferredPreviewReleases();
+    lightboxReturnFocus?.focus({ preventScroll: true });
+    lightboxReturnFocus = undefined;
+  }
+  function closePhotoBrowser(): void {
+    photoGeneration++;
+    if (photoBrowser) photoBrowser.destroy();
+    else finishPhotoBrowser();
+  }
+  function photoFallbackFocus(node: HTMLElement) {
+    const overlay = { el: node };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closePhotoBrowser();
+      }
+    };
+    overlayOpening(overlay);
+    node.addEventListener("keydown", keydown);
+    overlayOpened(overlay);
+    return { destroy() { node.removeEventListener("keydown", keydown); overlayDestroyed(overlay); } };
+  }
+  async function openLightbox(item: ImagePreviewTarget): Promise<void> {
+    closePhotoBrowser();
+    const generation = ++photoGeneration;
     lightboxReturnFocus = captureReadingFocus(document);
     lightbox = item;
     lightboxUrl = item.previewUrl ?? imageUrls[item.id] ?? "";
-    let photoElement: HTMLElement;
-    const params = {
-      photos: [{ url: lightboxUrl }],
-      type: "popup" as const,
-      theme: "dark" as const,
-      toolbar: false,
-      navbar: true,
-      navbarShowCount: false,
-      popupCloseLinkText: t("close"),
-      exposition: false,
-      swipeToClose: false,
-      routableModals: true,
-      url: "/image/",
-      view: f7.views.main,
-      swiper: { zoom: { enabled: true, maxRatio: 4 }, spaceBetween: 0 },
-      on: {
-        open() {
-          photoElement = browser.el;
-          browser.el.setAttribute("role", "dialog");
-          browser.el.setAttribute("aria-modal", "true");
-          browser.el.setAttribute("aria-label", item.alt);
-          browser.el.addEventListener("keydown", photoKeydown);
-          const closeLink =
-            browser.el.querySelector<HTMLElement>(".popup-close");
-          if (closeLink) {
-            closeLink.setAttribute("aria-label", t("image.close"));
-            closeLink.setAttribute("role", "button");
-            closeLink.tabIndex = 0;
-            closeLink.addEventListener("keydown", (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                closePhotoBrowser(browser);
-              }
-            });
-            closeLink.focus();
-          }
-          const image = browser.el.querySelector<HTMLImageElement>(
-            ".swiper-slide-active img",
-          );
-          if (image)
-            imagePress = longPress(image, {
-              run: (node, source) =>
-                showImageMenu(
-                  lightboxUrl,
-                  item.alt,
-                  node,
-                  undefined,
-                  item.attachment,
-                  source,
-                ),
-            });
-          (browser.swiper as Swiper).on(
-            "click",
-            (
-              _swiper: Swiper,
-              event: MouseEvent | PointerEvent | TouchEvent,
-            ) => {
-              if (messageMenuOpen()) return;
-              const image = browser.el.querySelector<HTMLImageElement>(
-                ".swiper-slide-active img",
-              );
-              const rect = image?.getBoundingClientRect();
-              const point =
-                "changedTouches" in event ? event.changedTouches[0] : event;
-              if (
-                rect &&
-                point &&
-                (point.clientX < rect.left ||
-                  point.clientX > rect.right ||
-                  point.clientY < rect.top ||
-                  point.clientY > rect.bottom)
-              )
-                closePhotoBrowser(browser);
-            },
-          );
-        },
-        closed() {
-          dismissMessageMenu();
-          photoElement.removeEventListener("keydown", photoKeydown);
-          imagePress?.destroy();
-          imagePress = undefined;
-          photoBrowser = undefined;
-          lightbox = undefined;
-          lightboxUrl = "";
-          releaseDeferredPreviewReleases();
-          lightboxReturnFocus?.focus();
-          lightboxReturnFocus = undefined;
-          queueMicrotask(() => browser.destroy());
-        },
-      },
-    };
-    const browser = f7.photoBrowser.create(params);
-    const photoKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !messageMenuOpen()) {
-        event.preventDefault();
-        closePhotoBrowser(browser);
+    photoLoading = true;
+    photoError = false;
+    const url = lightboxUrl;
+    let browser: PhotoSwipe | undefined;
+    let removeKeydown = () => {};
+    try {
+      if (!url) throw new Error("Image unavailable");
+      const image = new Image();
+      image.src = url;
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("Image unavailable"));
+        if (image.complete && image.naturalWidth) resolve();
+      });
+      if (generation !== photoGeneration) return;
+      if (!image.naturalWidth || !image.naturalHeight) throw new Error("Invalid image dimensions");
+      browser = new PhotoSwipe({
+        dataSource: [{ src: lightboxUrl, width: image.naturalWidth, height: image.naturalHeight, alt: item.alt }],
+        index: 0,
+        escKey: false,
+        bgClickAction: "close",
+        maxZoomLevel: 4,
+        closeTitle: t("image.close"),
+      });
+      photoBrowser = browser;
+      browser.on("contentAppendImage", ({ content }) => {
+        const element = content.element;
+        if (!(element instanceof HTMLElement)) return;
+        imagePress?.destroy();
+        imagePress = longPress(element, {
+          run: (node, source) => showImageMenu(lightboxUrl, item.alt, node, undefined, item.attachment, source),
+        });
+      });
+      const keydown = (event: KeyboardEvent) => {
+        if (event.key === "Escape" && !messageMenuOpen()) {
+          event.preventDefault();
+          closePhotoBrowser();
+        }
+      };
+      document.addEventListener("keydown", keydown, true);
+      removeKeydown = () => document.removeEventListener("keydown", keydown, true);
+      browser.on("destroy", () => {
+        removeKeydown();
+        finishPhotoBrowser();
+      });
+      browser.init();
+      photoLoading = false;
+    } catch {
+      if (generation === photoGeneration) {
+        removeKeydown();
+        if (browser) {
+          const returnTarget = lightboxReturnFocus;
+          browser.destroy();
+          lightboxReturnFocus = returnTarget;
+          lightbox = item;
+          lightboxUrl = url;
+        }
+        photoLoading = false;
+        photoError = true;
       }
-      if (event.key === "Tab" && !messageMenuOpen()) {
-        const targets = [
-          ...browser.el.querySelectorAll<HTMLElement>(
-            ".popup-close, .swiper-slide-active img",
-          ),
-        ];
-        const index = targets.indexOf(document.activeElement as HTMLElement);
-        event.preventDefault();
-        targets[
-          (index + (event.shiftKey ? targets.length - 1 : 1)) % targets.length
-        ]?.focus({ preventScroll: true });
-      }
-    };
-    photoBrowser = browser;
-    browser.open();
+    }
   }
-  let imagePress: ReturnType<typeof longPress> | undefined;
   function showLightbox(item: TimelineImage): void {
     openLightbox({
       id: item.id,
@@ -1969,9 +1942,9 @@
     return true;
   }
   function showToast(text: string): void {
-    const toast = f7.toast.create({ text, closeTimeout: 2500 });
-    toast.on("closed", () => toast.destroy());
-    toast.open();
+    clearTimeout(toastTimer);
+    toastText = text;
+    toastTimer = setTimeout(() => { toastText = ""; }, 2500);
   }
   function showImageMenu(
     url: string,
@@ -2027,10 +2000,20 @@
   }
   async function loadOlder(): Promise<void> {
     if (!actions.loadOlder || projection.loadingOlder) return;
+    const scrollContainer = timeline;
     const previousHeight = timeline?.scrollHeight ?? 0;
-    await actions.loadOlder();
-    await tick();
-    if (timeline) timeline.scrollTop += timeline.scrollHeight - previousHeight;
+    const previousTop = timeline?.scrollTop ?? 0;
+    preservingHistoryPosition = true;
+    wasNearBottom = false;
+    try {
+      await actions.loadOlder();
+      await tick();
+      if (timeline && timeline === scrollContainer)
+        timeline.scrollTop = previousTop + timeline.scrollHeight - previousHeight;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    } finally {
+      preservingHistoryPosition = false;
+    }
   }
   function refreshVisiblePanel(): void {
     if (drawerTab === "history") {
@@ -2145,13 +2128,14 @@
   }
 
   onDestroy(() => {
+    clearTimeout(toastTimer);
     resetStickerClient();
     attachmentDisposed = true;
     sessionGeneration += 1;
     dismissMessageMenu();
     imagePress?.destroy();
     panelGeneration++;
-    photoBrowser?.destroy();
+    closePhotoBrowser();
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     releaseDeferredPreviewReleases();
     releaseSubmissionImages(imageDrafts);
@@ -2165,19 +2149,14 @@
   });
 </script>
 
-<svelte:window on:popstate={syncPreferencesLocation} />
-
 <KonstaProvider theme={konstaTheme} dark>
 <Page
-  name="companion"
-  pageContent={false}
   id="dsh-companion"
-  class="companion-shell"
+  class="page companion-shell"
   data-testid="companion-root"
   inert={preferencesOpen}
 >
-  {#snippet fixedContent()}
-    <Navbar class="companion-header">
+    <header class="navbar companion-header"><div class="navbar-inner">
       <div class="konsta-chat companion-header-identity" data-testid="companion-identity">
         <KonstaGlass class="companion-identity-chip" title={identity.companionName}>
           <span class="companion-identity-avatar companion-avatar-crop" aria-hidden="true">
@@ -2254,13 +2233,13 @@
           {/if}
         </div>
       {/if}
-      <button
+      <KonstaButton rounded tonal
         type="button"
         class="button button-tonal button-round companion-search-trigger"
         aria-label={t("search.open")}
         aria-haspopup="dialog"
-        on:click={openSearch}
-        ><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button
+        onClick={openSearch}
+        ><Search size={19} strokeWidth={1.8} aria-hidden="true" /></KonstaButton
       >
       <button bind:this={preferencesButton} type="button" class="button button-tonal button-round companion-preferences-trigger"
         aria-label={t("preferences.open")} on:click={openPreferences}>
@@ -2268,9 +2247,9 @@
       </button>
       </KonstaGlass>
       </div>
-    </Navbar>
+    </div></header>
     {#if effectiveWorkspaceReadiness === "ready" && effectiveSessionReadiness === "ready" && projection.openState !== "error"}
-      <div class="konsta-chat companion-composer-region" data-f7-slot="fixed">
+      <div class="konsta-chat companion-composer-region">
       <KonstaGlass class="toolbar messagebar companion-composer companion-compose-row" highlight={false}>
         <div class="companion-compose-content" hidden={detailOpen}>
         {#snippet beforeInner()}
@@ -2281,13 +2260,13 @@
               role="listbox"
               aria-label={t("command.label")}
             >
-              <button
+              <KonstaButton tonal
                 id="companion-command-compact"
                 class="button button-tonal companion-command-suggestion"
                 type="button"
                 role="option"
                 aria-selected="true"
-                on:click={acceptCommandSuggestion}
+                onClick={acceptCommandSuggestion}
               >
                 <span class="companion-command-name"
                   >{commandSuggestion.command}</span
@@ -2297,7 +2276,7 @@
                 >
                 <span class="companion-command-tab" aria-hidden="true">Tab</span
                 >
-              </button>
+              </KonstaButton>
             </div>
           {/if}
           {#if continuityStatus}
@@ -2324,24 +2303,24 @@
               data-testid="input-recovery"
             >
               <span>{t("recovery.available")}</span>
-              <button
+              <KonstaButton tonal
                 class="button button-tonal"
                 type="button"
                 disabled={!recoveredDraft.replacementEligible ||
                   !!composer.draft.trim() ||
                   imageDrafts.length > 0 ||
                   fileDrafts.length > 0}
-                on:click={() =>
+                onClick={() =>
                   recoveredDraft && restoreRecoveredDraft(recoveredDraft)}
-                >{t("recovery.restore")}</button
+                >{t("recovery.restore")}</KonstaButton
               >
-              <button
+              <KonstaButton
                 class="button"
                 type="button"
-                on:click={() => {
+                onClick={() => {
                   if (recoveredDraft)
                     actions.dismissRecovery?.(recoveredDraft.key);
-                }}>{t("recovery.discard")}</button
+                }}>{t("recovery.discard")}</KonstaButton
               >
               <details>
                 <summary>{t("recovery.inspect")}</summary>
@@ -2363,10 +2342,10 @@
           {#if replacementSourceIds.length || (recoveredDraftKey && (restoredNeedsAttachments || restoredEmptyRecovery))}
             <div class="companion-input-recovery">
               {#if restoredNeedsAttachments}<span>{t("recovery.missing")}</span>{/if}
-              <button
+              <KonstaButton
                 class="button"
                 type="button"
-                on:click={() => {
+                onClick={() => {
                   actions.dismissRecovery?.(recoveredDraftKey);
                   recoveredDraftKey = "";
                   recoveredPendingKey = "";
@@ -2378,7 +2357,7 @@
                   restoredNeedsAttachments = false;
                   restoredEmptyRecovery = false;
                   void scheduleComposerResize();
-                }}>{t("recovery.discardRestored")}</button
+                }}>{t("recovery.discardRestored")}</KonstaButton
               >
             </div>
           {/if}
@@ -2570,7 +2549,6 @@
       </KonstaGlass>
       </div>
     {/if}
-  {/snippet}
   <div class="companion-app" use:connectViewport>
     <div class="companion-content">
       <main class="companion-main" aria-label={t("chat.label")}>
@@ -2589,11 +2567,11 @@
             <div class="companion-mood-orb" aria-hidden="true"></div>
             <h1>{t("workspace.empty")}</h1>
             <p>{t("workspace.chooseHint")}</p>
-            <a
-              class="button button-fill"
+            <KonstaButton
+              component="a"
               href="/"
               aria-label={t("workspace.settingsLabel")}
-              on:click={() => dispatch("recovery")}>{t("settings.open")}</a
+              onClick={() => dispatch("recovery")}>{t("settings.open")}</KonstaButton
             >
           </section>
         {:else if effectiveWorkspaceReadiness === "error"}
@@ -2601,9 +2579,9 @@
             <div class="companion-mood-orb" aria-hidden="true"></div>
             <h1>{t("workspace.failed")}</h1>
             <p>{t("workspace.reconnectHint")}</p>
-            <button
+            <KonstaButton
               class="button button-fill"
-              on:click={() => dispatch("recovery")}>{t("reconnect")}</button
+              onClick={() => dispatch("recovery")}>{t("reconnect")}</KonstaButton
             >
           </section>
         {:else if effectiveSessionReadiness === "loading"}
@@ -2623,13 +2601,13 @@
             <p>
               {t("session.reconnectHint")}
             </p>
-            <button
+            <KonstaButton
               class="button button-fill"
-              on:click={() => dispatch("recovery")}>{t("reconnect")}</button
+              onClick={() => dispatch("recovery")}>{t("reconnect")}</KonstaButton
             >
           </section>
         {:else}
-          <div class="companion-timeline-region" hidden={detailOpen}>
+          <div class="companion-timeline-region" class:companion-timeline-wallpaper={!!backgrounds} hidden={detailOpen}>
             {#if backgrounds}
               <div class="companion-chat-background" aria-hidden="true">
                 {#key backgroundVersion}
@@ -2646,31 +2624,30 @@
                 {/key}
               </div>
             {/if}
-            <PageContent
-              messagesContent
-              class={`companion-timeline ${timelineReady ? "timeline-ready" : ""}`}
+            <div
+              class={`page-content companion-timeline ${timelineReady ? "timeline-ready" : ""}`}
               role="log"
               aria-live="polite"
               aria-relevant="additions text"
-              onscroll={onScroll}
+              on:scroll={onScroll}
             >
               <div class="companion-timeline-content" use:connectTimeline>
-                <Messages class="konsta-chat" bind:this={messagesComponent} scrollMessages={false}>
+                <Messages class="konsta-chat messages">
                   {#if displayedProjection.historySyncFailed}
                     <div class="companion-media-failure" role="alert">
                       <span>{t("history.loadFailed")}</span>
-                      <button class="button button-tonal button-small" on:click={() => actions.retryChatHistory?.()}>{t("history.retry")}</button>
+                      <KonstaButton small tonal class="button button-tonal button-small" onClick={() => actions.retryChatHistory?.()}>{t("history.retry")}</KonstaButton>
                     </div>
                   {/if}
                   {#if displayedProjection.hasMore}
-                    <button
+                    <KonstaButton small tonal
                       class="button button-tonal button-small"
                       style="display:block;margin:0 auto 18px"
-                      on:click={loadOlder}
+                      onClick={loadOlder}
                       disabled={displayedProjection.loadingOlder}
                       >{displayedProjection.loadingOlder
                         ? t("loading.progress")
-                        : t("history.older")}</button
+                        : t("history.older")}</KonstaButton
                     >
                   {/if}
                   {#if displayedProjection.items.length === 0}
@@ -2699,8 +2676,8 @@
                         {/if}
                       </div>
                     {/each}
-                    {#if dayHeadings[unit.id]}
-                      <KonstaMessagesTitle class="companion-chat-day" data-testid={`chat-day-${unit.id}`}><KonstaChip>{dayHeadings[unit.id]}</KonstaChip></KonstaMessagesTitle>
+                    {#if timeHeadings[unit.id]}
+                      <KonstaMessagesTitle class="companion-chat-day" data-testid={`chat-time-${unit.id}`}><KonstaChip><time datetime={timeHeadings[unit.id].datetime}>{timeHeadings[unit.id].label}</time></KonstaChip></KonstaMessagesTitle>
                     {/if}
                     {@const first = unit.items[0]}
                     {#if first?.kind === "notice"}
@@ -2792,11 +2769,11 @@
                                           part.items.length > 1,
                                         )}
                                       >
-                                        <span>{t("error.image")}</span><button
+                                        <span>{t("error.image")}</span><KonstaButton small tonal
                                           class="button button-tonal button-small"
                                           type="button"
-                                          on:click={() => retryImage(image)}
-                                          >{t("retry")}</button
+                                          onClick={() => retryImage(image)}
+                                          >{t("retry")}</KonstaButton
                                         >
                                       </div>
                                     {:else if image.state === "failed"}
@@ -2892,12 +2869,12 @@
                                     use:trackVoiceAudio={item.id}
                                   ></audio>
                                 {/if}
-                                <button
+                                <KonstaButton rounded tonal
                                   class="button button-tonal button-round companion-voice-control"
                                   aria-label={playback.playing
                                     ? t("voice.pause")
                                     : t("voice.play")}
-                                  on:click={(event) =>
+                                  onClick={(event) =>
                                     void toggleVoice(item, event.currentTarget)}
                                 >
                                   {#if playback.playing}<Pause
@@ -2909,7 +2886,7 @@
                                       fill="currentColor"
                                       aria-hidden="true"
                                     />{/if}
-                                </button>
+                                </KonstaButton>
                                 <div class="companion-voice-player">
                                   <div class="companion-voice-waveform">
                                     {#each voiceWaveform(item.id) as height, index}<span
@@ -2951,12 +2928,6 @@
                             {/if}
                           {/if}{/snippet}
                         {#snippet messageMetadata()}
-                          {#if unit.time !== undefined}<time
-                              class="companion-message-time"
-                              datetime={messageTimeDateTime(unit.time)}
-                              data-testid={`message-time-${unit.id}`}
-                              >{formatMessageTime(unit.time)}</time
-                            >{/if}
                           {#if unit.failed && partIndex === parts.length - 1}<button
                               class="companion-meta companion-failed-action"
                               aria-label={t("messages.failedActions")}
@@ -3043,7 +3014,11 @@
                           </div>
                         {/snippet}
                         {#snippet messageBody()}
-                          {#if konstaTheme === "ios"}
+                          {#if konstaTheme === "ios" && part.kind === "item" && part.item.kind === "ui"}
+                            <div class="companion-structured-surface">
+                              {@render messageContent()}
+                            </div>
+                          {:else if konstaTheme === "ios" && part.kind !== "images"}
                             <KonstaGlass class="companion-glass-bubble" highlight={false}>
                               {@render messageContent()}
                             </KonstaGlass>
@@ -3058,7 +3033,7 @@
                             : undefined}
                           footer={(independentMessage ||
                             partIndex === parts.length - 1) &&
-                          (unit.time !== undefined || unit.pendingLabel)
+                          (unit.failed || unit.pendingLabel)
                             ? messageMetadata
                             : undefined}
                           type={unit.side === "incoming" ? "received" : "sent"}
@@ -3078,24 +3053,18 @@
                     {/if}
                   {/each}
                   {#if typingVisible}
-                    <Message
-                      type="received"
-                      first
-                      last
-                      tail
-                      typing
-                      class="companion-row incoming"
+                    <div
+                      class="companion-row incoming message-typing"
                       data-testid="companion-typing-indicator"
                       role="status"
                       aria-label={t("status.namedTyping", {
                         name: identity.companionName,
                       })}
-                      textFooter={waitingCopy ? t(waitingCopy) : undefined}
-                    />
+                    ><div class="message-typing-indicator" aria-hidden="true"><div></div><div></div><div></div></div>{#if waitingCopy}<span>{t(waitingCopy)}</span>{/if}</div>
                   {/if}
                 </Messages>
               </div>
-            </PageContent>
+            </div>
             {#if !wasNearBottom && displayedProjection.items.length > 0}
               <div class="konsta-chat companion-return-latest">
                 <KonstaFab
@@ -3115,9 +3084,17 @@
           {#if detailOpen}{@render detailPage()}{/if}
         {/if}
 {#snippet detailPage()}
-    <div
+    <div class="companion-detail-background" aria-hidden="true">
+      {#if backgrounds}
+        {#key backgroundVersion}
+          <img class="companion-background-landscape" src={backgrounds.landscape} alt="" />
+          <img class="companion-background-portrait" src={backgrounds.portrait} alt="" />
+        {/key}
+      {/if}
+    </div>
+    <KonstaGlass component="div" highlight={false}
       id="companion-drawer-panel"
-      class="companion-history-scroll"
+      class="konsta-chat companion-history-scroll"
       role="region"
       aria-labelledby={drawerTab === "history"
         ? "companion-history-tab"
@@ -3140,10 +3117,10 @@
         <section class="companion-gallery" aria-label={t("drawer.images")}>
           {#if galleryError}<div class="companion-history-state" role="alert">
               <p>{t("gallery.failed")}</p>
-              <button
+              <KonstaButton small tonal
                 type="button"
                 class="button button-tonal button-small"
-                on:click={() => void openGallery()}>{t("retry")}</button
+                onClick={() => void openGallery()}>{t("retry")}</KonstaButton
               >
             </div>
           {:else if galleryLoading && !galleryImages.length}<p
@@ -3158,24 +3135,22 @@
           {:else}<div class="companion-gallery-toolbar">
               <span>{t("gallery.grouping")}</span>
               <div
-                class="segmented companion-gallery-grouping"
+                class="segmented companion-gallery-grouping flex gap-1"
                 role="group"
                 aria-label={t("gallery.grouping")}
               >
-                <button
+                <KonstaButton small tonal
                   type="button"
-                  class="button button-tonal button-small"
-                  class:button-active={galleryGrouping === "day"}
+                  class={`button button-tonal button-small ${galleryGrouping === "day" ? "button-active" : ""}`}
                   aria-pressed={galleryGrouping === "day"}
-                  on:click={() => (galleryGrouping = "day")}
-                  >{t("gallery.group.day")}</button
-                ><button
+                  onClick={() => (galleryGrouping = "day")}
+                  >{t("gallery.group.day")}</KonstaButton
+                ><KonstaButton small tonal
                   type="button"
-                  class="button button-tonal button-small"
-                  class:button-active={galleryGrouping === "week"}
+                  class={`button button-tonal button-small ${galleryGrouping === "week" ? "button-active" : ""}`}
                   aria-pressed={galleryGrouping === "week"}
-                  on:click={() => (galleryGrouping = "week")}
-                  >{t("gallery.group.week")}</button
+                  onClick={() => (galleryGrouping = "week")}
+                  >{t("gallery.group.week")}</KonstaButton
                 >
               </div>
             </div>
@@ -3200,23 +3175,23 @@
         </section>
       {:else if drawerTab === "diary"}
         <section class="companion-diary">
-          {#if diarySelected && !diaryEntry}<button
+          {#if diarySelected && !diaryEntry}<KonstaButton small tonal
               type="button"
               class="button button-tonal button-small"
-              on:click={() => void openDiary()}>← {t("diary.back")}</button
+              onClick={backToDiary}>← {t("diary.back")}</KonstaButton
             >{/if}
           {#if diaryEntry}
-            <button
+            <KonstaButton small tonal
               type="button"
               class="button button-tonal button-small companion-diary-back"
-              on:click={() => void openDiary()}>← {t("diary.back")}</button
+              onClick={backToDiary}>← {t("diary.back")}</KonstaButton
             >
-            <article class="companion-diary-page">
+            <KonstaGlass component="article" highlight={false} class="companion-diary-page">
               <time datetime={diaryEntry.name.slice(0, -3)}
                 >{diaryEntry.name.slice(0, -3)}</time
               >
               <Markdown text={diaryEntry.text} />
-            </article>
+            </KonstaGlass>
           {:else if diaryLoading}
             <p class="companion-history-state" role="status">{t("loading")}</p>
           {:else if diaryMissing}<p
@@ -3232,13 +3207,13 @@
           {:else if diaryError}
             <div class="companion-history-state" role="alert">
               <p>{t("diary.failed")}</p>
-              <button
+              <KonstaButton small tonal
                 type="button"
                 class="button button-tonal button-small"
-                on:click={() =>
+                onClick={() =>
                   diarySelected
                     ? void openDiaryEntry(diarySelected)
-                    : void openDiary()}>{t("retry")}</button
+                    : void openDiary()}>{t("retry")}</KonstaButton
               >
             </div>
           {:else if !diaryEntries.length}
@@ -3246,22 +3221,22 @@
           {:else}
             <div class="list companion-diary-list">
               {#each diaryEntries as entry}
-                <button
+                <KonstaButton tonal
                   type="button"
                   class="button button-tonal companion-diary-list-entry"
-                  on:click={() => void openDiaryEntry(entry)}
+                  onClick={() => selectDiaryEntry(entry)}
                 >
                   <time datetime={entry.slice(0, -3)}>{entry.slice(0, -3)}</time
                   >
                   <span aria-hidden="true">›</span>
-                </button>
+                </KonstaButton>
               {/each}
             </div>
-            {#if diaryCursor}<button
+            {#if diaryCursor}<KonstaButton tonal
                 type="button"
                 class="button button-tonal"
-                on:click={() => void openDiary(true)}
-                >{t("history.earlier")}</button
+                onClick={() => void openDiary(true)}
+                >{t("history.earlier")}</KonstaButton
               >{/if}
           {/if}
         </section>
@@ -3296,11 +3271,11 @@
           {:else if history.status === "error"}
             <div class="companion-history-state" role="alert">
               <p>{t("history.failed")}</p>
-              <button
+              <KonstaButton small tonal
                 type="button"
                 class="button button-tonal button-small"
-                on:click={() => actions.retryHistory?.()}
-                >{t("history.retry")}</button
+                onClick={() => actions.retryHistory?.()}
+                >{t("history.retry")}</KonstaButton
               >
             </div>
           {:else if history.records.length === 0}
@@ -3309,7 +3284,7 @@
             <div class="companion-history-entries">
               {#each history.records as record, index (`${record.at}:${index}`)}
                 {@const changes = changesForHistoryRecord(index)}
-                <article class="companion-history-entry">
+                <KonstaGlass component="article" highlight={false} class="companion-history-entry">
                   <time datetime={record.at}
                     >{formatHistoryDate(record.at, locale)}</time
                   >
@@ -3350,24 +3325,24 @@
                       {/each}
                     </ul>
                   {/if}
-                </article>
+                </KonstaGlass>
               {/each}
             </div>
             {#if history.hasEarlier}
-              <button
+              <KonstaButton small tonal
                 type="button"
                 class="button button-tonal button-small companion-history-earlier"
                 disabled={history.loadingEarlier}
-                on:click={() => void loadEarlierHistory()}
+                onClick={() => void loadEarlierHistory()}
                 >{history.loadingEarlier
                   ? t("history.loadingNextPage")
-                  : t("history.nextPage")}</button
+                  : t("history.nextPage")}</KonstaButton
               >
             {/if}
           {/if}
         </section>
       {/if}
-    </div>
+    </KonstaGlass>
 {/snippet}
 
       </main>
@@ -3381,6 +3356,17 @@
       companionName={identity.companionName}
       onClose={closeSearch}
     />{/if}
+  <div class="konsta-chat"><KonstaToast opened={!!toastText} position="center"><span role="status">{toastText}</span></KonstaToast></div>
+  {#if lightbox && (photoLoading || photoError)}
+    <div class="konsta-chat">
+      <KonstaPopup opened onBackdropClick={closePhotoBrowser}>
+        <div role="dialog" aria-modal="true" aria-label={lightbox.alt} class="p-4" use:photoFallbackFocus>
+          <p role={photoError ? "alert" : "status"}>{photoError ? t("error.image") : t("loading")}</p>
+          <KonstaButton onClick={closePhotoBrowser}>{t("close")}</KonstaButton>
+        </div>
+      </KonstaPopup>
+    </div>
+  {/if}
   <OverlayPresence active={!!$currentMessageMenu} exitMs={650} onExited={() => { displayedMessageMenu = undefined; }}>
     {#snippet children(opened)}
     {#if displayedMessageMenu}
@@ -3476,51 +3462,52 @@
     {/snippet}
   </OverlayPresence>
 </Page>
-</KonstaProvider>
 
-<section id="companion-preferences-panel" class="settings-screen" hidden={!preferencesOpen} aria-label={t("preferences.open")}>
+<KonstaGlass component="section" highlight={false} id="companion-preferences-panel" class="konsta-chat settings-screen" hidden={!preferencesOpen} aria-label={t("preferences.open")}>
   <div class="settings-container">
     <button bind:this={preferencesBack} type="button" class="settings-back" aria-label={t("settings.back")} on:click={closePreferences}>
       <ArrowLeft size={22} strokeWidth={1.8} aria-hidden="true" />
     </button>
     <h1>{preferencesTab === "home" ? t("preferences.open") : preferencesTab === "appearance" ? t("preferences.theme") : preferencesTab === "models" ? t("models.title") : t("settings.outputTitle")}</h1>
-    <div class="settings-cards" hidden={preferencesTab !== "home"}>
-      <button type="button" class="settings-card settings-card-appearance" on:click={() => openPreferencesTab("appearance")}>
-        <Palette size={27} strokeWidth={1.8} aria-hidden="true" />
-        <span>{t("preferences.theme")}</span><ChevronRight size={21} aria-hidden="true" />
-      </button>
+    <div hidden={preferencesTab !== "home"}>
+      <List strong inset>
+      <ListItem link linkComponent="button" contentClass="w-full text-left" linkProps={{ type: "button" }} title={t("preferences.theme")} onClick={() => openPreferencesTab("appearance")}>
+        {#snippet media()}<Palette size={22} aria-hidden="true" />{/snippet}
+      </ListItem>
       {#if modelSettingsSupported}
-        <button type="button" class="settings-card settings-card-models" on:click={() => openPreferencesTab("models")}>
-          <Cpu size={27} strokeWidth={1.8} aria-hidden="true" />
-          <span>{t("models.title")}</span><ChevronRight size={21} aria-hidden="true" />
-        </button>
+        <ListItem link linkComponent="button" contentClass="w-full text-left" linkProps={{ type: "button" }} title={t("models.title")} onClick={() => openPreferencesTab("models")}>
+          {#snippet media()}<Cpu size={22} aria-hidden="true" />{/snippet}
+        </ListItem>
       {/if}
       {#if voiceOutputSettingsSupported}
-        <Button type="button" class="settings-card settings-card-voice-output" onClick={() => openPreferencesTab("voice-output")}>
-          <Volume2 size={27} strokeWidth={1.8} aria-hidden="true" />
-          <span>{t("settings.outputTitle")}</span><ChevronRight size={21} aria-hidden="true" />
-        </Button>
+        <ListItem link linkComponent="button" contentClass="w-full text-left" linkProps={{ type: "button" }} title={t("settings.outputTitle")} onClick={() => openPreferencesTab("voice-output")}>
+          {#snippet media()}<Volume2 size={22} aria-hidden="true" />{/snippet}
+        </ListItem>
       {/if}
+      </List>
     </div>
     <div class="settings-detail" hidden={preferencesTab !== "appearance"}>
-      <List>
+      <List strong inset>
+        <ListItem groupTitle title={t("preferences.uiStyle")} />
+        {#each [["ios", "preferences.iosStyle"], ["material", "preferences.materialStyle"]] as option}
+          <li><Radio class="w-full gap-3 px-4 py-3" name="companion-ui-theme" value={option[0]} checked={konstaTheme === option[0]}
+            onChange={() => setUiTheme(option[0] as UiTheme)}>{t(option[1] as CompanionLocaleKey)}</Radio></li>
+        {/each}
         <ListItem groupTitle title={t("settings.theme")} />
         {#each [["light", "preferences.light"], ["dark", "preferences.dark"], ["system", "preferences.system"]] as option}
-          <ListItem radio radioIcon="end" name="companion-appearance" value={option[0]}
-            title={t(option[1] as CompanionLocaleKey)} checked={appearance === option[0]}
-            onChange={() => onAppearanceChange(option[0] as CompanionAppearance)} />
+          <li><Radio class="w-full gap-3 px-4 py-3" name="companion-appearance" value={option[0]} checked={appearance === option[0]}
+            onChange={() => onAppearanceChange(option[0] as CompanionAppearance)}>{t(option[1] as CompanionLocaleKey)}</Radio></li>
         {/each}
         <ListItem groupTitle title={t("preferences.language")} />
         {#each [["zh", "中文"], ["en", "English"]] as option}
-          <ListItem radio radioIcon="end" name="companion-language" value={option[0]}
-            title={option[1]} checked={locale === option[0]}
-            onChange={() => onLanguageChange(option[0] as CompanionLanguage)} />
+          <li><Radio class="w-full gap-3 px-4 py-3" name="companion-language" value={option[0]} checked={locale === option[0]}
+            onChange={() => onLanguageChange(option[0] as CompanionLanguage)}>{option[1]}</Radio></li>
         {/each}
       </List>
       <BackgroundSettings {t} open={preferencesOpen} {refreshBackgrounds} />
     </div>
     <div class="settings-detail" hidden={preferencesTab !== "models"}>
-      <List>
+      <List strong inset>
         {#if sessionId}
           {#key sessionId}
             <ModelSettings {t} {sessionId} open={preferencesOpen} busy={projection.running || continuity.lifecycle?.status === "running"}
@@ -3534,7 +3521,8 @@
         onSupportChange={(supported) => setPreferencesSupport("voice-output", supported)} />
     </div>
   </div>
-</section>
+</KonstaGlass>
+</KonstaProvider>
 
 <div class="companion-sr-only" aria-live="assertive">
   {typeof liveAnnouncement === "string"

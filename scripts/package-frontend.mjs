@@ -13,8 +13,22 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
-async function dependencyNotices(store, destination) {
+async function dependencyNotices(root, store, destination) {
+  const lockText = await readFile(join(root, "bun.lock"), "utf8");
+  const parsed = ts.parseConfigFileTextToJson("bun.lock", lockText);
+  if (
+    parsed.error ||
+    !parsed.config?.packages ||
+    Object.values(parsed.config.packages).some(
+      (entry) => !Array.isArray(entry) || typeof entry[0] !== "string",
+    )
+  )
+    throw new Error("Cannot read Bun lockfile dependency identities");
+  const locked = new Set(
+    Object.values(parsed.config.packages).map((entry) => entry[0]),
+  );
   for (const entry of await readdir(store, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const modules = join(store, entry.name, "node_modules");
@@ -38,6 +52,8 @@ async function dependencyNotices(store, destination) {
         );
         if (typeof pkg.name !== "string" || typeof pkg.version !== "string")
           throw new Error("Dependency has no name or version");
+        // Bun may retain packages from older installs in its local store.
+        if (!locked.has(`${pkg.name}@${pkg.version}`)) continue;
         const target = join(
           destination,
           encodeURIComponent(pkg.name),
@@ -108,6 +124,33 @@ function archive(stage, output, entries) {
   );
 }
 
+export async function stageFrontendLicenses(
+  root,
+  destination,
+  fontLicense,
+  store,
+) {
+  await mkdir(destination, { recursive: true });
+  await cp(
+    join(root, "LICENSE"),
+    join(destination, "lamplit-app-Apache-2.0.txt"),
+  );
+  await cp(
+    join(root, "docs/IMPORTS.md"),
+    join(destination, "lamplit-app-IMPORTS.md"),
+  );
+  await cp(fontLicense, join(destination, "NotoSansSC-OFL-1.1.txt"));
+  for (const name of [
+    "chord-1.0.0-MIT.txt",
+    "konsta-5.5.0-MIT.txt",
+    "photoswipe-5.4.4-MIT.txt",
+    "tanstack-virtual-MIT.txt",
+  ])
+    await cp(join(root, "docs/licenses", name), join(destination, name));
+  if (store)
+    await dependencyNotices(root, store, join(destination, "dependencies"));
+}
+
 export async function packageFrontend(
   root,
   revision,
@@ -131,30 +174,12 @@ export async function packageFrontend(
       join(stage, "contracts/dist"),
       { recursive: true },
     );
-    await mkdir(join(stage, "licenses"));
-    await cp(
-      join(root, "LICENSE"),
-      join(stage, "licenses/lamplit-app-Apache-2.0.txt"),
+    await stageFrontendLicenses(
+      root,
+      join(stage, "licenses"),
+      fontLicense,
+      dependencyStore,
     );
-    await cp(
-      join(root, "docs/IMPORTS.md"),
-      join(stage, "licenses/lamplit-app-IMPORTS.md"),
-    );
-    await cp(fontLicense, join(stage, "licenses/NotoSansSC-OFL-1.1.txt"));
-    for (const name of [
-      "chord-1.0.0-MIT.txt",
-      "konsta-5.5.0-MIT.txt",
-      "skeleton-elements-4.0.1-MIT.txt",
-    ])
-      await cp(
-        join(root, "docs/licenses", name),
-        join(stage, "licenses", name),
-      );
-    if (dependencyStore)
-      await dependencyNotices(
-        dependencyStore,
-        join(stage, "licenses/dependencies"),
-      );
     const manifest = {
       revision,
       browser: await hashes(join(stage, "browser")),
@@ -163,9 +188,10 @@ export async function packageFrontend(
     };
     if (
       !manifest.browser["index.html"] ||
+      !manifest.browser["a2ui.html"] ||
       !manifest.contracts["dist/cfl-browser-host-auth.js"]
     )
-      throw new Error("Browser index or compiled auth marker missing");
+      throw new Error("Browser entry or compiled auth marker missing");
     const marker = await readFile(
       join(stage, "contracts/dist/cfl-browser-host-auth.js"),
       "utf8",

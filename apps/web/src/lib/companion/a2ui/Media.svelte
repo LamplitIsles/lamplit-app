@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button } from "framework7-svelte";
+  import { Button } from "konsta/svelte";
   import { getContext } from "svelte";
   import Play from "lucide-svelte/icons/play";
   import Pause from "lucide-svelte/icons/pause";
@@ -94,7 +94,7 @@
     <Button
       type="button"
       tonal
-      round
+      rounded
       onClick={toggle}
       aria-label={playing
         ? locale() === "zh"

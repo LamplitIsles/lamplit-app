@@ -233,9 +233,7 @@ await (async () => {
     const firstPanel = document.querySelector('[role="tabpanel"]');
     assert.ok(firstPanel?.textContent.includes("Tab"));
     assert.equal(getComputedStyle(firstPanel).display, "flex");
-    assert.equal(getComputedStyle(firstPanel).position, "static");
-    assert.equal(getComputedStyle(firstPanel).width, "auto");
-    assert.equal(getComputedStyle(firstPanel).height, "auto");
+    assert.notEqual(getComputedStyle(firstPanel).position, "fixed");
     tabs[1].click();
     await settle();
     assert.ok(
@@ -258,21 +256,27 @@ await (async () => {
     assert.ok(open);
     open.click();
     await settle();
-    assert.equal(Boolean(document.querySelector(".popup.modal-in")), true);
+    assert.equal(Boolean(document.querySelector('.a2ui-modal [role="dialog"]')), true);
     assert.equal(
-      document.querySelector(".popup.modal-in")?.getAttribute("aria-label"),
+      document.querySelector('.a2ui-modal [role="dialog"]')?.getAttribute("aria-label"),
       "Modal label",
     );
     assert.equal(
       document
-        .querySelector(".popup.modal-in")
+        .querySelector('.a2ui-modal [role="dialog"]')
         ?.getAttribute("aria-description"),
       "Modal description",
     );
     assert.equal(
-      document.querySelector(".popup.modal-in")?.getAttribute("aria-live"),
+      document.querySelector('.a2ui-modal [role="dialog"]')?.getAttribute("aria-live"),
       "polite",
     );
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle();
+    assert.equal(Boolean(document.querySelector('.a2ui-modal [role="dialog"]')), false);
+    open.click();
+    await settle();
+    assert.equal(Boolean(document.querySelector('.a2ui-modal [role="dialog"]')), true);
     assert.ok(heights.includes(480));
     const mediaBeforeOptions = document.querySelector("video");
     const sameContent = structuredClone(workspace);
@@ -285,7 +289,7 @@ await (async () => {
       { locale: "en", viewportHeight: 350, dark: true, fontScale: 1.2 },
     );
     await settle();
-    assert.equal(Boolean(document.querySelector(".popup.modal-in")), true);
+    assert.equal(Boolean(document.querySelector('.a2ui-modal [role="dialog"]')), true);
     assert.equal(document.querySelector("video"), mediaBeforeOptions);
     assert.ok(
       document
@@ -302,7 +306,7 @@ await (async () => {
     assert.ok(
       document.body.textContent.includes("Unable to display this interface"),
     );
-    assert.equal(Boolean(document.querySelector(".popup.modal-in")), false);
+    assert.equal(Boolean(document.querySelector('.a2ui-modal [role="dialog"]')), false);
   } finally {
     globalThis.fetch = oldFetch;
     for (const [key, descriptor] of originals)

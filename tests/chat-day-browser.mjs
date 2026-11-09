@@ -23,7 +23,12 @@ const fresh = {
   ...message("fresh", "凌晨四点", "2026-11-08T04:00:00+08:00"),
   role: "user",
 };
-const filler = Array.from({ length: 10 }, (_, index) =>
+const nextGroup = message(
+  "next-group",
+  "十五分钟后的消息",
+  "2026-11-08T04:15:00+08:00",
+);
+const filler = Array.from({ length: 12 }, (_, index) =>
   message(`filler-${index}`, `连续消息 ${index}`, "2026-11-08T03:59:00+08:00"),
 );
 const backend = {
@@ -31,7 +36,7 @@ const backend = {
   async read() {
     return {
       ...(await fixture.backend.read()),
-      messages: [late, ...filler, fresh],
+      messages: [late, ...filler, fresh, nextGroup],
       before: "older",
     };
   },
@@ -86,8 +91,27 @@ try {
       timezoneId: "Asia/Shanghai",
       ...(ios ? { userAgent: devices["iPhone 13"].userAgent } : {}),
     });
+    await context.addInitScript(
+      (theme) => localStorage.setItem("her.companion.ui-theme", theme),
+      ios ? "ios" : "material",
+    );
     await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
+    if (ios) {
+      await page.route("**/api/chat/appearance", (route) =>
+        route.fulfill({
+          json: {
+            companionName,
+            userName: "",
+            companionAvatar: "/api/test/avatar.png",
+            backgrounds: {
+              landscape: "/api/test/avatar.png",
+              portrait: "/api/test/avatar.png",
+            },
+          },
+        }),
+      );
+    }
     await page.clock.setFixedTime(new Date("2026-11-07T19:59:30Z"));
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
@@ -143,49 +167,31 @@ try {
         ).not.toBe("none");
       }
     }
-    const labels = page.locator('[data-testid^="chat-day-"]');
+    const labels = page.locator('[data-testid^="chat-time-"]');
     const zh = locale.startsWith("zh");
     await expect(labels).toHaveText(
-      zh ? ["今天", "11月8日"] : ["Today", "8 November"],
+      zh ? ["03:59", "11月8日 04:15"] : ["03:59", "8 November 04:15"],
     );
     const geometry = await page
-      .getByTestId("chat-day-fresh")
+      .getByTestId("chat-time-late")
       .evaluate((heading) => {
         const chip = heading.querySelector(".k-chip");
         const row = heading.nextElementSibling;
-        const bubble = row?.querySelector(".companion-message-body")
-          ?.parentElement?.parentElement;
-        const time = row?.querySelector(".companion-message-time");
-        const range = document.createRange();
-        if (!chip || !row || !bubble || !time)
-          throw new Error("missing chat day layout");
-        range.selectNodeContents(time);
+        const time = heading.querySelector("time");
+        if (!chip || !row || !time) throw new Error("missing chat day layout");
         return {
           background: getComputedStyle(chip).backgroundColor,
           radius: getComputedStyle(chip).borderRadius,
           gap:
             row.getBoundingClientRect().top -
             heading.getBoundingClientRect().bottom,
-          timeRight: range.getBoundingClientRect().right,
-          bubbleRight: bubble.getBoundingClientRect().right,
+          datetime: time.getAttribute("datetime"),
         };
-      });
-    const incomingInset = await page
-      .locator(".companion-row.incoming")
-      .first()
-      .evaluate((row) => {
-        const bubble = row.querySelector(".companion-message-body")
-          ?.parentElement?.parentElement;
-        const time = row.querySelector(".companion-message-time");
-        if (!bubble || !time) throw new Error("missing message layout");
-        const range = document.createRange();
-        range.selectNodeContents(time);
-        return range.getBoundingClientRect().left - bubble.getBoundingClientRect().left;
       });
     expect(geometry.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(parseFloat(geometry.radius)).toBeGreaterThan(10);
     expect(geometry.gap).toBeGreaterThanOrEqual(8);
-    expect(Math.abs(geometry.bubbleRight - geometry.timeRight - incomingInset)).toBeLessThan(2);
+    expect(geometry.datetime).toBe(new Date(late.createdAt).toISOString());
     const edges = await page
       .locator(".companion-row .companion-message-body")
       .evaluateAll((nodes) =>
@@ -199,7 +205,7 @@ try {
       expect(edge.left).toBeGreaterThanOrEqual(12);
       expect(edge.right).toBeLessThanOrEqual(width - 12);
     }
-    await expect(page.locator(".companion-message-time")).toHaveCount(12);
+    await expect(page.locator(".companion-message-time")).toHaveCount(0);
     const timeline = page.locator(".companion-timeline");
     await timeline.evaluate((node) => {
       node.scrollTop = 0;
@@ -213,29 +219,29 @@ try {
       .click();
     await expect(labels).toHaveText(
       zh
-        ? ["10月30日", "昨天", "今天", "11月8日"]
-        : ["30 October", "Yesterday", "Today", "8 November"],
+        ? ["10月30日 10:15", "昨天 03:59", "03:59", "11月8日 04:15"]
+        : ["30 October 10:15", "Yesterday 03:59", "03:59", "8 November 04:15"],
     );
-    await expect(page.locator(".companion-message-time")).toHaveCount(14);
+    await expect(page.locator(".companion-message-time")).toHaveCount(0);
     const after = (await anchor.boundingBox()).y;
     expect(Math.abs(after - before)).toBeLessThan(3);
     await page.clock.setFixedTime(new Date("2026-11-07T20:00:01Z"));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(labels).toHaveText(
       zh
-        ? ["10月30日", "11月6日", "昨天", "今天"]
-        : ["30 October", "6 November", "Yesterday", "Today"],
+        ? ["10月30日 10:15", "11月6日 03:59", "昨天 03:59", "04:15"]
+        : ["30 October 10:15", "6 November 03:59", "Yesterday 03:59", "04:15"],
     );
     if (zh && width === 390) {
       await mkdir(".scratch/chat-day", { recursive: true });
-      await page.getByTestId("chat-day-fresh").scrollIntoViewIfNeeded();
+      await page.getByTestId("chat-time-late").scrollIntoViewIfNeeded();
       await page.screenshot({ path: ".scratch/chat-day/timeline-390.png" });
     }
     expect(errors).toEqual([]);
     await context.close();
   }
   console.log(
-    "Chat day: localized headings, 04:00 boundary, older history and message times passed",
+    "Chat time: grouped separators, 04:00 labels and older history passed",
   );
 } finally {
   await browser.close();

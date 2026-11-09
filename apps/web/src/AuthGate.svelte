@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
+  import { Button, List, ListInput } from "konsta/svelte";
   import AuthConsent from "./AuthConsent.svelte";
   import { auth } from "./auth-client.ts";
   import { initialPreferences } from "./lib/companion/client/preferences.ts";
@@ -165,12 +166,12 @@
       {:else if authState === "error"}
         <h1 id="auth-title">Lamplit</h1>
         <p role="alert">{text.unavailable}</p>
-        <button
-          class="button button-fill auth-primary"
+        <Button
+          class="auth-primary"
           onclick={() => {
             authState = "loading";
             void refresh();
-          }}>{text.retry}</button
+          }}>{text.retry}</Button
         >
       {:else}
         {@const registering = authState === "setup" || recovery}
@@ -183,40 +184,41 @@
               void authenticate(true);
             }}
           >
-            <label for="pairing-code">{text.label}</label>
-            <input
-              id="pairing-code"
-              type="text"
-              bind:value={code}
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-              required
-              disabled={busy}
-            />
-            <button
-              class="button button-fill auth-primary"
+            <List strong inset>
+              <ListInput
+                inputId="pairing-code"
+                type="text"
+                bind:value={code}
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                required
+                disabled={busy}
+              >{#snippet label()}<label for="pairing-code">{text.label}</label>{/snippet}</ListInput>
+            </List>
+            <Button
+              class="auth-primary"
               type="submit"
-              disabled={busy || !code.trim()}>{text.create}</button
+              disabled={busy || !code.trim()}>{text.create}</Button
             >
           </form>
         {:else}
-          <button
-            class="button button-fill auth-primary"
+          <Button
+            class="auth-primary"
             disabled={busy}
-            onclick={() => void authenticate(false)}>{text.signIn}</button
+            onclick={() => void authenticate(false)}>{text.signIn}</Button
           >
         {/if}
         {#if busy}<p role="status">{text.pending}</p>{/if}
         {#if error}<p class="auth-error" role="alert">{error}</p>{/if}
-        {#if authState !== "setup"}<button
-            class="button auth-secondary"
+        {#if authState !== "setup"}<Button clear
+            class="auth-secondary"
             disabled={busy}
             onclick={() => {
               recovery = !recovery;
               error = "";
               code = "";
-            }}>{recovery ? text.back : text.recovering}</button
+            }}>{recovery ? text.back : text.recovering}</Button
           >{/if}
       {/if}
     </section>
@@ -255,23 +257,11 @@
     font-weight: 600;
     margin-bottom: 8px;
   }
-  input {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    padding: 12px;
-    border: 1px solid var(--companion-color-outline);
-    border-radius: 10px;
-    background: var(--companion-color-surface);
-    color: var(--companion-color-text);
-    font: inherit;
-    margin-bottom: 20px;
-  }
-  .auth-primary {
+  :global(.auth-primary) {
     width: 100%;
     min-height: 48px;
   }
-  .auth-secondary {
+  :global(.auth-secondary) {
     margin: 14px auto 0;
     min-height: 44px;
   }

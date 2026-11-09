@@ -1,14 +1,10 @@
-import { f7 } from "framework7-svelte";
-
-/** Framework7 owns touch holds; pointer events adapt mouse holds to the same menu. */
+/** Open the same menu for stationary touch, pen, mouse, and keyboard holds. */
 export function longPress(
   node: HTMLElement,
   options: {
     run(node: HTMLElement, source: "keyboard" | "mouse" | "touch"): void;
   },
 ) {
-  // Framework7 9.2 leaves the first hold pending when a stationary second finger lands.
-  // Guard that gap without duplicating its timer or movement recognition.
   const originalTabIndex = node.getAttribute("tabindex");
   if (originalTabIndex === null) node.tabIndex = 0;
   const keyboard = (event: KeyboardEvent) => {
@@ -23,18 +19,21 @@ export function longPress(
   };
   node.addEventListener("keydown", keyboard);
   let multiTouch = false;
+  let lastTouch = 0;
   const start = (event: TouchEvent) => {
-    if (event.touches.length > 1) multiTouch = true;
+    lastTouch = Date.now();
+    if (event.touches.length > 1) {
+      multiTouch = true;
+      clearMouse();
+    }
   };
   const end = (event: TouchEvent) => {
     if (!event.touches.length) multiTouch = false;
   };
-  const hold = () => {
-    if (!multiTouch) options.run(node, "touch");
-  };
   const context = (event: MouseEvent) => {
     event.preventDefault();
-    if (event.button === 2) options.run(node, "mouse");
+    if (event.button === 2 && Date.now() - lastTouch > 1000)
+      options.run(node, "mouse");
   };
   let mouse: { id: number; x: number; y: number; fired: boolean } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -62,8 +61,8 @@ export function longPress(
   const release = (event: PointerEvent) => {
     if (event.pointerId !== mouse?.id) return;
     clearTimeout(timer);
-    // The release click follows pointerup. Keep capture until that click has passed.
-    if (mouse.fired) releaseTimer = setTimeout(clearMouse, 0);
+    // On touch devices the synthetic click can arrive after the next task.
+    if (mouse.fired) releaseTimer = setTimeout(clearMouse, 700);
     else clearMouse();
   };
   const cancel = (event: PointerEvent) => {
@@ -73,14 +72,14 @@ export function longPress(
     if (!mouse?.fired) clearMouse();
   };
   const click = (event: MouseEvent) => {
-    if (mouse?.fired) {
+    if (mouse?.fired && event.target instanceof Node && node.contains(event.target)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       clearMouse();
     }
   };
   const down = (event: PointerEvent) => {
-    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    if (event.button !== 0 || multiTouch) return;
     clearMouse();
     mouse = {
       id: event.pointerId,
@@ -97,8 +96,8 @@ export function longPress(
     timer = setTimeout(() => {
       if (!mouse) return;
       mouse.fired = true;
-      options.run(node, "mouse");
-    }, f7.params.touch?.tapHoldDelay ?? 450);
+      options.run(node, event.pointerType === "mouse" ? "mouse" : "touch");
+    }, 450);
   };
   node.addEventListener("pointerdown", down);
   const select = (event: Event) => event.preventDefault();
@@ -111,7 +110,6 @@ export function longPress(
     capture: true,
     passive: true,
   });
-  node.addEventListener("taphold", hold);
   node.addEventListener("contextmenu", context);
   node.addEventListener("selectstart", select);
   return {
@@ -126,7 +124,6 @@ export function longPress(
       document.removeEventListener("touchstart", start, true);
       document.removeEventListener("touchend", end, true);
       document.removeEventListener("touchcancel", end, true);
-      node.removeEventListener("taphold", hold);
       node.removeEventListener("contextmenu", context);
       node.removeEventListener("selectstart", select);
     },

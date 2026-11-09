@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
+  import { Button } from "konsta/svelte";
   import ImagePlus from "lucide-svelte/icons/image-plus";
   import type { CompanionTranslate, CompanionLocaleKey } from "./locale.ts";
 
@@ -147,10 +148,9 @@
       <p role="status">{t("settings.backgroundSaving")}</p>
     {:else if phase === "error"}
       <p role="alert">{message ? t(message) : ""}</p>
-      <button
-        class="button button-tonal"
+      <Button tonal
         type="button"
-        onclick={() => void load()}>{t("models.reload")}</button
+        onclick={() => void load()}>{t("models.reload")}</Button
       >
     {:else if message}
       <p role="alert">{t(message)}</p>

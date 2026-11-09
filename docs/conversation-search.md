@@ -1,5 +1,8 @@
 # Conversation archive search
 
+Framework7 layout and interaction references below describe the historical
+baseline before the spec #108 migration.
+
 Design decisions reviewed on 2026-10-03; shared App implementation for spec #3142.
 App/Pi/CFL joint isolated acceptance completed and merged (PR #6/#27/#66).
 The canonical-root candidate needs fresh Owner-approved exact-artifact acceptance.

@@ -241,11 +241,15 @@ try {
     const emptyFile = page.getByTestId("file-message")
       .filter({ hasText: `only-${viewport.width}.bin` }).last();
     await expect(emptyFile).toBeVisible();
-    const previousTime = page.locator(".companion-message-time").first();
     await expect.poll(async () => {
-      const timeBox = await previousTime.boundingBox();
-      const emptyBox = await emptyFile.boundingBox();
-      return emptyBox.y - (timeBox.y + timeBox.height);
+      return emptyFile.evaluate((file) => {
+        const row = file.closest(".companion-row");
+        const rows = [...document.querySelectorAll(".companion-timeline .companion-row")];
+        const previous = rows[rows.indexOf(row) - 1];
+        const body = previous?.querySelector(".companion-message-body");
+        if (!body) return -1;
+        return file.getBoundingClientRect().top - body.getBoundingClientRect().bottom;
+      });
     }).toBeGreaterThanOrEqual(6);
     await emptyFile.focus();
     await page.keyboard.press("Shift+F10");

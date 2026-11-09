@@ -1,5 +1,8 @@
 # Shared chat reading layout
 
+Framework7 references describe the historical frontend tested before the spec
+#108 migration.
+
 Incoming answers keep their left avatar and reserve the outgoing avatar-and-gap
 space on the right. Long mobile bubbles end approximately at the outgoing user
 bubble's right edge (within 2px), before its avatar column. Short answers fit their

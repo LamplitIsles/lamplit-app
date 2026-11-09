@@ -5,7 +5,8 @@
 
 # Default shared frontend and complete acceptance
 
-Spec #3162 makes the existing CFL Framework7/Svelte app the default frontend.
+Spec #3162 made the then-current CFL Framework7/Svelte app the default frontend;
+spec #108 subsequently replaced Framework7 with Svelte and Konsta.
 Standalone entry is `/`; hosted entry is `/chat`. Both serve the same App HTML
 and root-relative `/assets/*` and `/icons/*` bytes. There is no `/slice` alias,
 legacy frontend fallback, migration or separate App Worker. Native/domain and

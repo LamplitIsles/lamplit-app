@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { App, View } from "framework7-svelte";
+  import { App } from "konsta/svelte";
+  import { get } from "svelte/store";
+  import { applyUiTheme, uiTheme, watchUiTheme } from "../client/ui-theme.js";
   import Surface from "./Surface.svelte";
   let payload = $state<unknown>();
   let locale = $state("en");
@@ -9,6 +11,8 @@
   let modalHeight = 480;
   let reportHeight = () => {};
   let payloadKey: string | undefined;
+  applyUiTheme(get(uiTheme));
+  $effect(() => applyUiTheme($uiTheme));
   function keyFor(value: unknown): string | undefined {
     try {
       return JSON.stringify(value, (_key, item) =>
@@ -44,6 +48,7 @@
     };
   };
   onMount(() => {
+    const stopWatchingTheme = watchUiTheme();
     const host = window as BridgeWindow;
     host.a2uiHost = {
       show(value, options) {
@@ -83,15 +88,15 @@
     if (container) observer.observe(container);
     host.webkit?.messageHandlers?.a2uiReady?.postMessage("ready");
     return () => {
+      stopWatchingTheme();
       observer.disconnect();
       delete host.a2uiHost;
     };
   });
 </script>
 
-<App theme="auto"
-  ><View main
-    ><div bind:this={container} class="a2ui-embedded">
+<App theme={$uiTheme} class="konsta-chat"
+  ><div bind:this={container} class="a2ui-embedded">
       <Surface
         {payload}
         {locale}
@@ -101,8 +106,7 @@
           reportHeight();
         }}
       />
-    </div></View
-  ></App
+    </div></App
 >
 
 <style>

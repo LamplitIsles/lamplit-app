@@ -23,13 +23,14 @@
     "@fontsource/noto-sans-sc": "5.3.0",
     "@humanspeak/svelte-markdown": "1.8.5",
     "@lamplit/contracts": "workspace:*",
+    "@tanstack/svelte-virtual": "3.13.52",
     "better-auth": "1.7.14",
-    "framework7": "9.2.0",
-    "framework7-svelte": "9.2.0",
     "katex": "0.16.47",
     "konsta": "5.5.0",
     "lucide-svelte": "1.0.1",
     "marked": "18.0.14",
+    "photoswipe": "5.4.4",
+    "sv-router": "0.19.0",
     "svelte": "5.57.0",
     "svelte-a2ui": "0.2.0"
   }

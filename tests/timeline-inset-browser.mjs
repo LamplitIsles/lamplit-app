@@ -58,6 +58,7 @@ try {
       ...(ios ? { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" } : {}),
       serviceWorkers: "block",
     });
+    await context.addInitScript((theme) => localStorage.setItem("her.companion.ui-theme", theme), ios ? "ios" : "material");
     await context.route("**/*", (route) =>
       route.request().url().startsWith(origin)
         ? route.continue()

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
-  import { f7, f7ready } from "framework7-svelte";
-  import type { VirtualList } from "framework7/components/virtual-list";
+  import { tick } from "svelte";
+  import { get } from "svelte/store";
+  import { createVirtualizer } from "@tanstack/svelte-virtual";
   import type { GalleryRow, GalleryImage } from "./gallery.ts";
   export let unavailableLabel = "Image unavailable";
   export let rows: GalleryRow[];
@@ -9,54 +9,32 @@
   export let loading: boolean;
   export let loadMore: () => Promise<void>;
   export let pick: (image: GalleryImage) => void;
-  let viewport: HTMLDivElement, list: HTMLDivElement;
-  let virtual: VirtualList.VirtualList | undefined;
-  let rendered: VirtualList.VirtualListRenderData = {
-    fromIndex: 0,
-    toIndex: 0,
-    listHeight: 0,
-    topPosition: 0,
-    items: [],
-  };
-  let disposed = false;
-  onMount(() =>
-    f7ready(() => {
-      if (disposed) return;
-      // Framework7 9 supplies (list, data); its published declaration omits the list argument.
-      const params = {
-        el: list,
-        createUl: false,
-        items: rows,
-        height: (row: GalleryRow) => (row.kind === "group" ? 38 : 132),
-        renderExternal(
-          _list: VirtualList.VirtualList,
-          data: VirtualList.VirtualListRenderData,
-        ) {
-          rendered = data;
-        },
-      };
-      virtual = f7.virtualList.create(
-        params as unknown as VirtualList.Parameters,
-      );
-      void tick().then(checkMore);
-    }),
-  );
-  $: if (virtual && rows) {
-    virtual.replaceAllItems(rows);
+  let viewport: HTMLDivElement | undefined;
+  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: 0,
+    getScrollElement: () => viewport ?? null,
+    estimateSize: (index) => (rows[index]?.kind === "group" ? 38 : 132),
+    getItemKey: (index) => rows[index]?.key ?? index,
+    overscan: 3,
+  });
+  $: if (viewport && rows) {
+    get(virtualizer).setOptions({
+      count: rows.length,
+      getScrollElement: () => viewport ?? null,
+      estimateSize: (index) => (rows[index]?.kind === "group" ? 38 : 132),
+      getItemKey: (index) => rows[index]?.key ?? index,
+    });
     void tick().then(checkMore);
   }
   function checkMore() {
     if (
+      viewport?.isConnected &&
       hasMore &&
       !loading &&
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 250
     )
       void loadMore();
   }
-  onDestroy(() => {
-    disposed = true;
-    virtual?.destroy();
-  });
 </script>
 
 <div
@@ -65,12 +43,12 @@
   on:scroll={checkMore}
 >
   <div
-    bind:this={list}
-    class="virtual-list companion-gallery-virtual"
-    style={`height:${rendered.listHeight}px`}
+    class="companion-gallery-virtual"
+    style={`height:${$virtualizer.getTotalSize()}px;position:relative`}
   >
-    <div style={`transform:translateY(${rendered.topPosition}px)`}>
-      {#each rendered.items as row (row.key)}
+      {#each $virtualizer.getVirtualItems() as item (item.key)}
+        {@const row = rows[item.index]}
+        {#if row}<div style={`position:absolute;top:0;left:0;width:100%;transform:translateY(${item.start}px)`}>
         {#if row.kind === "group"}<div class="companion-gallery-group">
             <h3>{row.label}</h3>
           </div>
@@ -91,7 +69,7 @@
                   >{/if}</button
               >{/each}
           </div>{/if}
+        </div>{/if}
       {/each}
-    </div>
   </div>
 </div>

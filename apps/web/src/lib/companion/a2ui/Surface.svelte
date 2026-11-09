@@ -119,27 +119,13 @@
   .a2ui-surface {
     min-width: 0;
     max-width: 100%;
-    color: var(--f7-text-color);
-    --a2ui-color-text: var(--f7-text-color);
-    --a2ui-color-text-muted: var(--f7-text-color);
-    --a2ui-color-primary: var(--f7-theme-color);
-    --a2ui-color-surface: var(--f7-page-bg-color);
-    --a2ui-color-surface-raised: var(--f7-card-bg-color);
-    --a2ui-color-border: var(--f7-bars-border-color);
-  }
-  /* svelte-a2ui's tab panel shares its class with Framework7's side panel. */
-  .a2ui-surface :global(.a2ui-tabs > .panel[role="tabpanel"]) {
-    display: flex !important;
-    position: static;
-    width: auto;
-    height: auto;
-    z-index: auto;
-    transform: none;
-    background: transparent;
-    transition: none;
-  }
-  .a2ui-surface :global(.a2ui-tabs > .panel[role="tabpanel"]::after) {
-    content: none;
+    color: var(--companion-color-text);
+    --a2ui-color-text: var(--companion-color-text);
+    --a2ui-color-text-muted: var(--companion-color-text-muted);
+    --a2ui-color-primary: var(--companion-color-action);
+    --a2ui-color-surface: var(--companion-color-surface);
+    --a2ui-color-surface-raised: var(--companion-color-surface-muted);
+    --a2ui-color-border: var(--companion-color-outline);
   }
   .a2ui-unavailable {
     opacity: 0.7;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Markdown from "./Markdown.svelte";
+  import { longPress } from "./long-press.ts";
   import type { CompanionTranslate } from "./locale.js";
 
   export let text: string;
@@ -9,12 +10,6 @@
   let expanded = false;
   let truncated = false;
   let content: HTMLDivElement;
-
-  function stopHold(node: HTMLButtonElement) {
-    const stop = (event: Event) => event.stopPropagation();
-    node.addEventListener("taphold", stop);
-    return { destroy: () => node.removeEventListener("taphold", stop) };
-  }
 
   onMount(() => {
     const observer = new ResizeObserver(() => {
@@ -42,7 +37,7 @@
     aria-controls={`reminder-body-${encodeURIComponent(id)}`}
     on:pointerdown|stopPropagation
     on:touchstart|stopPropagation
-    use:stopHold
+    use:longPress={{ run: () => {} }}
     on:contextmenu|stopPropagation|preventDefault
     on:keydown|stopPropagation
     on:click|stopPropagation={() => (expanded = !expanded)}

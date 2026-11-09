@@ -213,6 +213,7 @@ try {
           }
         : undefined,
     });
+    if (!external) await context.addInitScript((theme) => localStorage.setItem("her.companion.ui-theme", theme), stickerIos ? "ios" : "material");
     const control = async (input) => {
       const response = await context.request.post(controlUrl, { data: input });
       expect(response.ok()).toBe(true);
@@ -304,6 +305,11 @@ try {
       await expect.poll(() => stickerReads.filter((path) => path.endsWith("/favorites")).length).toBeGreaterThanOrEqual(2);
       await expect(page.locator(".sticker-panel .k-searchbar")).toBeVisible();
       await expect(page.getByRole("searchbox", { name: "搜索表情名称或标签" })).toHaveCSS("padding-inline-start", stickerIos ? "42px" : "48px");
+      if (stickerIos) {
+        const search = page.getByRole("searchbox", { name: "搜索表情名称或标签" });
+        await expect(search).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        expect(await search.evaluate((el) => parseFloat(getComputedStyle(el.parentElement).borderRadius))).toBeGreaterThan(20);
+      }
       if (stickerPanelOnly && !stickerIos) {
         const searchBackground = await page.getByRole("searchbox", { name: "搜索表情名称或标签" }).evaluate((el) => getComputedStyle(el).backgroundColor);
         expect(searchBackground).not.toBe("rgba(0, 0, 0, 0)");

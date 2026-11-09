@@ -7,6 +7,8 @@ import {
   rm,
 } from "node:fs/promises";
 import { resolve, join, relative, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { stageFrontendLicenses } from "../scripts/package-frontend.mjs";
 
 let root = resolve(import.meta.dir, "..");
 const post = process.argv.includes("--post-source-ui");
@@ -119,6 +121,16 @@ for (const name of ["package.json", "LICENSE"])
   );
 const acceptance = join(stage, "acceptance");
 await mkdir(join(acceptance, "docs"), { recursive: true });
+const require = createRequire(join(root, "apps/web/package.json"));
+await stageFrontendLicenses(
+  root,
+  join(acceptance, "licenses"),
+  join(
+    dirname(require.resolve("@fontsource/noto-sans-sc/package.json")),
+    "LICENSE",
+  ),
+  join(root, "node_modules/.bun"),
+);
 for (const name of [
   ...(post ? ["post-browser.mjs", "post-fixture.ts"] : []),
   ...(sentence ? ["sentence-browser.mjs", "sentence-fixture.ts"] : []),

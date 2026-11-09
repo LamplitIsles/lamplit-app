@@ -29,9 +29,18 @@ failures offer Refresh and disable controls until a successful read. Writes are
 never automatically replayed, including after a lost response. Preserve the
 confirmed radio and switch while saving; manually refresh to reconcile ambiguous results.
 Busy conversations disable both controls and offer Refresh. The settings landing
-page shows only supported host configuration cards. Each card opens its own page;
-the back button and browser history return to settings and then to chat without
-discarding the draft. On small screens the page scrolls within the viewport.
+page shows the appearance entry and supported host configuration entries. Each
+entry opens its own page; the back button and browser history return to settings
+and then to chat without discarding the draft. On small screens the page scrolls
+within the viewport.
+
+The shared App uses sv-router hash routes: `#/settings`,
+`#/settings/appearance`, `#/settings/models`, and `#/settings/voice-output`.
+Existing `#settings`, `#settings/appearance`, `#settings/models`, and
+`#settings/voice-output` bookmarks are normalized to their corresponding new
+routes. The retired `#settings/voice` bookmark opens `#/settings`, since the App
+does not expose voice-input settings. Direct settings links provide a back path
+to the settings landing page and chat; the host pathname and query are preserved.
 
 CFL persists both preferences together for restart and requests them explicitly
 on future native turns. The defaults are **6.1 sol** and Fast on. Legacy
@@ -52,7 +61,7 @@ The App no longer exposes voice-input settings; host voice-input configuration a
 endpoints remain outside this App change.
 
 Voice output has a separate optional host settings page for MiniMax, Alibaba,
-ByteDance, and ElevenLabs. Framework7 Smart Select opens the provider and
+ByteDance, and ElevenLabs. The settings interface opens the provider and
 ElevenLabs voice pickers; the ElevenLabs picker lists saved account voices and
 offers manual voice ID entry. Other providers use a voice ID field. Key saves
 and provider/voice activation are separate actions; keys are never returned to

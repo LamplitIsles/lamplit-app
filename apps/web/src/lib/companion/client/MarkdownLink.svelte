@@ -7,6 +7,6 @@
   }: { href?: string; title?: string; children?: Snippet } = $props();
 </script>
 
-<a class="external" {href} {title} target="_blank" rel="noopener noreferrer">
+<a {href} {title} target="_blank" rel="noopener noreferrer">
   {@render children?.()}
 </a>

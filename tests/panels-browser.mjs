@@ -27,6 +27,13 @@ if (!process.env.APP_ACCEPTANCE_URL) {
 let host = await createChatHost(fixture.backend, () => {});
 const channels = new Map();
 const imageRequests = [];
+// A 1600×1200 PNG exercises PhotoSwipe's fit-to-screen zoom, unlike the tiny thumbnail fixture.
+const zoomImage = Uint8Array.from(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAABkAAAASwAQMAAACZzxTUAAAAA1BMVEV4mry04ZkFAAABAElEQVR42u3BAQ0AAADCoPdPbQ8HFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/BuuXQABlqDdSgAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+);
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
 const server = Bun.serve({
   hostname: "127.0.0.1",
@@ -36,9 +43,14 @@ const server = Bun.serve({
     if (path === "/api/chat/socket" && server.upgrade(req)) return;
     if (path.startsWith("/api/fixture-images/")) {
       imageRequests.push(path);
-      return new Response(fixtureImage, {
-        headers: { "Content-Type": "image/png" },
-      });
+      return new Response(
+        path === "/api/fixture-images/35/original.png"
+          ? zoomImage
+          : fixtureImage,
+        {
+          headers: { "Content-Type": "image/png" },
+        },
+      );
     }
     return staticAssets(assets, path);
   },
@@ -80,6 +92,7 @@ try {
       viewport: { width, height: 844 },
       hasTouch: width === 390,
       locale: "zh-CN",
+      userAgent: process.env.LAM_TEST_IOS ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" : undefined,
       acceptDownloads: true,
       httpCredentials: process.env.APP_ACCEPTANCE_USERNAME
         ? {
@@ -107,12 +120,13 @@ try {
     const input = page.locator("#companion-textarea");
     await expect(input).toBeVisible();
     await input.fill("保留的聊天草稿");
+    await input.blur();
     await expect(page.locator(".companion-header")).not.toContainText("愉快");
     const drawer = page.locator("#companion-drawer-panel");
-    await page
-      .getByRole("link", { name: "纪念", exact: true })
-      .click();
+    await page.getByRole("link", { name: "纪念", exact: true }).click();
     await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveClass(/k-glass/);
+    await expect(drawer).toHaveCSS("touch-action", "auto");
     await expect(drawer.getByText("一起走过第 25 段路")).toBeVisible();
     const current = drawer.locator(".companion-history-current-list");
     await expect(current.locator("dt")).toHaveText(["亲近度", "签名"]);
@@ -120,6 +134,7 @@ try {
     await expect(current).toContainText("今晚也有光");
     await expect(current).not.toContainText("一起看灯火");
     const entries = drawer.locator(".companion-history-entry");
+    await expect(entries.first()).toHaveClass(/k-glass/);
     const nextPage = drawer.getByRole("button", {
       name: "加载下一页",
       exact: true,
@@ -200,6 +215,14 @@ try {
       "href",
       "https://example.com/diary",
     );
+    await expect(drawer.getByRole("link", { name: "看看海" })).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+    await expect(drawer.getByRole("link", { name: "看看海" })).toHaveAttribute(
+      "rel",
+      "noopener noreferrer",
+    );
     await expect(drawer.locator(".active-state")).toHaveCount(0);
     await page.screenshot({
       path: `${evidence}/diary-${width}.png`,
@@ -223,6 +246,19 @@ try {
       drawer.getByRole("button", { name: "灯火-34.png", exact: true }),
     ).toBeDisabled();
     await expect(drawer.getByText("图片不可用", { exact: true })).toBeVisible();
+    // Changing grouping and leaving in the same turn must not page a detached gallery.
+    await page.evaluate(() => {
+      const group = [...document.querySelectorAll("button")].find(
+        (node) => node.textContent?.trim() === "按日",
+      );
+      group?.click();
+      document.querySelector("#companion-diary-tab")?.click();
+    });
+    await expect(
+      drawer.locator(".companion-diary-list-entry").first(),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "相册", exact: true }).click();
+    await expect(tile).toBeVisible();
     await drawer.getByRole("button", { name: "按日", exact: true }).click();
     await expect(drawer.locator(".active-state")).toHaveCount(0);
     await page.screenshot({
@@ -245,13 +281,23 @@ try {
       el.dispatchEvent(new Event("scroll"));
     });
     await tile.click();
-    const photo = page.locator(".photo-browser .swiper-slide-active img");
+    const photo = page.locator("img.pswp__img");
     await expect(photo).toBeVisible();
     await expect(photo).toHaveAttribute(
       "src",
       albumMetadata.find((image) => image.filename === "灯火-35.png")
         .originalUrl,
     );
+    if (!external) {
+      const zoomWrap = page.locator(".pswp__zoom-wrap").filter({ has: photo });
+      const initialZoom = await zoomWrap.evaluate(
+        (el) => getComputedStyle(el).transform,
+      );
+      await photo.click();
+      await expect
+        .poll(() => zoomWrap.evaluate((el) => getComputedStyle(el).transform))
+        .not.toBe(initialZoom);
+    }
     await photo.click({ button: "right" });
     const save = page.getByRole("button", { name: "保存图片", exact: true });
     await expect(save).toBeVisible();
@@ -266,7 +312,7 @@ try {
     });
     expect(download.suggestedFilename()).toBe("灯火-35.png");
     expect(new Uint8Array(await readFile(await download.path()))).toEqual(
-      fixtureImage,
+      external ? fixtureImage : zoomImage,
     );
     await expect(page.locator(".companion-action-menu")).toHaveCount(0);
     await expect(drawer.locator(".active-state")).toHaveCount(0);
@@ -433,9 +479,7 @@ try {
     await context.addInitScript(denyNativeNotifications);
     const page = await context.newPage();
     await page.goto(url);
-    await page
-      .getByRole("link", { name: "Memories", exact: true })
-      .click();
+    await page.getByRole("link", { name: "Memories", exact: true }).click();
     const drawer = page.locator("#companion-drawer-panel");
     const entries = drawer.locator(".companion-history-entry");
     const nextPage = drawer.getByRole("button", {

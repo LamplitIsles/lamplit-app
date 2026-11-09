@@ -5,6 +5,9 @@ interface Overlay {
 }
 const modalCleanup = new WeakMap<HTMLElement, () => void>();
 const activeModals: HTMLElement[] = [];
+export function overlayIsTop(element: HTMLElement): boolean {
+  return activeModals.at(-1) === element;
+}
 const focusable = (root: HTMLElement) =>
   [
     ...root.querySelectorAll<HTMLElement>(
@@ -18,7 +21,7 @@ const focusable = (root: HTMLElement) =>
   );
 const returnFocus = new WeakMap<HTMLElement, HTMLElement>();
 
-// Component lifecycle and backdrop ownership stay entirely with Framework7.
+// Component lifecycle and backdrop ownership stay with each overlay.
 export function overlayOpening(overlay?: Overlay): void {
   if (!overlay) return;
   const target = captureReadingFocus(overlay.el.ownerDocument);

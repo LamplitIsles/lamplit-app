@@ -1,14 +1,48 @@
-/* Framework7 owns global styles; omit Tailwind preflight and Konsta base rules. */
-@layer framework7, theme, base, components, utilities;
+/* Konsta components and app utilities share one Tailwind layer. */
+@layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
 @import "../../../../node_modules/konsta/styles/colors.css";
 @import "../../../../node_modules/konsta/styles/glass.css";
 @import "../../../../node_modules/konsta/styles/touch-ripple.css";
+@import "../../../../node_modules/konsta/styles/safe-areas.css";
+@import "../../../../node_modules/konsta/styles/hairlines.css";
+@import "../../../../node_modules/konsta/styles/preloader.css";
+@import "../../../../node_modules/konsta/styles/no-scrollbar.css";
+@import "../../../../node_modules/konsta/styles/range.css";
+@import "../../../../node_modules/konsta/styles/ios-material.css";
 @source "../../../../node_modules/konsta/svelte";
 @source "../../../../node_modules/konsta/shared";
+@source "../../../";
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Restrict Konsta utilities to the chat component regions. */
-.konsta-chat {
-  @import "tailwindcss/utilities.css" layer(utilities) source(none);
+/* Konsta's utilities expect the basic Tailwind reset, scoped to the app. */
+@layer base {
+  :where(.konsta-chat *, .konsta-chat *::before, .konsta-chat *::after) {
+    box-sizing: border-box;
+  }
+  :where(.konsta-chat button, .konsta-chat input, .konsta-chat textarea) {
+    font: inherit;
+    color: inherit;
+  }
+  :where(.konsta-chat button) {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    text-align: inherit;
+  }
+  :where(.konsta-chat .k-searchbar input, .konsta-chat .k-list input) {
+    border: 0;
+  }
+  :where(.konsta-chat .k-searchbar input) {
+    background-color: transparent;
+  }
+  :where(.konsta-chat .k-searchbar input)::-webkit-search-cancel-button {
+    display: none;
+  }
+  :where(.konsta-chat .k-list > ul) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
 }

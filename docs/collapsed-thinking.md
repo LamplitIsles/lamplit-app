@@ -1,5 +1,8 @@
 # Collapsed thinking (#3522; Chat counterpart #3523)
 
+Framework7-specific design references below describe the historical frontend
+before the spec #108 migration.
+
 The existing Framework7 companion transcript shows actual assistant thinking once
 per grouped message unit, above its answer/images. The small muted native disclosure
 is initially collapsed on mount, reload and newly loaded history. Its label stays

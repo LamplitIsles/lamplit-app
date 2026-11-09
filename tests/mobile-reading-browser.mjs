@@ -80,15 +80,6 @@ try {
           hasTouch: width < 500,
         });
         await context.addInitScript(denyNativeNotifications);
-        await context.addInitScript(() =>
-          Object.defineProperty(navigator, "clipboard", {
-            value: {
-              writeText: async (text) => {
-                window.fixtureCopied = text;
-              },
-            },
-          }),
-        );
         const control = async (data) => {
           const r = await context.request.post(controlUrl, { data });
           expect(r.ok()).toBe(true);
@@ -236,6 +227,16 @@ try {
             .toBeGreaterThan(20);
         }
         const timeline = page.locator(".companion-timeline");
+        if (theme === "ios" && width === 390 && scheme === "light") {
+          await timeline.evaluate((el) => { el.scrollTop = Math.min(500, el.scrollHeight - el.clientHeight); });
+          const beforeNavigation = await timeline.evaluate((el) => el.scrollTop);
+          expect(beforeNavigation).toBeGreaterThan(100);
+          await page.locator("#companion-diary-tab").click();
+          await expect(page).toHaveURL(/#\/diary$/);
+          await page.getByRole("link", { name: "聊天", exact: true }).click();
+          await expect(page).toHaveURL(/#\/chat$/);
+          await expect.poll(() => timeline.evaluate((el) => el.scrollTop)).toBe(beforeNavigation);
+        }
         await pre.scrollIntoViewIfNeeded();
         const top = await timeline.evaluate((el) => el.scrollTop);
         if (width < 500) {
@@ -313,19 +314,15 @@ try {
         await page.screenshot({
           path: `${evidence}/collapsed-${theme}-${scheme}-${width}.png`,
         });
-        await row("reminder")
+        const nativeSelection = await row("reminder")
           .locator(".companion-text-bubble")
-          .click({ button: "right" });
-        const copy = page.getByRole("button", {
-          name: "复制",
-          exact: true,
-        });
-        await expect(copy).toBeFocused();
-        if (width < 500) await copy.tap();
-        else await copy.click();
-        await expect
-          .poll(() => page.evaluate(() => window.fixtureCopied))
-          .toBe(long);
+          .evaluate((node) => ({
+            userSelect: getComputedStyle(node).userSelect,
+            allowsContextMenu: node.dispatchEvent(
+              new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+            ),
+          }));
+        expect(nativeSelection).toEqual({ userSelect: "text", allowsContextMenu: true });
         await page.keyboard.press("Tab");
         await toggle.focus();
         expect(

@@ -1,5 +1,8 @@
 # Post source presentation (#4352)
 
+Framework7 references describe the historical frontend before the spec #108
+migration.
+
 The backend-owned `MessageSource` union adds `{ kind: 'post', platform: 'qq' |
 'matrix', conversationType: 'group' | 'direct', conversationId, conversationName?,
 senderId, senderDisplayName? }`. IDs are exact nonempty strings, at most 256 UTF-16

@@ -148,11 +148,11 @@ try {
       path: `${evidence}/loading-${width}.png`,
       fullPage: true,
     });
-    // A newer query wins while the first native method is still held.
+    // Requests share a serialized connection; a newer query ignores the old reply.
     await submit("archiveSummary3142");
+    await control({ action: "release" });
     await expect(cards).toHaveCount(1);
     await expect(cards.first()).toContainText("记忆摘要");
-    await control({ action: "release" });
     await expect
       .poll(() => archiveReplies.filter((r) => r.hits?.length === 20).length)
       .toBe(1);
@@ -174,7 +174,7 @@ try {
     const structuredHits = archiveReplies.findLast((r) => r.hits)?.hits;
     for (let index = 0; index < structuredHits.length; index++) {
       const hit = structuredHits[index];
-      const snippet = cards.nth(index).locator(".item-text");
+      const snippet = cards.nth(index).locator(".companion-search-snippet");
       const text = hit.snippet.segments.map((part) => part.text).join("");
       await expect(snippet).toHaveText(text);
       expect(await snippet.textContent()).toBe(text);
@@ -233,9 +233,9 @@ try {
     await expect(popup.getByRole("status")).toBeVisible();
     await back();
     await openHit(ids.repeated);
+    await control({ action: "release" });
     await expect(popup).toContainText("before imported branch");
     await expect(popup).not.toContainText("before original branch");
-    await control({ action: "release" });
     await expect
       .poll(
         () =>

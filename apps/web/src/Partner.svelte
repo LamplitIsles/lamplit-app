@@ -8,8 +8,8 @@
   } from "@lamplit/contracts";
   import { affinityStage } from "./lib/companion/domain.ts";
   import { onMount } from "svelte";
-  import { f7, f7ready } from "framework7-svelte";
   import Companion from "./lib/companion/client/Companion.svelte";
+  import { route } from "./router.ts";
   import { CompanionNotifications } from "./lib/companion/client/notifications.ts";
   import { ChatController } from "./lib/chat-controller.ts";
   import type {
@@ -49,7 +49,7 @@
   $effect(() => {
     document.documentElement.lang = language === "zh" ? "zh-Hans" : "en";
     const dark = scheme === "dark";
-    f7ready(() => f7.setDarkMode(dark));
+    document.documentElement.classList.toggle("dark", dark);
   });
   const chatState = $derived.by(() => {
     void revision;
@@ -569,6 +569,8 @@
   ></svelte:head
 >
 <Companion
+  navigationPath={route.pathname}
+  navigationDiaryEntry={route.params.entry}
   on:recovery={() => controller.recover()}
   {projection}
   backgrounds={profile?.backgrounds}

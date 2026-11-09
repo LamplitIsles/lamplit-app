@@ -1,5 +1,8 @@
 # Keet source presentation
 
+Framework7-specific implementation references below describe the historical
+frontend before the spec #108 migration.
+
 FlickNote #3408 (tickets #3411/#3412) restores shared incoming Keet presentation.
 The app owns display contracts and rendering; native ingress, durable storage,
 model prompts and tools remain owned by CFL #3409 and Pi #3410.

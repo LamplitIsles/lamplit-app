@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
-  import { ListItem } from "framework7-svelte";
+  import { onDestroy, tick, untrack } from "svelte";
+  import { Button, ListItem, Radio, Toggle } from "konsta/svelte";
   import Sun from "lucide-svelte/icons/sun";
   import Earth from "lucide-svelte/icons/earth";
   import {
@@ -147,6 +147,31 @@
   $effect(() => {
     if (open) untrack(() => void load());
   });
+  function switchSemantics(node: HTMLElement, state: { phase: string; hasStatus: boolean }) {
+    let mounted = true;
+    const update = (next: typeof state) => {
+      void tick().then(() => {
+        if (!mounted) return;
+        const input = node.querySelector("input");
+        if (!input) return;
+        input.setAttribute("role", "switch");
+        if (next.hasStatus) input.setAttribute("aria-describedby", "model-status");
+        else input.removeAttribute("aria-describedby");
+      });
+    };
+    update(state);
+    return { update, destroy() { mounted = false; } };
+  }
+  function modelDescriptions(node: HTMLElement, hasStatus: boolean) {
+    const update = (show: boolean) => {
+      for (const input of node.querySelectorAll('input[name="companion-model"]')) {
+        if (show) input.setAttribute("aria-describedby", "model-status");
+        else input.removeAttribute("aria-describedby");
+      }
+    };
+    update(hasStatus);
+    return { update };
+  }
   onDestroy(() => {
     disposed = true;
     request?.abort();
@@ -161,26 +186,22 @@
       role="radiogroup"
       aria-label={t("models.title")}
       aria-busy={phase === "loading" || phase === "saving"}
+      use:modelDescriptions={!!status}
     >
       {#each MODEL_CHOICES as model}
-        <label class="model-option" title={model.name}>
-          <input
-            type="radio"
+        <Radio class="model-option" title={model.name}
             name="companion-model"
             value={model.id}
-            aria-label={model.name}
-            aria-describedby={status ? "model-status" : undefined}
             checked={snapshot?.currentModel === model.id}
             disabled={locked}
-            onchange={(event) => choose(model.id, event)}
-          />
+            onChange={(event: Event) => choose(model.id, event)}>
           {#if model.id === "gpt-6.1-terra"}
             <Earth size={14} strokeWidth={1.8} aria-hidden="true" />
           {:else}
             <Sun size={14} strokeWidth={1.8} aria-hidden="true" />
           {/if}
-          <span>{model.version}</span>
-        </label>
+          <span>{model.name}</span>
+        </Radio>
       {/each}
     </div>
     {#if legacyModel || status || phase === "error" || busy || snapshot?.busy}
@@ -195,34 +216,29 @@
             {t(status)}
           </p>{/if}
         {#if phase === "error" || busy || snapshot?.busy}
-          <button
+          <Button rounded
             type="button"
             class="button button-round"
             disabled={phase === "loading" || phase === "saving"}
-            onclick={load}
+            onClick={load}
           >
             {t("models.reload")}
-          </button>
+          </Button>
         {/if}
       </div>
     {/if}
   </li>
   <li class="fast-setting">
-    <label class="fast-row">
+    <div class="fast-row" use:switchSemantics={{ phase, hasStatus: !!status }}>
       <span>Fast</span>
-      <span class="toggle">
-        <input
-          type="checkbox"
-          role="switch"
-          aria-label="Fast"
-          aria-describedby={status ? "model-status" : undefined}
+      {#key phase}
+        <Toggle
           checked={snapshot?.fast === true}
           disabled={locked || legacyModel}
-          onchange={chooseFast}
-        />
-        <span class="toggle-icon"></span>
-      </span>
-    </label>
+          onChange={chooseFast}
+        ><span class="sr-only">Fast</span></Toggle>
+      {/key}
+    </div>
   </li>
 {/if}
 
@@ -232,71 +248,42 @@
   }
   .model-options {
     display: flex;
-    gap: 8px;
-    height: var(--f7-list-item-min-height, 44px);
+    flex-direction: column;
     padding: 0 16px;
   }
   .fast-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: var(--f7-list-item-min-height, 44px);
+    min-height: var(--companion-list-item-min-height, 44px);
     padding: 0 16px;
     cursor: pointer;
   }
-  .fast-row .toggle input {
-    display: block;
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-  }
-  .fast-row .toggle:has(input:focus-visible) {
-    outline: 2px solid var(--f7-theme-color);
-    outline-offset: 2px;
-  }
-  .fast-row:has(input:disabled) {
+  .fast-row:has(:global(input:disabled)) {
     cursor: default;
     opacity: 0.55;
   }
-  .model-option {
+  .model-options :global(.model-option) {
     display: flex;
     position: relative;
-    flex: 1;
     min-width: 0;
-    height: 100%;
+    min-height: 44px;
+    width: 100%;
     align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 2px;
-    border: 1px solid transparent;
-    border-radius: 8px;
+    gap: 12px;
     cursor: pointer;
-    color: var(--f7-text-color);
+    color: inherit;
   }
-  .model-option input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-  }
-  .model-option:has(input:checked) {
-    color: var(--f7-theme-color);
-    background: color-mix(in srgb, var(--f7-theme-color) 9%, transparent);
-    border-color: color-mix(in srgb, var(--f7-theme-color) 38%, transparent);
-  }
-  .model-option:has(input:focus-visible) {
-    outline: 2px solid var(--f7-theme-color);
+  .model-options :global(.model-option:has(input:focus-visible)) {
+    outline: 2px solid var(--k-color-primary);
     outline-offset: 2px;
   }
-  .model-option:has(input:disabled) {
+  .model-options :global(.model-option:has(input:disabled)) {
     cursor: default;
     opacity: 0.55;
   }
-  .model-option span {
-    font-size: 9px;
-    line-height: 11px;
-    font-weight: 500;
+  .model-options :global(.model-option > span) {
+    font-size: 16px;
     font-variant-numeric: tabular-nums;
   }
   .model-settings-content {
@@ -306,17 +293,17 @@
     margin: 8px 0 0;
     font-size: 12px;
     line-height: 1.5;
-    color: var(--f7-list-item-footer-text-color);
+    color: inherit;
     overflow-wrap: anywhere;
   }
   #model-status:empty {
     display: none;
   }
-  button {
+  .model-settings-content :global(button) {
     min-height: 40px;
     margin-top: 8px;
   }
-  button:disabled {
+  .model-settings-content :global(button:disabled) {
     opacity: 0.45;
     pointer-events: none;
   }

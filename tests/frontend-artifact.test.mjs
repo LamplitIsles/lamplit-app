@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { packageFrontend } from "../scripts/package-frontend.mjs";
 import { publishForgejo, publishGithub } from "../scripts/publish-frontend.mjs";
 
@@ -65,7 +66,12 @@ async function fixture() {
       new URL("../docs/licenses/konsta-5.5.0-MIT.txt", import.meta.url),
       "utf8",
     ),
-    "docs/licenses/skeleton-elements-4.0.1-MIT.txt": "skeleton notice fixture",
+    "docs/licenses/photoswipe-5.4.4-MIT.txt": await readFile(
+      new URL("../docs/licenses/photoswipe-5.4.4-MIT.txt", import.meta.url), "utf8",
+    ),
+    "docs/licenses/tanstack-virtual-MIT.txt": await readFile(
+      new URL("../docs/licenses/tanstack-virtual-MIT.txt", import.meta.url), "utf8",
+    ),
     font: "font license",
   }))
     await writeFile(join(root, path), content);
@@ -117,7 +123,8 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
     "konsta-5.5.0-MIT.txt",
     "lamplit-app-Apache-2.0.txt",
     "lamplit-app-IMPORTS.md",
-    "skeleton-elements-4.0.1-MIT.txt",
+    "photoswipe-5.4.4-MIT.txt",
+    "tanstack-virtual-MIT.txt",
   ]);
   const { createHash } = await import("node:crypto");
   for (const group of ["browser", "contracts", "licenses"])
@@ -158,12 +165,53 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
   ).toBe(
     await readFile(join(root, "docs/licenses/konsta-5.5.0-MIT.txt"), "utf8"),
   );
-  expect(
-    await readFile(
-      join(extracted, "licenses/skeleton-elements-4.0.1-MIT.txt"),
-      "utf8",
-    ),
-  ).toBe("skeleton notice fixture");
+  for (const name of ["photoswipe-5.4.4-MIT.txt", "tanstack-virtual-MIT.txt"])
+    expect(await readFile(join(extracted, "licenses", name))).toEqual(
+      await readFile(join(root, "docs/licenses", name)),
+    );
+});
+
+test("dependency notices omit stale Bun store entries while retaining locked notices", async () => {
+  const root = await fixture();
+  const store = join(root, "store");
+  for (const [entry, name, version] of [
+    ["locked", "fixture-package", "1.0.0"],
+    ["stale", "framework7", "9.2.0"],
+  ]) {
+    const dir = join(store, entry, "node_modules", name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name, version }));
+    await writeFile(join(dir, "LICENSE"), `${name} license`);
+  }
+  await writeFile(join(root, "bun.lock"), '{"packages":{"fixture-package":["fixture-package@1.0.0",],},}');
+  const archive = join(root, "out.tar.gz");
+  await packageFrontend(root, sha, archive, join(root, "font"), store);
+  const listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" });
+  expect(listing).toContain("licenses/dependencies/fixture-package/1.0.0/LICENSE");
+  expect(listing).not.toContain("framework7");
+});
+
+test("the locked sv-router package license is included in release notices", async () => {
+  const root = await fixture();
+  await writeFile(
+    join(root, "bun.lock"),
+    await readFile(new URL("../bun.lock", import.meta.url)),
+  );
+  const archive = join(root, "out.tar.gz");
+  await packageFrontend(
+    root,
+    sha,
+    archive,
+    join(root, "font"),
+    fileURLToPath(new URL("../node_modules/.bun", import.meta.url)),
+  );
+  const actual = execFileSync("tar", [
+    "-xOzf", archive, "licenses/dependencies/sv-router/0.19.0/LICENSE",
+  ]);
+  const expected = await readFile(
+    new URL("../apps/web/node_modules/sv-router/LICENSE", import.meta.url),
+  );
+  expect(actual).toEqual(expected);
 });
 
 test("independent npm package is reproducible, installable and matches every frontend contract byte", async () => {
@@ -348,6 +396,14 @@ test("packaging rejects incompatible marker", async () => {
   await expect(
     packageFrontend(root, sha, join(root, "out.tar.gz"), join(root, "font")),
   ).rejects.toThrow("marker");
+});
+
+test("packaging requires both browser entries", async () => {
+  const root = await fixture();
+  await rm(join(root, "apps/web/build/a2ui.html"));
+  await expect(
+    packageFrontend(root, sha, join(root, "out.tar.gz"), join(root, "font")),
+  ).rejects.toThrow("Browser entry");
 });
 
 describe("publication", () => {

@@ -1,12 +1,5 @@
 <script lang="ts">
-  import {
-    AccordionContent,
-    Block,
-    Button,
-    List,
-    ListItem,
-    Preloader,
-  } from "framework7-svelte";
+  import { Block, Button, List, Preloader } from "konsta/svelte";
   import AlarmClock from "lucide-svelte/icons/alarm-clock";
   import CircleAlert from "lucide-svelte/icons/circle-alert";
   import RefreshCw from "lucide-svelte/icons/refresh-cw";
@@ -19,6 +12,7 @@
   export let loading: boolean;
   export let error: boolean;
   export let refresh: () => void;
+  let expanded: string | undefined;
 
   $: language = locale === "zh" ? "zh-CN" : "en";
   function scheduleLabel(alarm: Alarm): string {
@@ -47,7 +41,7 @@
     <h3>{t("drawer.alarms")}</h3>
     <Button
       type="button"
-      round
+      rounded
       class="companion-alarm-refresh"
       disabled={loading}
       aria-busy={loading}
@@ -59,7 +53,7 @@
   <p class="companion-alarm-intro">{t("alarm.intro")}</p>
   {#if loading}
     <div class="companion-alarm-loading" role="status">
-      <Preloader size={20} /><span>{t("loading")}</span>
+      <Preloader class="w-5 h-5" /><span>{t("loading")}</span>
     </div>
   {:else if error}
     <Block class="companion-alarm-empty" role="alert"
@@ -75,16 +69,10 @@
     >
   {:else}
     <p class="companion-alarm-next">{t("alarm.next")}</p>
-    <List accordionList mediaList dividers class="companion-alarm-list">
+    <List dividers class="companion-alarm-list">
       {#each alarms as alarm (alarm.id)}
-        <ListItem
-          accordionItem
-          title={alarm.title
-            ? `${alarm.title} · ${scheduleLabel(alarm)}`
-            : scheduleLabel(alarm)}
-          text={alarm.message}
-        >
-          {#snippet media()}
+        <li>
+          <Button clear class="companion-alarm-entry" type="button" aria-expanded={expanded === alarm.id} onClick={() => expanded = expanded === alarm.id ? undefined : alarm.id}>
             <div class="companion-alarm-time">
               <span
                 >{new Intl.DateTimeFormat(language, {
@@ -100,13 +88,12 @@
                 }).format(alarm.nextAt)}</time
               >
             </div>
-          {/snippet}
-          <AccordionContent
-            ><p class="companion-alarm-message">
+            <span>{alarm.title ? `${alarm.title} · ${scheduleLabel(alarm)}` : scheduleLabel(alarm)}</span>
+          </Button>
+          {#if expanded === alarm.id}<p class="companion-alarm-message">
               {alarm.message}
-            </p></AccordionContent
-          >
-        </ListItem>
+            </p>{/if}
+        </li>
       {/each}
     </List>
   {/if}
