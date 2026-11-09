@@ -74,6 +74,9 @@ try {
         : route.abort(),
     );
     await context.addInitScript((mode) => {
+      localStorage.setItem("her.companion.ui-theme", mode === "viewport-ios" ? "ios" : "material");
+    }, mode);
+    await context.addInitScript((mode) => {
       window.__composerTransitions = [];
       document.addEventListener("transitionrun", (event) => {
         if (event.target instanceof Element && event.target.matches(".companion-stickers, .companion-attach")) {
@@ -132,7 +135,7 @@ try {
     await expect(nav.getByRole("link")).toHaveCount(5);
     await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
     await expect(nav.locator('.companion-nav-item:not([aria-current])')).toHaveCount(4);
-    const navColors = await nav.locator("button").evaluateAll((buttons) =>
+    const navColors = await nav.locator(".companion-nav-item").evaluateAll((buttons) =>
       buttons.map((button) => getComputedStyle(button.firstElementChild).color),
     );
     expect(navColors[0]).not.toBe(navColors[1]);
@@ -196,6 +199,8 @@ try {
       await page.mouse.up();
     }
     await input.focus();
+    await expect(input).toHaveCSS("font-size", "17px");
+    await expect(input).toHaveCSS("line-height", "24px");
     if (mode === "viewport-ios") {
       // Focus must enter editing mode even when iOS reports no viewport resize.
       await expect(nav).toBeHidden();
@@ -306,6 +311,29 @@ try {
     console.log(`${mode}: passed`);
     await context.close();
   }
+  const dark = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    serviceWorkers: "block",
+  });
+  await dark.addInitScript(() => {
+    localStorage.setItem("her.companion.ui-theme", "ios");
+    localStorage.setItem("her.companion.appearance", "dark");
+  });
+  const darkPage = await dark.newPage();
+  await darkPage.goto(origin);
+  const darkInput = darkPage.locator("#companion-textarea");
+  const darkSurface = darkInput.locator("xpath=..");
+  await expect(darkSurface).toHaveCSS("background-color", "rgba(255, 255, 255, 0.1)");
+  await darkInput.focus();
+  await expect(darkSurface).toHaveCSS("background-color", "rgb(35, 35, 35)");
+  await darkInput.fill("第一行\n第二行\n第三行");
+  await expect(darkInput).toHaveCSS("line-height", "24px");
+  await expect.poll(() => darkInput.evaluate((el) => el.clientHeight)).toBe(96);
+  await darkInput.blur();
+  await expect(darkSurface).toHaveCSS("background-color", "rgba(255, 255, 255, 0.1)");
+  await dark.close();
   const reduced = await browser.newContext({
     viewport: { width: 390, height: 844 },
     locale: "zh-CN",

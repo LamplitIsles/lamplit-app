@@ -332,6 +332,12 @@ try {
       }
       const item = page.locator(".sticker-send");
       await expect(item).toHaveClass(/k-button/);
+      const stickerImage = item.locator("img");
+      await expect(stickerImage).toBeVisible();
+      await expect(stickerImage).toHaveAttribute("draggable", "false");
+      await expect(item).toHaveCSS("touch-action", "pan-y");
+      if (await page.evaluate(() => CSS.supports("-webkit-touch-callout", "none")))
+        await expect(stickerImage).toHaveCSS("-webkit-touch-callout", "none");
       await item.hover();
       await page.mouse.down();
       await page.waitForTimeout(500);

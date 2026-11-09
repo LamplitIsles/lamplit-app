@@ -229,6 +229,7 @@
   .sticker-grid { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:8px; padding:10px 12px; }
   .sticker-cell { position:relative; height:66px; }
   .sticker-send-target { width:100%; height:100%; touch-action:pan-y; }
+  .sticker-send-target :global(img) { -webkit-touch-callout:none; -webkit-user-drag:none; }
   .sticker-cell :global(.sticker-send) { width:100%; height:100%; padding:2px 8px; touch-action:pan-y; }
   .sticker-cell :global(.sticker-favorite) { position:absolute; top:0; right:0; width:24px; height:24px; padding:0; }
   .sticker-status, .sticker-panel :global(.sticker-status), .sticker-panel :global(.sticker-message) { display:block; margin:8px auto; width:auto; text-align:center; }

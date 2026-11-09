@@ -850,6 +850,11 @@
 .ios #dsh-companion.dark .companion-konsta-messagebar .k-glass {
   background: rgb(255 255 255 / 0.1);
 }
+.ios.dark #dsh-companion[data-composer-keyboard-open] .companion-konsta-messagebar .k-glass,
+.ios .dark #dsh-companion[data-composer-keyboard-open] .companion-konsta-messagebar .k-glass,
+.ios #dsh-companion.dark[data-composer-keyboard-open] .companion-konsta-messagebar .k-glass {
+  background: var(--companion-color-surface-strong);
+}
 #dsh-companion .companion-konsta-messagebar .k-glass {
   min-width: 0;
   flex: 1;
@@ -879,13 +884,14 @@
   position: static;
   z-index: auto;
   font: inherit;
+  font-size: 17px;
   height: 48px;
   min-height: 48px;
   max-height: 144px;
-  padding: 16px;
+  padding: 12px 16px;
   border: 0;
   border-radius: var(--radius-3xl, 24px);
-  line-height: 1rem;
+  line-height: 24px;
   resize: none;
   touch-action: auto;
   background: transparent;
@@ -917,8 +923,8 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   pointer-events: none;
-  font-size: 16px;
-  line-height: 1rem;
+  font-size: 17px;
+  line-height: 24px;
 }
 #dsh-companion[data-composer-expanded] .companion-composer-preview {
   display: none;
