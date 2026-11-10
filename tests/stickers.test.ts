@@ -487,7 +487,7 @@ test("cached sticker media is revalidated only after authorization", async () =>
   const url = origin + stickerMediaUrl(version, "original");
   const first = await stickerHttp(new Request(url), b, auth);
   expect(first?.status).toBe(200);
-  expect(first?.headers.get("cache-control")).toBe("private, no-cache");
+  expect(first?.headers.get("cache-control")).toBe("private, max-age=2592000");
   const etag = first!.headers.get("etag")!;
   expect(etag).toMatch(/^"[a-f0-9]{64}-original-gif"$/);
   const conditional = (tag = etag) =>
@@ -495,10 +495,47 @@ test("cached sticker media is revalidated only after authorization", async () =>
   const unchanged = await stickerHttp(conditional(), b, auth);
   expect(unchanged?.status).toBe(304);
   expect(unchanged?.headers.get("etag")).toBe(etag);
+  expect(unchanged?.headers.get("cache-control")).toBe(
+    "private, max-age=2592000",
+  );
   expect((await unchanged!.arrayBuffer()).byteLength).toBe(0);
   expect((await stickerHttp(conditional(`W/${etag}`), b, auth))?.status).toBe(
     304,
   );
+  expect(
+    (await stickerHttp(conditional(`"other", W/${etag}`), b, auth))?.status,
+  ).toBe(304);
+  expect((await stickerHttp(conditional("*"), b, auth))?.status).toBe(304);
+  expect((await stickerHttp(conditional('"old,*,tag"'), b, auth))?.status).toBe(
+    200,
+  );
+  expect(
+    (await stickerHttp(conditional(`"old,*,tag", W/${etag}`), b, auth))?.status,
+  ).toBe(304);
+  expect((await stickerHttp(conditional(`*, ${etag}`), b, auth))?.status).toBe(
+    200,
+  );
+  for (const validator of [
+    `, W/${etag}`,
+    `"other",, W/${etag}`,
+    `W/${etag},`,
+    `, "old,*,tag",, W/${etag},`,
+    `${",".repeat(16)}W/${etag}`,
+    `W/${etag}${",".repeat(16)}`,
+  ])
+    expect((await stickerHttp(conditional(validator), b, auth))?.status).toBe(
+      304,
+    );
+  for (const validator of [
+    `${",".repeat(17)}W/${etag}`,
+    `W/${etag}${",".repeat(17)}`,
+    `${etag}, *`,
+    "*,",
+    `${etag}, broken`,
+  ])
+    expect((await stickerHttp(conditional(validator), b, auth))?.status).toBe(
+      200,
+    );
   expect((await stickerHttp(conditional('"other"'), b, auth))?.status).toBe(
     200,
   );
@@ -522,6 +559,87 @@ test("cached sticker media is revalidated only after authorization", async () =>
     auth,
   );
   expect(preview?.headers.get("etag")).not.toBe(etag);
+});
+
+test("sticker revalidation reads current media and keeps non-media responses no-store", async () => {
+  const b = backend();
+  const url = origin + stickerMediaUrl(version, "thumbnail");
+  const get = (tag?: string) =>
+    new Request(url, { headers: tag ? { "if-none-match": tag } : {} });
+  const first = await stickerHttp(get(), b, auth);
+  const tag = first!.headers.get("etag")!;
+  expect(first?.headers.get("cache-control")).toBe("private, max-age=2592000");
+  let reads = 0;
+  b.media = async () => {
+    reads++;
+    return { bytes: new Uint8Array([1, 2, 3, 4]), mediaType: "image/webp" };
+  };
+  const changed = await stickerHttp(get(tag), b, auth);
+  expect(reads).toBe(1);
+  expect(changed?.status).toBe(200);
+  expect(changed?.headers.get("etag")).not.toBe(tag);
+  expect(new Uint8Array(await changed!.arrayBuffer())).toEqual(
+    new Uint8Array([1, 2, 3, 4]),
+  );
+  b.media = async () => null;
+  const missing = await stickerHttp(get("*"), b, auth);
+  expect(missing?.status).toBe(404);
+  expect(missing?.headers.get("cache-control")).toBe("no-store");
+  b.media = async () => ({
+    bytes: new Uint8Array(160_001),
+    mediaType: "image/webp",
+  });
+  const invalid = await stickerHttp(get("*"), b, auth);
+  expect(invalid?.status).toBe(400);
+  expect(invalid?.headers.get("cache-control")).toBe("no-store");
+  b.media = async () => ({
+    bytes: new Uint8Array([1]),
+    mediaType: "image/webp",
+  });
+  let calls = 0;
+  const sessionChanged = await stickerHttp(get("*"), b, async () =>
+    ++calls === 1 ? { sessionId: "session" } : { sessionId: "other" },
+  );
+  expect(sessionChanged?.status).toBe(403);
+  expect(sessionChanged?.headers.get("cache-control")).toBe("no-store");
+  const postResponse = await stickerHttp(
+    post("/api/stickers/stage", stage),
+    b,
+    auth,
+  );
+  expect(postResponse?.status).toBe(200);
+  expect(postResponse?.headers.get("cache-control")).toBe("no-store");
+  const list = await stickerHttp(
+    new Request(origin + "/api/stickers/packs?sessionId=session"),
+    b,
+    auth,
+  );
+  expect(list?.headers.get("cache-control")).toBe("no-store");
+});
+
+test("sticker response and strong ETag describe the same byte snapshot", async () => {
+  const b = backend();
+  const bytes = new Uint8Array([1, 2, 3]);
+  b.media = async () => ({ bytes, mediaType: "image/gif" });
+  let authorizations = 0;
+  const response = await stickerHttp(
+    new Request(origin + stickerMediaUrl(version, "original")),
+    b,
+    async () => {
+      if (++authorizations === 3) bytes[0] = 9;
+      return { sessionId: "session" };
+    },
+  );
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new Uint8Array([1, 2, 3])),
+  );
+  const hash = Array.from(digest, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  expect(response?.headers.get("etag")).toBe(`"${hash}-original-gif"`);
+  expect(new Uint8Array(await response!.arrayBuffer())).toEqual(
+    new Uint8Array([1, 2, 3]),
+  );
 });
 
 test("failed sticker retry and reimport keep the sent version in real socket history", async () => {

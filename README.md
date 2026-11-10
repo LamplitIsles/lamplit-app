@@ -29,8 +29,9 @@ frontend: standalone `/`, hosted `/chat`, with root-relative assets and no `/sli
 The composer places stickers and attachments beside the text input. Enter sends the draft (Shift+Enter inserts a line break). The sticker
 panel supports name/tag search, pack browsing and Human favorites. Tapping a
 sticker sends it separately without consuming a draft; holding it previews the
-original animation and name. Sticker thumbnails are cached for the current
-connection and revalidated in the background.
+original animation and name. Sticker thumbnails use a bounded in-memory cache
+for the current connection. The browser's private HTTP cache may reuse fresh
+media for up to 30 days without a request, but may evict it at any time.
 
 ## Development
 

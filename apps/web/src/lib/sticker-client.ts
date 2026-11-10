@@ -70,13 +70,13 @@ export class StickerClient {
     this.assertCurrent();
     if (this.epoch !== epoch) throw new Error("Stale sticker request");
   }
-  private async request(path: string, init?: RequestInit) {
+  private async request(path: string, init?: RequestInit, media = false) {
     this.assertCurrent();
     const epoch = this.epoch;
     const response = await this.transport.call(globalThis, path, {
       ...init,
       credentials: "same-origin",
-      cache: "no-store",
+      cache: media ? "default" : "no-store",
     });
     this.assertEpoch(epoch);
     if (response.status === 401 || response.status === 403)
@@ -191,7 +191,7 @@ export class StickerClient {
     this.assertEpoch(epoch);
     return result.image;
   }
-  /** Returns the same-session cached blob immediately and always starts revalidation. */
+  /** Returns the same-session blob immediately and lets HTTP cache handle media freshness. */
   loadMedia(
     version: string,
     variant: "thumbnail" | "original",
@@ -216,10 +216,7 @@ export class StickerClient {
     const cached = this.media.get(path);
     if (cached) update(cached.blob);
     const revalidated = (async () => {
-      const response = await this.request(
-        path,
-        cached ? { headers: { "If-None-Match": cached.etag } } : undefined,
-      );
+      const response = await this.request(path, undefined, true);
       if (response.status === 401 || response.status === 403) return;
       if (response.status === 404) {
         this.assertEpoch(epoch);

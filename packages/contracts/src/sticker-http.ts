@@ -1,4 +1,5 @@
 import { validate } from "./validation.ts";
+import { matchesEtag } from "./http-etag.ts";
 import { ImageTypeSchema } from "./images.ts";
 import {
   StickerPageRequestSchema,
@@ -91,34 +92,30 @@ export async function stickerHttp(
           (variant === "thumbnail" && value.mediaType !== "image/webp")
         )
           throw new Error("Invalid media");
+        // Hash and return the same snapshot even if the backend reuses its buffer.
+        const bytes = Uint8Array.from(value.bytes);
+        const mediaType = value.mediaType;
         // The ETag represents the returned bytes, including a separately
         // generated thumbnail, not just the original's content version.
         const digest = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", Uint8Array.from(value.bytes)),
+          await crypto.subtle.digest("SHA-256", bytes),
         );
         const hash = Array.from(digest, (byte) =>
           byte.toString(16).padStart(2, "0"),
         ).join("");
-        const etag = `"${hash}-${variant}-${value.mediaType.slice(6)}"`;
+        const etag = `"${hash}-${variant}-${mediaType.slice(6)}"`;
         const mediaHeaders = {
-          "Content-Type": value.mediaType,
-          "Cache-Control": "private, no-cache",
+          "Content-Type": mediaType,
+          "Cache-Control": "private, max-age=2592000",
           ETag: etag,
           "X-Content-Type-Options": "nosniff",
         };
-        // A browser may retain bytes, but every reuse revalidates authorization.
+        // Requests that reach the server revalidate authorization after hashing.
         if (!(await allowed()))
           return new Response("Unauthorized", { status: 403, headers });
-        const matches = request.headers
-          .get("if-none-match")
-          ?.split(",")
-          .some((candidate) => {
-            const tag = candidate.trim();
-            return tag === "*" || tag === etag || tag === `W/${etag}`;
-          });
-        if (matches)
+        if (matchesEtag(request.headers.get("if-none-match"), etag))
           return new Response(null, { status: 304, headers: mediaHeaders });
-        return new Response(value.bytes as BodyInit, { headers: mediaHeaders });
+        return new Response(bytes as BodyInit, { headers: mediaHeaders });
       }
       if (path.startsWith("/media/"))
         return new Response("Not found", { status: 404, headers });

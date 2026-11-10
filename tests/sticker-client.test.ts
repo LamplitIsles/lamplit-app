@@ -102,6 +102,7 @@ test("default transport keeps the global receiver for picker list requests", asy
 test("client paginates, searches and favorites existing sticker identity without recreating it", async () => {
   const requests: { path: string; body?: any }[] = [];
   const transport = (async (path: string, init?: RequestInit) => {
+    expect(init?.cache).toBe("no-store");
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     requests.push({ path, body });
     if (path.startsWith("/api/stickers/packs?"))
@@ -132,14 +133,13 @@ test("client paginates, searches and favorites existing sticker identity without
   });
 });
 
-test("thumbnail cache is session local, revalidates, evicts on revocation, and ignores stale responses", async () => {
+test("thumbnail cache is session local, uses HTTP caching, evicts on revocation, and ignores stale responses", async () => {
   let status = 200;
-  let calls = 0;
   let live = true;
   const transport = (async (_path: string, init?: RequestInit) => {
-    calls++;
-    if (calls === 2)
-      expect(new Headers(init?.headers).get("if-none-match")).toBe('"one"');
+    expect(init?.cache).toBe("default");
+    expect(init?.credentials).toBe("same-origin");
+    expect(new Headers(init?.headers).get("if-none-match")).toBeNull();
     return status === 200
       ? new Response(new Uint8Array([1, 2]), {
           headers: { "content-type": "image/webp", etag: '"one"' },
@@ -286,6 +286,29 @@ test("authorization failure evicts all cached media for the current client", asy
   await c.loadMedia(version, "thumbnail", (value) => updates.push(value));
   expect(updates.at(-1)).toBeNull();
 });
+
+test.each([401, 403])(
+  "non-media %s revokes a client with cached media",
+  async (status) => {
+    const transport = (async (path: string, init?: RequestInit) => {
+      if (path.includes("/media/")) {
+        expect(init?.cache).toBe("default");
+        return thumbnailResponse(1);
+      }
+      expect(init?.cache).toBe("no-store");
+      return new Response(null, { status });
+    }) as typeof fetch;
+    const client = new StickerClient("session", () => true, transport);
+    const updates: (Blob | null)[] = [],
+      events: number[] = [];
+    client.onAuthorizationLost((code) => events.push(code));
+    await client.loadMedia(version, "thumbnail", (blob) => updates.push(blob));
+    await expect(client.page("packs")).rejects.toThrow();
+    expect(updates.at(-1)).toBeNull();
+    expect(events).toEqual([status]);
+    expect(() => client.loadMedia(version, "thumbnail", () => {})).toThrow();
+  },
+);
 
 test("failed stage is retryable explicitly without consuming drafts", async () => {
   const originalFetch = globalThis.fetch;

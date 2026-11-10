@@ -69,15 +69,28 @@ request bounds, provided its advertised supported images can fit.
 
 `GET /api/chat/media/{attachmentId}/{original|preview|model}` returns authorized
 image bytes, with a finite 32 MiB original read ceiling independent of intake
-limits and unchanged 160,000/320,000-byte preview/model ceilings, `no-store`, `nosniff`, or a visible 404 for missing bytes. No arbitrary
+limits and unchanged 160,000/320,000-byte preview/model ceilings. Successful
+responses have `private, max-age=2592000`, `nosniff`, and a strong ETag of the
+actual bytes, variant and MIME type. A private cache may reuse a fresh response
+for 30 days without contacting the server; it may also evict it at any time.
+When a request reaches the server, including after expiration or an explicit
+revalidation, it reads the media, applies the existing size and MIME checks, and
+rechecks authorization and session before returning 304. Those checks do not
+decode the image or establish that its bytes are undamaged. Missing media,
+invalid size or MIME, and authorization failures cannot return 304. Upload
+responses and errors remain `no-store`. Fresh cached bytes can remain usable
+after deletion, revocation, or an account switch in the same browser; `private`
+does not isolate accounts or encrypt cached bytes. No arbitrary
 URLs, local paths or image data enter WS history/localStorage. Media ownership is
 resolved from the authenticated current owner/session, independently of opaque ID
 knowledge. `imageHttp` handles parsing/bounds/origin/response validation; the
 injected authorization function must authenticate every request, and the backend
 must verify attachment ownership and immutable operation bindings. Revalidate
 owner/session at the durable storage boundary if authentication changes while
-reading a request. GET can remain available for previously stored media when new
-uploads are disabled; custom native routing may implement that distinction.
+reading a request. A request reaching the server preserves the existing GET access boundary;
+it does not independently establish the native backend's session isolation.
+GET can remain available for previously stored media when new uploads are disabled;
+custom native routing may implement that distinction.
 
 `submit` is `{ operationId: UUID, text: string, images?: ImageRef[],
 replacementSourceIds?: string[] }`. Text is at most 16,000 UTF-16 units; empty text

@@ -34,13 +34,16 @@ failure as admission or assume a timeout implies failure.
 - `GET /media/{version}/{thumbnail|original}` accepts a lowercase SHA-256 version.
   Thumbnail is static WebP, first frame, retaining alpha, with longest side at most
   512 pixels without upscaling and at most 160,000 bytes; original retains its MIME and
-  animated GIF bytes. Content is immutable by version. Responses use `private,
-no-cache` and a representation-specific ETag so a browser may retain bytes
-  and must revalidate on every use. An application may explicitly show its own
-  same-identity cache first while revalidating in the background; a revoked item
-  can therefore briefly remain visible. Cache entries must be identity isolated,
-  bounded, and evicted on 401, 403, or 404. The host authorizes before returning
-  either bytes or a conditional 304.
+  animated GIF bytes. Content is immutable by version. Successful media responses
+  use `private, max-age=2592000` and a representation-specific ETag. A private
+  cache may reuse fresh bytes for 30 days without a request and may evict them
+  at any time. Previously downloaded bytes may remain usable after revocation,
+  deletion, or an account switch in the same browser; `private` does not isolate
+  accounts or encrypt the cache. An application may show its own same-identity
+  cache first while loading through HTTP. Application-managed cache entries must
+  be identity isolated, bounded, and evicted on 401, 403, or 404. The host authorizes before returning
+  either bytes or a conditional 304 when a request reaches it. The existing
+  media checks do not establish full image integrity or decodability.
   Responses have `nosniff`. Missing bytes return 404.
 
 For ID sending, `POST /stage` accepts `{sessionId, operationId, sticker:
@@ -67,5 +70,7 @@ memory per active session/connection. It does not persist media across reloads
 or reconnects. Callers retain the client while displaying the picker, release
 media listeners when no longer displayed, and clear displayed media when the
 client closes or reports eviction. Cached blobs may be displayed immediately;
-each load starts an authenticated conditional revalidation. Network failures
-leave existing cached content in place until a later successful revalidation.
+each load uses the browser's default HTTP cache, which may reuse fresh bytes
+without contacting the host. Network failures leave existing cached content in
+place until a later successful load. A 401 or 403 observed by any request still
+revokes the current client; a fresh cache hit cannot observe server revocation.
