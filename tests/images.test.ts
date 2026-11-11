@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import {
   validateUpload,
-  validateRecovery,
   UploadResultSchema,
   ImageRefSchema,
   validate,
@@ -38,7 +37,7 @@ const request = (input: unknown, headers = {}) =>
     },
     body: JSON.stringify(input),
   });
-test("bounded strict image upload and strict confirmed recovery", () => {
+test("bounded strict image upload", () => {
   const value = upload();
   expect(() =>
     validateSubmission({ operationId: value.operationId, text: " " }),
@@ -68,16 +67,7 @@ test("bounded strict image upload and strict confirmed recovery", () => {
     }),
   ).toThrow();
   expect(() => mediaUrl("https://example.com/a")).toThrow();
-  expect(() =>
-    validateRecovery({
-      sourceId: "x",
-      operationId: value.operationId,
-      text: "x",
-      images: [],
-      state: "uncertain",
-      replacementEligible: true,
-    }),
-  ).toThrow();
+
 });
 test("HTTP upload authorization, session/order/identity, no admission, media owner isolation and bounds", async () => {
   const fixture = imagesFixture();
@@ -176,7 +166,7 @@ test("HTTP upload authorization, session/order/identity, no admission, media own
     )?.status,
   ).toBe(404);
 });
-test("image admission, immutable ordered references, steering, native recovery, replacement and consumption", async () => {
+test("image admission preserves immutable references and history", async () => {
   const fixture = imagesFixture();
   const value = upload();
   const result = validate(
@@ -197,36 +187,6 @@ test("image admission, immutable ordered references, steering, native recovery, 
   await expect(
     fixture.backend.submit({ ...input, operationId: crypto.randomUUID() }),
   ).rejects.toThrow();
-  await fixture.control({ action: "mode", state: "withdrawn" });
-  const failed = { operationId: crypto.randomUUID(), text: "failed" };
-  await fixture.backend.submit(failed);
-  const source = (await fixture.backend.read()).recovery[0]!;
-  expect(source.replacementEligible).toBe(true);
-  await fixture.control({ action: "mode", state: "submitted" });
-  const replacement = {
-    operationId: crypto.randomUUID(),
-    text: "edited",
-    replacementSourceIds: [source.sourceId],
-  };
-  await fixture.backend.submit(replacement);
-  const afterReplacement = (await fixture.control({ action: "state" }))
-    .executions;
-  await fixture.backend.submit(replacement);
-  expect((await fixture.control({ action: "state" })).executions).toBe(
-    afterReplacement,
-  );
-  expect((await fixture.backend.read()).recovery).toEqual([]);
-  await expect(
-    fixture.backend.submit({
-      operationId: crypto.randomUUID(),
-      text: "again",
-      replacementSourceIds: [source.sourceId],
-    }),
-  ).rejects.toThrow();
-  await fixture.control({ action: "consume" });
-  expect((await fixture.backend.read()).recovery).toEqual([]);
-  await fixture.control({ action: "nativeRecovery" });
-  expect((await fixture.backend.read()).recovery[0]!.images).toHaveLength(1);
   await fixture.control({ action: "complete" });
   await fixture.control({ action: "history" });
   const view = await fixture.backend.read();

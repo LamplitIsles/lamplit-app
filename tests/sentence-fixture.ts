@@ -246,7 +246,7 @@ export function sentenceFixture(profile = "default") {
   function currentView(): ChatView {
     return {
       version: 2, name: "Mica", sessionId, activeTurnId: active,
-      contextUsage: { tokens: null, capacity: null }, compaction: null, capabilities, recovery: [],
+      contextUsage: { tokens: null, capacity: null }, compaction: null, capabilities,
       messages: gapMessages ? gapMessages.slice(-30) : [...messages],
       ...(replyCompletedTurnId === undefined ? {} : { replyCompletedTurnId }),
       before: gapMessages ? (gapMessages.length > 30 ? String(gapMessages.length - 30) : null) : older.length ? "older" : null,

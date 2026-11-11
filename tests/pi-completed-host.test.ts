@@ -44,11 +44,11 @@ function completedBackend() {
     },
     async submit(input: Submission) {
       calls.push(input.operationId);
-      if (input.text === "reject") return { operationId: input.operationId, state: "failed" as const, messageId: null, turnId: null, error: "rejected" };
+      if (input.text === "reject") return { operationId: input.operationId, attempt: 1, state: "failed" as const, messageId: null, turnId: null, error: "rejected" };
       active = input.operationId;
       records.push({ id: `submission:${input.operationId}`, role: "user", text: input.text, createdAt: 100, operationId: input.operationId, turnId: active });
       await publish();
-      return { operationId: input.operationId, state: "submitted" as const, messageId: `submission:${input.operationId}`, turnId: active, error: null };
+      return { operationId: input.operationId, attempt: 1, state: "submitted" as const, messageId: `submission:${input.operationId}`, turnId: active, error: null };
     },
     async stop(id: string) {
       if (active !== id) return { stopped: false };

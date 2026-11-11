@@ -81,7 +81,7 @@ or rebuild approved acceptance artifacts.
 
 ## Host readiness
 
-`createChatHost` is ready after one schema/recovery-validated ChatView and an
+`createChatHost` is ready after one schema-validated ChatView and an
 installed backend subscription. Changes received during the initial read are
 applied before the first view; providers must meet the initial handoff conditions
 in the [protocol](protocol.md). Subsequent provider changes update the Chord
@@ -175,9 +175,10 @@ See [notification contract and physical acceptance](desktop-companion-notificati
 [Protocol](protocol.md) is the public interface authority. Completed assistant
 messages remain IM-style; unfinished model text never enters the public view.
 App sends use immediate normal optimistic text/image bubbles and silent success.
-Offline drafts stay editable; only definite submission failure returns content.
-Null lookup and transport errors keep the same pending identity without recovery
-or replay; later reply failure does not undo submitted input. Both native hosts
+Offline drafts stay editable; definite submission failure keeps the local message
+available for retry or discard. Null lookup and transport errors keep the same
+pending identity without replay; once no send is in flight, the user may remove it
+locally without deleting any later native history. Later reply failure does not undo accepted input. Both native hosts
 must consume the exact Orc-approved v2 contracts/frontend/runner identity in the
 [submission handoff](native-durable-submissions.md). Joint native acceptance is
 a separate gate; fixture success does not establish it.
@@ -189,9 +190,8 @@ remain backend responsibilities. Existing voice-message playback and streamed te
 replies are independent of this compatibility contract.
 
 Panels use six bounded shared reads, image bytes use authenticated same-origin
-HTTP, and native reminder scheduling stays native. Images/recovery retain strict
-limits, immutable operation ownership, original/JPEG variants and verified atomic
-replacement. Quiet compact uses native nullable context observations/admission,
+HTTP, and native reminder scheduling stays native. Images retain strict
+limits, immutable operation ownership and original/JPEG variants. Quiet compact uses native nullable context observations/admission,
 preserves fresh complete-snapshot usage, and never replays after reconnect or
 renders success markers. Search uses each native archive and scoped record IDs,
 with bounded context, complete selected text and read failure isolated from chat.

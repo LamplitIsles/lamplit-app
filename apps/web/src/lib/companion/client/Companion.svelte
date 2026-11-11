@@ -80,7 +80,7 @@
     type ChatFileDraft,
   } from "../../file-upload.ts";
   import { longPress } from "./long-press.ts";
-  import { ATTACHMENT_CAPACITY_ERROR, PENDING_MESSAGE_CAPACITY_ERROR } from "../../chat-controller.ts";
+  import { ATTACHMENT_CAPACITY_ERROR, PENDING_MESSAGE_CAPACITY_ERROR, FILE_RESELECT_ERROR } from "../../chat-controller.ts";
   import {
     overlayOpened,
     overlayClosed,
@@ -125,7 +125,6 @@
   import { replySegments } from "../projection.js";
   import type {
     CompanionContinuityView,
-    CompanionRecoveredDraft,
     CompanionHistoryView,
   } from "./companion-bridge.js";
   import { CompanionPreControllerError } from "./admission.js";
@@ -204,7 +203,6 @@
     | undefined;
   export let fileLimits: FileLimits | undefined;
   export let continuity: CompanionContinuityView = {};
-  export let recoveredDraft: CompanionRecoveredDraft | undefined;
   export let history: CompanionHistoryView = {
     status: "loading",
     records: [],
@@ -376,11 +374,6 @@
   let fileDrafts: ChatFileDraft[] = [];
   let imageIntakeFailure: CompanionMessage | undefined;
   let imageDraftSessionId: string | undefined;
-  let recoveredDraftKey = "";
-  let recoveredPendingKey = "";
-  let replacementSourceIds: readonly string[] = [];
-  let restoredNeedsAttachments = false;
-  let restoredEmptyRecovery = false;
   let deferredPreviewReleases: CompanionImageDraft[] = [];
   let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
@@ -460,27 +453,8 @@
     imageDrafts = [];
     fileDrafts = [];
     imageDraftSessionId = sessionId;
-    recoveredDraftKey = "";
-    recoveredPendingKey = "";
-    replacementSourceIds = [];
-    restoredNeedsAttachments = false;
-    restoredEmptyRecovery = false;
     composer = createComposerState();
     void scheduleComposerResize();
-  }
-  $: if (restoredEmptyRecovery && (composer.draft || imageDrafts.length || fileDrafts.length)) {
-    restoredEmptyRecovery = false;
-  }
-  $: if (
-    !composer.draft &&
-    !imageDrafts.length &&
-    !fileDrafts.length &&
-    !restoredEmptyRecovery
-  ) {
-    replacementSourceIds = [];
-    recoveredDraftKey = "";
-    recoveredPendingKey = "";
-    restoredNeedsAttachments = false;
   }
   async function scheduleComposerResize(): Promise<void> {
     await tick();
@@ -560,25 +534,6 @@
         input.removeEventListener("compositionend", onCompositionEnd);
       },
     };
-  }
-
-  function restoreRecoveredDraft(draft: CompanionRecoveredDraft): void {
-    if (sessionId !== imageDraftSessionId) return;
-    if (
-      composer.draft.trim() ||
-      imageDrafts.length ||
-      fileDrafts.length ||
-      !draft.replacementEligible
-    )
-      return;
-    recoveredDraftKey = draft.key;
-    recoveredPendingKey = draft.localPendingKey ?? "";
-    restoredEmptyRecovery = !draft.input;
-    composer = { ...composer, draft: draft.input, composing: false };
-    replacementSourceIds = draft.sourceIds;
-    restoredNeedsAttachments = draft.images.length > 0 || (draft.files?.length ?? 0) > 0;
-    void scheduleComposerResize();
-    liveAnnouncement = { key: "recovery.restored" };
   }
 
   function messageContentParts(unit: TimelineMessageUnit): MessageContentPart[] {
@@ -670,6 +625,7 @@
   function capacityErrorKey(code?: string): CompanionLocaleKey | undefined {
     if (code === ATTACHMENT_CAPACITY_ERROR) return "error.attachmentCapacity";
     if (code === PENDING_MESSAGE_CAPACITY_ERROR) return "error.pendingMessageCapacity";
+    if (code === FILE_RESELECT_ERROR) return "error.fileReselect";
     return undefined;
   }
 
@@ -1392,13 +1348,6 @@
     const submittedFiles = [...fileDrafts];
     const originSessionId = sessionId;
     const originSessionGeneration = sessionGeneration;
-    const sources = replacementSourceIds;
-    replacementSourceIds = [];
-    restoredNeedsAttachments = false;
-    restoredEmptyRecovery = false;
-    // Local recovery ownership is independent of native replacement sources.
-    if (recoveredPendingKey) actions.dismissRecovery?.(recoveredPendingKey);
-    recoveredPendingKey = "";
     composer = {
       ...reduceComposer(composer, { type: "submit" }),
       draft: "",
@@ -1412,11 +1361,11 @@
     const onRetire = (): void => releaseSubmissionImages(submittedDrafts);
     void Promise.resolve()
       .then(() =>
-        actions.send(text, submittedDrafts, onRetire, sources, submittedFiles),
+        actions.send(text, submittedDrafts, onRetire, submittedFiles),
       )
       .catch((error: unknown) => {
-        // Only failures before admission return Files locally. Merge with current
-        // edits even if another send began; native recovery is always explicit.
+        // A failure before the controller accepts the input returns it to the
+        // composer without overwriting edits made since the send began.
         if (
           error instanceof CompanionPreControllerError &&
           sessionId === originSessionId &&
@@ -1432,9 +1381,6 @@
           };
           imageDrafts = [...imageDrafts, ...submittedDrafts];
           fileDrafts = [...fileDrafts, ...submittedFiles];
-          replacementSourceIds = [
-            ...new Set([...replacementSourceIds, ...sources]),
-          ];
           void scheduleComposerResize();
         } else if (error instanceof CompanionPreControllerError) {
           releaseSubmissionImages(submittedDrafts);
@@ -1941,6 +1887,14 @@
     );
     return true;
   }
+  function confirmPendingRemoval(unit: TimelineMessageUnit, target: HTMLElement): void {
+    messageMenu(
+      target,
+      [{ text: t("messages.removePending"), run: () => actions.discardPending?.(unit.actionId ?? unit.id) }],
+      t("actions.cancel"),
+      t("messages.removePendingConfirm"),
+    );
+  }
   function showToast(text: string): void {
     clearTimeout(toastTimer);
     toastText = text;
@@ -2296,71 +2250,6 @@
           {/if}
         {/snippet}
         {#snippet beforeArea()}
-          {#if recoveredDraft && recoveredDraft.key !== recoveredDraftKey}
-            <div
-              class="companion-input-recovery"
-              role="status"
-              data-testid="input-recovery"
-            >
-              <span>{t("recovery.available")}</span>
-              <KonstaButton tonal
-                class="button button-tonal"
-                type="button"
-                disabled={!recoveredDraft.replacementEligible ||
-                  !!composer.draft.trim() ||
-                  imageDrafts.length > 0 ||
-                  fileDrafts.length > 0}
-                onClick={() =>
-                  recoveredDraft && restoreRecoveredDraft(recoveredDraft)}
-                >{t("recovery.restore")}</KonstaButton
-              >
-              <KonstaButton
-                class="button"
-                type="button"
-                onClick={() => {
-                  if (recoveredDraft)
-                    actions.dismissRecovery?.(recoveredDraft.key);
-                }}>{t("recovery.discard")}</KonstaButton
-              >
-              <details>
-                <summary>{t("recovery.inspect")}</summary>
-                <p>{recoveredDraft.input}</p>
-                {#each recoveredDraft.images as image}<img
-                    class="companion-recovery-preview"
-                    src={image.url}
-                    alt={image.name}
-                  />{/each}
-                {#each recoveredDraft.files ?? [] as file}<p>
-                    {file.name}
-                  </p>{/each}
-              </details>
-              {#if composer.draft.trim() || imageDrafts.length || fileDrafts.length}<span
-                  >{t("recovery.busy")}</span
-                >{/if}
-            </div>
-          {/if}
-          {#if replacementSourceIds.length || (recoveredDraftKey && (restoredNeedsAttachments || restoredEmptyRecovery))}
-            <div class="companion-input-recovery">
-              {#if restoredNeedsAttachments}<span>{t("recovery.missing")}</span>{/if}
-              <KonstaButton
-                class="button"
-                type="button"
-                onClick={() => {
-                  actions.dismissRecovery?.(recoveredDraftKey);
-                  recoveredDraftKey = "";
-                  recoveredPendingKey = "";
-                  releaseSubmissionImages(imageDrafts);
-                  imageDrafts = [];
-                  fileDrafts = [];
-                  composer = { ...composer, draft: "", composing: false };
-                  replacementSourceIds = [];
-                  restoredNeedsAttachments = false;
-                  restoredEmptyRecovery = false;
-                  void scheduleComposerResize();
-                }}>{t("recovery.discardRestored")}</KonstaButton
-              >
-            </div>
-          {/if}
           <input
             bind:this={photoLibraryInput}
             id="companion-image-library"
@@ -2937,12 +2826,13 @@
                               ><CircleAlert size={12} aria-hidden="true" />
                               {t("delivery.failed")}</button
                             >{/if}
-                          {#if unit.pendingLabel}<div
+                          {#if unit.removable && partIndex === parts.length - 1}<button
                               class="companion-meta"
-                              role="status"
-                            >
-                              {unit.pendingLabel}
-                            </div>{/if}
+                              aria-label={t("messages.removePending")}
+                              data-testid={`remove-pending-${unit.id}`}
+                              on:click={(event) => confirmPendingRemoval(unit, event.currentTarget)}
+                              >{t("messages.removePending")}</button
+                            >{/if}
                         {/snippet}
                         {#snippet messageSource()}
                           {#if partIndex === 0}
@@ -3033,7 +2923,7 @@
                             : undefined}
                           footer={(independentMessage ||
                             partIndex === parts.length - 1) &&
-                          (unit.failed || unit.pendingLabel)
+                          (unit.failed || unit.removable)
                             ? messageMetadata
                             : undefined}
                           type={unit.side === "incoming" ? "received" : "sent"}
@@ -3043,8 +2933,7 @@
                             bubbleReceivedIos: "companion-glass-message-surface",
                           } : undefined}
                           text={messageBody}
-                          class={`companion-row ${independentMessage || partIndex === 0 ? "companion-message-first" : ""} ${independentMessage || partIndex === parts.length - 1 ? "companion-message-last" : ""} ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${unit.pending ? "companion-row-pending" : ""} ${part.kind === "images" ? "companion-image-message" : ""} ${unit.items.some((item) => item.kind === "file") ? "companion-has-files" : ""}`}
-                          data-pending={unit.pending || undefined}
+                          class={`companion-row ${independentMessage || partIndex === 0 ? "companion-message-first" : ""} ${independentMessage || partIndex === parts.length - 1 ? "companion-message-last" : ""} ${unit.side === "incoming" ? "incoming" : "outgoing"} ${unit.keet ? "companion-row-keet" : ""} ${unit.matrix ? "companion-row-matrix" : ""} ${unit.post ? "companion-row-post" : ""} ${unit.alarm ? "companion-row-alarm" : ""} ${part.kind === "images" ? "companion-image-message" : ""} ${unit.items.some((item) => item.kind === "file") ? "companion-has-files" : ""}`}
                           data-testid={partIndex === 0
                             ? unitTestId(unit)
                             : undefined}

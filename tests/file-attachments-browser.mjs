@@ -19,7 +19,6 @@ const fileMessages = new Map();
 const marker = "__fixture_file_only__";
 let enabled = true;
 let fileReads = 0;
-let testRecovery = null;
 let currentSession = "fixture-session";
 let raceMessage;
 let failFileUpload = false;
@@ -33,7 +32,6 @@ const backend = {
     return {
       ...view,
       sessionId: currentSession,
-      ...(testRecovery ? { recovery: testRecovery } : {}),
       capabilities: {
         ...view.capabilities,
         files: enabled ? fileLimits : false,
@@ -195,6 +193,11 @@ try {
       .filter({ hasText: "笔记.txt" })
       .last();
     await expect(entry).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      const pending = JSON.parse(localStorage.getItem("lamplit.pending:fixture-session") ?? "[]");
+      const item = pending.find((entry) => entry.text === "发送一个文件");
+      return !item || item.state === "sent";
+    })).toBe(true);
     await expect(entry).not.toContainText("下载");
     await entry.hover();
     await page.mouse.down();
@@ -241,6 +244,13 @@ try {
     const emptyFile = page.getByTestId("file-message")
       .filter({ hasText: `only-${viewport.width}.bin` }).last();
     await expect(emptyFile).toBeVisible();
+    // The optimistic file appears before staging completes; wait for the
+    // actual attachment reference before testing its download menu.
+    await expect.poll(async () => page.evaluate((name) => {
+      const pending = JSON.parse(localStorage.getItem("lamplit.pending:fixture-session") ?? "[]");
+      const item = pending.find((entry) => entry.fileDrafts?.some((file) => file.name === name));
+      return !item || item.state === "sent";
+    }, `only-${viewport.width}.bin`)).toBe(true);
     await expect.poll(async () => {
       return emptyFile.evaluate((file) => {
         const row = file.closest(".companion-row");
@@ -360,36 +370,6 @@ try {
     expect(errors).toEqual([]);
     await context.close();
   }
-  // Recovery restores text only; selecting a replacement file is explicit.
-  const savedRef = [...fileMessages.values()].flat().find((ref) => ref.name === "笔记.txt");
-  expect(savedRef).toBeDefined();
-  const recoveryContext = await browser.newContext({ locale: "zh-CN" });
-  await recoveryContext.addInitScript(denyNativeNotifications);
-  const recoveryPage = await recoveryContext.newPage();
-  for (const text of ["恢复的文字", ""]) {
-    const sourceId = crypto.randomUUID();
-    testRecovery = [{ sourceId, operationId: sourceId, text, images: [], files: [savedRef], replacementEligible: true }];
-    await host.publish();
-    await recoveryPage.goto(`http://127.0.0.1:${server.port}/`);
-    await expect(recoveryPage.getByTestId("input-recovery")).toBeVisible();
-    const before = fileReads;
-    await recoveryPage.getByRole("button", { name: "恢复编辑", exact: true }).click();
-    await expect(recoveryPage.locator("#companion-textarea")).toHaveValue(text);
-    await expect(recoveryPage.getByTestId("file-draft")).toHaveCount(0);
-    await expect(recoveryPage.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
-    expect(fileReads).toBe(before);
-    await recoveryPage.getByRole("button", { name: "添加附件" }).click();
-    const [replacementPicker] = await Promise.all([
-      recoveryPage.waitForEvent("filechooser"),
-      recoveryPage.getByRole("button", { name: "上传文件", exact: true }).click(),
-    ]);
-    await replacementPicker.setFiles({ name: "new.txt", mimeType: "text/plain", buffer: Buffer.from("replacement") });
-    await expect(recoveryPage.getByTestId("file-draft")).toHaveCount(1);
-    await recoveryPage.getByRole("button", { name: "丢弃恢复的输入", exact: true }).click();
-  }
-  await recoveryContext.close();
-  testRecovery = null;
-  await host.publish();
   // History downloads remain available when uploads are disabled.
   enabled = false;
   await host.publish();
@@ -448,6 +428,8 @@ try {
             text: `fixture pending ${i}`,
             createdAt: Date.now(),
             state: "failed",
+            deliveryVersion: 2,
+            attempt: 1,
             dispatched: true,
           })),
         ),
@@ -619,34 +601,26 @@ try {
   ).toContainText("Attachment preparation is still finishing");
   await settings.getByRole("button", { name: "Back" }).click();
   await settings.getByRole("button", { name: "Back" }).click();
-  await switchCapacitySession("capacity-0");
+  await switchCapacitySession("capacity-1");
   await expect(capacityPage.getByTestId(/failed-/)).toBeVisible();
-  const retainedPhoto = capacityPage.locator('img[alt="retained.png"]');
-  await expect(retainedPhoto).toBeVisible();
-  const retainedPhotoUrl = await retainedPhoto.getAttribute("src");
   await expect(
     capacityPage
       .getByTestId("file-message")
-      .filter({ hasText: "capacity-0.txt" }),
+      .filter({ hasText: "capacity-1.txt" }),
   ).toBeVisible();
   const beforeRetry = [fileUploads, imageUploads, submissions];
+  failFileUpload = false;
   await capacityPage.getByTestId(/failed-/).click();
   await capacityPage
     .getByRole("button", { name: "Retry", exact: true })
     .click();
-  await expect(capacityError).toContainText(
-    "Attachment preparation is still finishing",
-  );
-  await expect(
-    capacityPage.locator(".companion-sr-only[aria-live=assertive]"),
-  ).toContainText("Attachment preparation is still finishing");
+  await expect(capacityPage.getByTestId(/failed-/)).toHaveCount(0);
   await expect(
     capacityPage
       .getByTestId("file-message")
-      .filter({ hasText: "capacity-0.txt" }),
+      .filter({ hasText: "capacity-1.txt" }),
   ).toBeVisible();
-  await expect(retainedPhoto).toHaveAttribute("src", retainedPhotoUrl);
-  expect([fileUploads, imageUploads, submissions]).toEqual(beforeRetry);
+  await expect.poll(() => [fileUploads, imageUploads, submissions]).toEqual([beforeRetry[0] + 1, beforeRetry[1], beforeRetry[2] + 1]);
   await capacityPage.getByRole("button", { name: "Settings" }).click();
   await settings
     .getByRole("button", { name: "Appearance", exact: true })
@@ -655,31 +629,24 @@ try {
     .locator('input[value="zh"]')
     .locator("xpath=ancestor::label[1]")
     .click();
-  await expect(capacityError).toContainText(
-    "附件准备尚未结束，或待确认附件过多",
-  );
-  await expect(
-    capacityPage.locator(".companion-sr-only[aria-live=assertive]"),
-  ).toContainText("附件准备尚未结束");
   await capacityContext.close();
   failFileUpload = false;
   currentSession = "fixture-session";
   await host.publish();
   const retryAttempt = crypto.randomUUID();
-  const sourceOperation = crypto.randomUUID();
   const oldRef = { attachmentId: "original_file", name: "original.txt", mediaType: "text/plain", size: 1, availability: "available" };
   const observedRef = { ...oldRef, attachmentId: "unverified_file", name: "unverified.txt" };
   raceMessage = { id: "observed-retry", operationId: retryAttempt, role: "user", text: "retry", createdAt: Date.now(), turnId: null, files: [observedRef] };
   await host.publish();
   const raceContext = await browser.newContext({ locale: "zh-CN" });
   await raceContext.addInitScript(denyNativeNotifications);
-  await raceContext.addInitScript(({ retryAttempt, sourceOperation, oldRef }) => {
+  await raceContext.addInitScript(({ retryAttempt, oldRef }) => {
     localStorage.setItem("lamplit.pending:fixture-session", JSON.stringify([{
-      operationId: retryAttempt, retrySource: sourceOperation, logicalId: sourceOperation,
+      operationId: retryAttempt,
       text: "retry", files: [oldRef], localFileCount: 1, state: "sending",
       dispatched: true, createdAt: Date.now(),
     }]));
-  }, { retryAttempt, sourceOperation, oldRef });
+  }, { retryAttempt, oldRef });
   const racePage = await raceContext.newPage();
   await racePage.goto(`http://127.0.0.1:${server.port}/`);
   await expect(racePage.getByTestId("file-message").filter({ hasText: "original.txt" })).toBeVisible();

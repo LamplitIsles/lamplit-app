@@ -25,7 +25,7 @@ const enter = (controller: ChatController, sessionId: string) => {
   c.view = view(sessionId);
 };
 
-test("failed and in-flight attachments survive A-B-A and retry only explicitly with original bytes", async () => {
+test("failed and in-flight attachments survive A-B-A and retry without reselecting files", async () => {
   const properties = [
     "location",
     "document",
@@ -148,6 +148,7 @@ test("failed and in-flight attachments survive A-B-A and retry only explicitly w
             submissions.push(input);
             return {
               operationId: input.operationId,
+              attempt: 1,
               state: "submitted",
               messageId: null,
               turnId: null,
@@ -170,7 +171,6 @@ test("failed and in-flight attachments survive A-B-A and retry only explicitly w
             retirements++;
           },
           mixed ? [image] : [],
-          [],
           undefined,
           undefined,
           drafts,
@@ -202,27 +202,15 @@ test("failed and in-flight attachments survive A-B-A and retry only explicitly w
         expect(submissions).toHaveLength(1);
         expect(operations).toHaveLength(2);
         expect(operations[1]).not.toBe(originalId);
-        expect(submissions[0].files[0].name).toBe("original.bin");
-        expect(submissions[0].images?.length ?? 0).toBe(mixed ? 1 : 0);
+        expect(submissions[0].operationId).toBe(operations[1]);
+        expect(controller.pending[0]?.logicalId).toBe(originalId);
         expect(retirements).toBe(0);
         if (mode === "in-flight") {
           resolveOld(
             Response.json({
               sessionId: "A",
               operationId: originalId,
-              files: [
-                {
-                  id: drafts[0]!.id,
-                  order: 0,
-                  ref: {
-                    attachmentId: "stale",
-                    name: "original.bin",
-                    mediaType: "",
-                    size: 3,
-                    availability: "available",
-                  },
-                },
-              ],
+              files: [],
             }),
           );
           await sending;
@@ -263,7 +251,6 @@ test("parked attachments have a page-wide bound and release on delete, close, an
           retired++;
         },
         [],
-        [],
         undefined,
         undefined,
         createFileDrafts([new File([], `file_${i}`)]),
@@ -275,7 +262,6 @@ test("parked attachments have a page-wide bound and release on delete, close, an
       c.send(
         "",
         undefined,
-        [],
         [],
         undefined,
         undefined,
@@ -292,7 +278,6 @@ test("parked attachments have a page-wide bound and release on delete, close, an
       () => {
         retired++;
       },
-      [],
       [],
       undefined,
       undefined,
@@ -341,7 +326,6 @@ test("memory-only originals survive storage failure but are released when the co
         retired++;
       },
       [],
-      [],
       undefined,
       undefined,
       createFileDrafts([new File([], "x")]),
@@ -384,7 +368,6 @@ test("reload cannot recover browser File objects but keeps failure metadata", as
     await first.send(
       "",
       undefined,
-      [],
       [],
       undefined,
       undefined,
@@ -488,7 +471,6 @@ test("aborted but unsettled preparations still count toward the page bound", asy
           "",
           undefined,
           [],
-          [],
           undefined,
           undefined,
           createFileDrafts([new File([], `f${i}`)]),
@@ -505,7 +487,6 @@ test("aborted but unsettled preparations still count toward the page bound", asy
         "",
         undefined,
         [],
-        [],
         undefined,
         undefined,
         createFileDrafts([new File([], "extra")]),
@@ -516,7 +497,6 @@ test("aborted but unsettled preparations still count toward the page bound", asy
     const last = c.send(
       "",
       undefined,
-      [],
       [],
       undefined,
       undefined,

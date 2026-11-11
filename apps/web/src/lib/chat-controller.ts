@@ -12,11 +12,8 @@ import {
   validateSubmission,
   UPLOAD_PATH,
   validateUploadResult,
-  validateRetryImageMapping,
-  validateRetryFileMapping,
   StickerIdentitySchema,
   type StickerIdentity,
-  type InputRecovery,
   validate,
   type ChatView,
   type ChatMessage,
@@ -28,16 +25,16 @@ import { StickerClient } from "./sticker-client.ts";
 import { streamFileUploads, type ChatFileDraft } from "./file-upload.ts";
 import { preparePhotoUploads } from "./photo-upload.ts";
 import type { CompanionImageDraft } from "./companion/client/image-drafts.ts";
-import type { PendingSubmissionRetirement } from "./companion/client/contracts.ts";
 export type PendingSend = Submission & {
   previews?: readonly { id: string; name: string; previewUrl: string }[];
   logicalId?: string;
-  retrySource?: string;
   dispatched?: boolean;
   localImageCount?: number;
   localFileCount?: number;
   fileDrafts?: readonly { id: string; name: string; size: number }[];
   stickerInput?: StickerIdentity;
+  attempt?: number;
+  retryAfter?: number;
   createdAt: number;
   state: "sending" | "sent" | "failed";
 };
@@ -46,11 +43,13 @@ export type PendingSend = Submission & {
 const MAX_RETAINED_ATTACHMENT_OPERATIONS = 20;
 export const ATTACHMENT_CAPACITY_ERROR = "attachment-capacity";
 export const PENDING_MESSAGE_CAPACITY_ERROR = "pending-message-capacity";
+export const FILE_RESELECT_ERROR = "file-reselect";
 const ATTACHMENT_CAPACITY_MESSAGE =
   "附件准备尚未结束，或待确认附件过多；请稍候，或处理其他会话中的待确认消息后重试。";
 type ChatCapacityCode =
   | typeof ATTACHMENT_CAPACITY_ERROR
-  | typeof PENDING_MESSAGE_CAPACITY_ERROR;
+  | typeof PENDING_MESSAGE_CAPACITY_ERROR
+  | typeof FILE_RESELECT_ERROR;
 class ChatCapacityError extends Error {
   constructor(
     readonly code: ChatCapacityCode,
@@ -63,7 +62,7 @@ type ParkedAttachment = {
   pending: PendingSend;
   images?: readonly CompanionImageDraft[];
   files?: readonly ChatFileDraft[];
-  retire?: (result: PendingSubmissionRetirement) => void;
+  retire?: () => void;
 };
 export type LocalImagePreview = {
   sessionId: string;
@@ -92,8 +91,6 @@ export class ChatController {
   connected = false;
   compactPending = false;
   private compactGeneration = 0;
-  recovery: InputRecovery[] = [];
-  private dismissed = new Set<string>();
   loadingOlder = false;
   before: string | null = null;
   private errorMessage = "";
@@ -131,29 +128,21 @@ export class ChatController {
   private unconfirmedInputs = new Set<string>();
   /** `pending` may be triggered once when visible; `error` needs explicit retry. */
   get historyGaps(): readonly ChatHistoryGap[] {
-    return this.gaps.map(({ cursor: _cursor, visited: _visited, ...gap }) => gap);
+    return this.gaps.map(
+      ({ cursor: _cursor, visited: _visited, ...gap }) => gap,
+    );
   }
   historySyncFailed = false;
   private storageKey = "";
   private sessionGeneration = 0;
-  private deadlineTimer?: ReturnType<typeof setTimeout>;
   private checks = new Set<string>();
-  private finalized = new Set<string>();
-  private fileRetryCheckAfter = new Map<string, number>();
-  private verifiedFileRetries = new Map<
-    string,
-    { files: NonNullable<Submission["files"]>; images?: Submission["images"] }
-  >();
+  private generations = new Map<string, number>();
   private parkedAttachments = new Map<string, Map<string, ParkedAttachment>>();
   private attachmentPreparations = new Map<string, AbortController>();
   private fileOriginals = new Map<string, readonly ChatFileDraft[]>();
   private originals = new Map<string, readonly CompanionImageDraft[]>();
-  private retirements = new Map<
-    string,
-    (result: PendingSubmissionRetirement) => void
-  >();
+  private retirements = new Map<string, () => void>();
   private inFlight = new Set<string>();
-  private failedActions = new Map<string, symbol>();
   constructor(
     private changed: () => void,
     private storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
@@ -194,12 +183,16 @@ export class ChatController {
         pending.dispatched === false
       ) {
         interrupted = true;
+        this.generations.set(
+          pending.operationId,
+          (this.generations.get(pending.operationId) ?? 0) + 1,
+        );
+        this.inFlight.delete(pending.operationId);
         return { ...pending, state: "failed" };
       }
       return pending;
     });
     if (interrupted) {
-      this.updateRecovery();
       if (this.storageKey) this.save();
     }
     for (const stickers of this.stickerClients) stickers.close();
@@ -209,7 +202,6 @@ export class ChatController {
     await this.send(
       "",
       undefined,
-      [],
       [],
       undefined,
       validate(StickerIdentitySchema, sticker),
@@ -341,7 +333,7 @@ export class ChatController {
   private releaseParkedAttachments() {
     for (const entries of this.parkedAttachments.values())
       for (const entry of entries.values())
-        entry.retire?.({ reason: "observed" });
+        entry.retire?.();
     this.parkedAttachments.clear();
   }
   private retainedAttachmentCount() {
@@ -373,18 +365,14 @@ export class ChatController {
     this.compactGeneration++;
     this.compactPending = false;
     for (const retire of this.retirements.values())
-      retire({ reason: "observed" });
+      retire();
     this.retirements.clear();
     this.localPreviews = [];
     this.originals.clear();
     this.fileOriginals.clear();
-    this.verifiedFileRetries.clear();
-    this.fileRetryCheckAfter.clear();
     this.inFlight.clear();
-    this.failedActions.clear();
     this.relationshipGeneration++;
     clearTimeout(this.timer);
-    clearTimeout(this.deadlineTimer);
     this.client?.close();
     this.socket?.close();
   }
@@ -393,9 +381,10 @@ export class ChatController {
       this.storage.setItem(
         this.storageKey,
         JSON.stringify(
-          this.pending
-            .slice(-20)
-            .map(({ previews: _previews, ...input }) => input),
+          this.pending.slice(-20).map(({ previews: _previews, ...input }) => ({
+            ...input,
+            deliveryVersion: 2,
+          })),
         ),
       );
     } catch {
@@ -441,20 +430,13 @@ export class ChatController {
     this.loadingOlder = false;
     this.historySyncFailed = false;
     for (const retire of this.retirements.values())
-      retire({ reason: "observed" });
+      retire();
     this.retirements.clear();
     this.localPreviews = [];
     this.inFlight.clear();
-    this.failedActions.clear();
     this.checks.clear();
-    this.finalized.clear();
     this.originals.clear();
     this.fileOriginals.clear();
-    this.verifiedFileRetries.clear();
-    this.fileRetryCheckAfter.clear();
-    clearTimeout(this.deadlineTimer);
-    this.recovery = [];
-    this.dismissed.clear();
     this.relationshipGeneration++;
     this.relationship = undefined;
     this.relationshipHistory = {
@@ -473,15 +455,6 @@ export class ChatController {
           if (
             typeof item.text !== "string" ||
             item.text.length > 16000 ||
-            (item.replacementSourceIds !== undefined &&
-              (!Array.isArray(item.replacementSourceIds) ||
-                item.replacementSourceIds.length > 20 ||
-                item.replacementSourceIds.some(
-                  (id: unknown) =>
-                    typeof id !== "string" || !id.length || id.length > 300,
-                ) ||
-                new Set(item.replacementSourceIds).size !==
-                  item.replacementSourceIds.length)) ||
             (item.localFileCount &&
               (!Number.isInteger(item.localFileCount) ||
                 item.localFileCount < 1 ||
@@ -497,18 +470,12 @@ export class ChatController {
               ? {
                   operationId: item.operationId,
                   text: item.text,
-                  ...(item.replacementSourceIds
-                    ? { replacementSourceIds: item.replacementSourceIds }
-                    : {}),
                 }
               : validateSubmission({
                   operationId: item.operationId,
                   text: item.text,
                   ...(item.images ? { images: item.images } : {}),
                   ...(item.files ? { files: item.files } : {}),
-                  ...(item.replacementSourceIds
-                    ? { replacementSourceIds: item.replacementSourceIds }
-                    : {}),
                 });
           if (
             typeof item.createdAt === "number" &&
@@ -516,14 +483,9 @@ export class ChatController {
           )
             this.pending.push({
               ...input,
-              logicalId:
-                typeof item.logicalId === "string"
-                  ? item.logicalId
-                  : input.operationId,
-              retrySource:
-                typeof item.retrySource === "string"
-                  ? item.retrySource
-                  : undefined,
+              logicalId: item.logicalId === undefined
+                ? input.operationId
+                : validate(OperationIdSchema, item.logicalId),
               dispatched: item.dispatched !== false,
               localImageCount: item.localImageCount,
               localFileCount: item.localFileCount,
@@ -549,22 +511,22 @@ export class ChatController {
                   }
                 : {}),
               createdAt: item.createdAt,
-              // One-time local draft normalization; unknown transport outcomes remain pending.
+              ...(Number.isSafeInteger(item.attempt) && item.attempt > 0
+                ? { attempt: item.attempt }
+                : {}),
+              ...(Number.isSafeInteger(item.retryAfter) && item.retryAfter > 0
+                ? { retryAfter: item.retryAfter }
+                : {}),
+              // Older local records used host admission as success; reconcile them again.
               state:
-                item.state === "failed" ||
-                ((item.localFileCount || item.localImageCount) &&
-                  item.dispatched === false &&
-                  !item.stickerInput) ||
-                (item.stickerInput && item.dispatched === false) ||
-                (item.state === "rejected" && item.admitted !== true)
+                item.dispatched === false
                   ? "failed"
-                  : item.state === "sent" ||
-                      ["accepted", "consumed", "unconsumed"].includes(
-                        item.state,
-                      ) ||
-                      item.admitted === true
-                    ? "sent"
-                    : "sending",
+                  : item.deliveryVersion === 2 && item.state === "failed" &&
+                      Number.isSafeInteger(item.attempt) && item.attempt > 0
+                    ? "failed"
+                    : item.deliveryVersion === 2 && item.state === "sent"
+                      ? "sent"
+                      : "sending",
             });
         }
     } catch {
@@ -578,7 +540,7 @@ export class ChatController {
           (p) => p.operationId === operationId,
         );
         if (existing >= 0 && this.pending[existing]!.dispatched !== false) {
-          entry.retire?.({ reason: "observed" });
+          entry.retire?.();
           continue;
         }
         if (existing >= 0) this.pending[existing] = entry.pending;
@@ -597,21 +559,36 @@ export class ChatController {
     const localPending = new Set(this.pending.map((item) => item.operationId));
     const eligible = (message: ChatMessage) =>
       !message.operationId ||
-      (!localPending.has(message.operationId) && !this.unconfirmedInputs.has(message.operationId));
+      (!localPending.has(message.operationId) &&
+        !this.unconfirmedInputs.has(message.operationId));
     const oldWindow = previous?.messages.filter(eligible) ?? [];
     const newWindow = view.messages.filter(eligible);
     // A shared item alone can be a long-lived pending input. A contiguous old
     // suffix and new prefix gives the existing window a meaningful overlap.
-    const overlapAt = oldWindow.findIndex((message) => message.id === newWindow[0]?.id);
-    const overlap = overlapAt >= 0 && oldWindow.length - overlapAt <= newWindow.length &&
-      oldWindow.slice(overlapAt).every((message, index) => message.id === newWindow[index]?.id);
-    const sameWindow = previous !== undefined &&
+    const overlapAt = oldWindow.findIndex(
+      (message) => message.id === newWindow[0]?.id,
+    );
+    const overlap =
+      overlapAt >= 0 &&
+      oldWindow.length - overlapAt <= newWindow.length &&
+      oldWindow
+        .slice(overlapAt)
+        .every((message, index) => message.id === newWindow[index]?.id);
+    const sameWindow =
+      previous !== undefined &&
       JSON.stringify(previous) === JSON.stringify(view);
-    const previousTail = previous?.messages.findLast((message) => !liveIds.has(message.id) && eligible(message)) ??
+    const previousTail =
+      previous?.messages.findLast(
+        (message) => !liveIds.has(message.id) && eligible(message),
+      ) ??
       (previous?.sessionId === view.sessionId
-        ? this.older.findLast((message) => !liveIds.has(message.id) && eligible(message))
+        ? this.older.findLast(
+            (message) => !liveIds.has(message.id) && eligible(message),
+          )
         : undefined);
-    const nextHead = view.messages.find((message) => !oldIds.has(message.id) && eligible(message));
+    const nextHead = view.messages.find(
+      (message) => !oldIds.has(message.id) && eligible(message),
+    );
     if (
       previous?.sessionId === view.sessionId &&
       previousTail &&
@@ -643,7 +620,6 @@ export class ChatController {
       this.before = view.before;
     else if (!this.older.length) this.before = view.before;
     this.retireObserved();
-    this.updateRecovery();
     if (
       (previous?.activeTurnId && !view.activeTurnId) ||
       (previous && previous.sessionId !== view.sessionId && this.client)
@@ -653,9 +629,6 @@ export class ChatController {
     }
     this.save();
     this.changed();
-    for (const id of this.finalized)
-      if (!this.checks.has(id)) this.finalized.delete(id);
-    this.scheduleDeadline();
     if (this.pending.length && this.client)
       void this.reconcile().catch(() => {
         this.error = "部分消息尚未核对，连接恢复后会继续核对。";
@@ -668,91 +641,33 @@ export class ChatController {
   private noteHistory(messages: ChatMessage[]) {
     for (const message of messages) {
       this.historySources.add(message.id);
-      if (message.operationId) this.unconfirmedInputs.delete(message.operationId);
+      if (message.operationId)
+        this.unconfirmedInputs.delete(message.operationId);
     }
   }
   private retireObserved() {
     const observed = new Map(
       [...this.older, ...(this.view?.messages ?? [])]
-        .filter((m) => m.role === "user")
-        .map((m) => [m.operationId, m]),
+        .filter((message) => message.role === "user")
+        .map((message) => [message.operationId, message]),
     );
-    this.pending = this.pending.filter((p) => {
-      const message = observed.get(p.operationId);
-      if (!message) return true;
-      if (p.retrySource && p.files?.length) {
-        const verified = this.verifiedFileRetries.get(p.operationId);
-        const filesMatch =
-          verified &&
-          message.files?.length === verified.files.length &&
-          verified.files.every((ref, index) => {
-            const actual = message.files?.[index];
-            return (
-              actual?.attachmentId === ref.attachmentId &&
-              actual.name === ref.name &&
-              actual.mediaType === ref.mediaType &&
-              actual.size === ref.size
-            );
-          });
-        const imagesMatch =
-          !verified?.images ||
-          (message.images?.length === verified.images.length &&
-            verified.images.every((ref, index) => {
-              const actual = message.images?.[index];
-              return (
-                actual?.attachmentId === ref.attachmentId &&
-                actual.name === ref.name &&
-                actual.mediaType === ref.mediaType &&
-                actual.sticker?.id === ref.sticker?.id &&
-                actual.sticker?.version === ref.sticker?.version
-              );
-            }));
-        if (!verified || !filesMatch || !imagesMatch) return true;
-        if (verified.images && p.images) {
-          const refs = new Map(
-            p.images.map((image, index) => [
-              image.attachmentId,
-              verified.images![index]!,
-            ]),
-          );
-          this.localPreviews = this.localPreviews.map((item) =>
-            item.sessionId === this.view?.sessionId &&
-            item.operationId === p.retrySource
-              ? {
-                  ...item,
-                  operationId: p.operationId,
-                  attachmentId: refs.get(item.attachmentId)!.attachmentId,
-                }
-              : item,
-          );
-        }
-        this.verifiedFileRetries.delete(p.operationId);
-      }
-      if (
-        p.retrySource &&
-        this.localPreviews.some(
-          (preview) =>
-            preview.operationId === p.retrySource &&
-            preview.sessionId === this.view?.sessionId,
-        )
-      )
-        return true;
+    this.pending = this.pending.filter((pending) => {
+      const message = observed.get(pending.operationId);
+      if (!message || pending.state !== "sent") return true;
       if (
         !this.localPreviews.some(
           (preview) =>
             preview.sessionId === this.view?.sessionId &&
-            preview.operationId === p.operationId,
+            preview.operationId === pending.operationId,
         )
       ) {
-        this.retirements.get(p.operationId)?.({ reason: "observed" });
-        this.retirements.delete(p.operationId);
+        this.retirements.get(pending.operationId)?.();
+        this.retirements.delete(pending.operationId);
       }
-      this.originals.delete(p.operationId);
-      this.fileOriginals.delete(p.operationId);
-      this.verifiedFileRetries.delete(p.operationId);
-      this.fileRetryCheckAfter.delete(p.operationId);
+      this.originals.delete(pending.operationId);
+      this.fileOriginals.delete(pending.operationId);
       if (!this.historySources.has(message.id))
-        this.unconfirmedInputs.add(p.operationId);
+        this.unconfirmedInputs.add(pending.operationId);
       return false;
     });
   }
@@ -771,111 +686,47 @@ export class ChatController {
       (item) =>
         item.sessionId !== sessionId || item.operationId !== operationId,
     );
-    this.retirements.get(operationId)?.({ reason: "observed" });
+    this.retirements.get(operationId)?.();
     this.retirements.delete(operationId);
     this.changed();
     return true;
   }
   recheckPending() {
-    this.fileRetryCheckAfter.clear();
-    for (const id of this.finalized)
-      if (!this.checks.has(id)) this.finalized.delete(id);
     void this.reconcile().catch(() => {});
-  }
-  private scheduleDeadline() {
-    clearTimeout(this.deadlineTimer);
-    if (!this.connected || this.closed) return;
-    const deadlines = this.pending.filter(
-      (p) =>
-        p.state === "sending" &&
-        p.dispatched !== false &&
-        !this.checks.has(p.operationId) &&
-        !this.finalized.has(p.operationId),
-    );
-    if (deadlines.length)
-      this.deadlineTimer = setTimeout(
-        () => void this.reconcile().catch(() => {}),
-        Math.max(
-          0,
-          Math.min(
-            ...deadlines.map((p) =>
-              Math.max(
-                p.createdAt + 60000,
-                this.fileRetryCheckAfter.get(p.operationId) ?? 0,
-              ),
-            ),
-          ) - Date.now(),
-        ),
-      );
   }
   private async reconcile() {
     const client = this.client,
-      key = this.storageKey,
-      sessionId = this.view?.sessionId,
-      sessionGeneration = this.sessionGeneration;
+      sessionId = this.view?.sessionId;
+    const sessionGeneration = this.sessionGeneration;
     if (!client || !sessionId) return;
     await Promise.all(
       this.pending.map(async (input) => {
+        const id = input.operationId;
         if (
           input.state !== "sending" ||
           input.dispatched === false ||
-          this.checks.has(input.operationId) ||
-          (this.fileRetryCheckAfter.get(input.operationId) ?? 0) > Date.now()
+          this.checks.has(id) ||
+          this.inFlight.has(id)
         )
           return;
-        const expired = Date.now() - input.createdAt >= 60000;
-        if (!expired && this.inFlight.has(input.operationId)) return;
-        this.checks.add(input.operationId);
-        if (expired) this.finalized.add(input.operationId);
+        const generation = this.generations.get(id) ?? 0;
+        this.checks.add(id);
         try {
-          const receipt = expired
-            ? await client.finalizeSubmission(
-                input.retrySource
-                  ? {
-                      sessionId,
-                      retry: {
-                        sessionId,
-                        operationId: input.retrySource,
-                        attemptId: input.operationId,
-                      },
-                    }
-                  : { sessionId, submission: this.submission(input) },
-              )
-            : await client.lookup(input.operationId);
+          const receipt = await client.lookup(id);
           if (
+            receipt &&
             this.client === client &&
-            this.storageKey === key &&
             this.sessionGeneration === sessionGeneration &&
-            receipt
+            this.view?.sessionId === sessionId &&
+            (this.generations.get(id) ?? 0) === generation
           )
             this.applyReceipt(receipt);
         } finally {
-          if (this.sessionGeneration === sessionGeneration) {
-            this.checks.delete(input.operationId);
-            // A missing or invalid file mapping must remain inspectable after
-            // the usual finalization fence, without replaying the retry.
-            if (
-              expired &&
-              input.retrySource &&
-              input.files?.length &&
-              this.pending.some(
-                (p) =>
-                  p.operationId === input.operationId && p.state === "sending",
-              ) &&
-              !this.verifiedFileRetries.has(input.operationId)
-            ) {
-              this.finalized.delete(input.operationId);
-              this.fileRetryCheckAfter.set(
-                input.operationId,
-                Date.now() + 5000,
-              );
-            }
-            this.scheduleDeadline();
-          }
+          if (this.sessionGeneration === sessionGeneration)
+            this.checks.delete(id);
         }
       }),
     );
-    this.scheduleDeadline();
   }
   private submission(input: PendingSend): Submission {
     return {
@@ -883,15 +734,10 @@ export class ChatController {
       text: input.text,
       ...(input.images ? { images: input.images } : {}),
       ...(input.files ? { files: input.files } : {}),
-      ...(input.replacementSourceIds
-        ? { replacementSourceIds: input.replacementSourceIds }
-        : {}),
     };
   }
   async retryFailed(id: string) {
-    const input = this.pending.find(
-      (p) => (p.logicalId ?? p.operationId) === id,
-    );
+    const input = this.pending.find((p) => p.operationId === id);
     const client = this.client,
       sessionId = this.view?.sessionId;
     if (
@@ -899,161 +745,101 @@ export class ChatController {
       input.state !== "failed" ||
       !client ||
       !sessionId ||
-      this.failedActions.has(input.operationId)
+      this.inFlight.has(id)
     )
       return;
-    const sessionGeneration = this.sessionGeneration;
-    const originals = this.originals.get(input.operationId);
-    const fileOriginals = this.fileOriginals.get(input.operationId);
-    if (input.dispatched === false) {
-      if (input.localImageCount && !originals && !input.stickerInput) {
-        this.error = "原图片不可用，请删除这条消息后重新选择图片发送。";
+    if (
+      input.dispatched === false &&
+      (input.localFileCount || input.localImageCount || input.stickerInput)
+    ) {
+      const originals = this.originals.get(id);
+      const files = this.fileOriginals.get(id);
+      if (input.localFileCount && !files) {
+        this.setError(new ChatCapacityError(FILE_RESELECT_ERROR,
+          "原文件不可用，请删除这条消息后重新选择文件发送。"));
         this.changed();
         return;
       }
-      if (input.localFileCount && !fileOriginals) {
-        this.error = "原文件不可用，请删除这条消息后重新选择文件发送。";
+      if (input.localImageCount && !originals && !input.stickerInput) {
+        this.error = "原图片不可用，请删除这条消息后重新选择图片发送。";
         this.changed();
         return;
       }
       try {
         await this.send(
           input.text,
-          this.retirements.get(input.operationId),
+          this.retirements.get(id),
           originals ?? [],
-          input.replacementSourceIds,
           input,
           input.stickerInput,
-          fileOriginals ?? [],
+          files ?? [],
         );
       } catch (error) {
-        if (error instanceof ChatCapacityError) this.setError(error);
-        else this.error = "重试失败，请检查连接和原图片后再试。";
+        this.setError(error);
         this.changed();
       }
       return;
     }
-    const retry = {
-      sessionId,
-      operationId: input.operationId,
-      attemptId: crypto.randomUUID(),
-    };
-    const pending: PendingSend = {
-      ...input,
-      operationId: retry.attemptId,
-      retrySource: input.operationId,
-      logicalId: input.logicalId ?? input.operationId,
-      state: "sending",
-      createdAt: Date.now(),
-      dispatched: true,
-    };
-    this.pending = this.pending.map((p) => (p === input ? pending : p));
-    const retire = this.retirements.get(input.operationId);
-    this.retirements.delete(input.operationId);
-    if (retire) this.retirements.set(pending.operationId, retire);
-    this.originals.delete(input.operationId);
-    if (originals) this.originals.set(pending.operationId, originals);
-    this.fileOriginals.delete(input.operationId);
-    if (fileOriginals)
-      this.fileOriginals.set(pending.operationId, fileOriginals);
-    this.inFlight.add(pending.operationId);
+    const sessionGeneration = this.sessionGeneration;
+    const generation = (this.generations.get(id) ?? 0) + 1;
+    this.generations.set(id, generation);
+    this.inFlight.add(id);
+    this.pending = this.pending.map((p) =>
+      p === input ? { ...p, state: "sending", dispatched: true, ...(p.attempt ? { retryAfter: p.attempt } : {}) } : p,
+    );
     this.error = "";
     this.save();
     this.changed();
-    this.scheduleDeadline();
     try {
-      const receipt = await client.retryFailed(retry);
+      const receipt = await client.submit(this.submission(input));
       if (
         this.sessionGeneration === sessionGeneration &&
         this.view?.sessionId === sessionId &&
+        (this.generations.get(id) ?? 0) === generation &&
         !this.closed
       )
         this.applyReceipt(receipt);
     } catch {
-      if (
-        this.sessionGeneration === sessionGeneration &&
-        this.view?.sessionId === sessionId
-      ) {
-        this.error = "重试结果尚未确认，连接恢复后会继续核对。";
-        this.changed();
-      }
+      // The outcome is unknown; only a later explicit receipt can settle it.
     } finally {
-      if (this.sessionGeneration === sessionGeneration)
-        this.inFlight.delete(pending.operationId);
       if (
-        this.client &&
         this.sessionGeneration === sessionGeneration &&
-        this.view?.sessionId === sessionId &&
-        this.pending.some(
-          (p) => p.operationId === pending.operationId && p.state === "sending",
-        )
-      )
-        void this.reconcile().catch(() => {});
+        (this.generations.get(id) ?? 0) === generation
+      ) {
+        this.inFlight.delete(id);
+        if (!this.closed) this.changed();
+        if (this.client) void this.reconcile().catch(() => {});
+      }
     }
   }
   async deleteFailed(id: string) {
-    const input = this.pending.find(
-      (p) => (p.logicalId ?? p.operationId) === id,
+    const input = this.pending.find((p) => p.operationId === id);
+    if (!input || input.state !== "failed") return;
+    this.removePending(input);
+  }
+  canDiscardPending(id: string) {
+    return this.pending.some((p) => p.operationId === id && p.state === "sending" && p.dispatched !== false) && !this.inFlight.has(id);
+  }
+  discardPending(id: string) {
+    if (!this.canDiscardPending(id)) return;
+    const input = this.pending.find((p) => p.operationId === id);
+    if (input) this.removePending(input);
+  }
+  private removePending(input: PendingSend) {
+    const id = input.operationId;
+    this.generations.set(id, (this.generations.get(id) ?? 0) + 1);
+    this.pending = this.pending.filter((p) => p !== input);
+    this.retirements.get(id)?.();
+    this.retirements.delete(id);
+    this.originals.delete(id);
+    this.fileOriginals.delete(id);
+    this.attachmentPreparations.get(id)?.abort();
+    this.localPreviews = this.localPreviews.filter(
+      (item) =>
+        item.operationId !== id || item.sessionId !== this.view?.sessionId,
     );
-    const client = this.client,
-      sessionId = this.view?.sessionId;
-    if (
-      !input ||
-      input.state !== "failed" ||
-      !client ||
-      !sessionId ||
-      this.failedActions.has(input.operationId)
-    )
-      return;
-    const action = Symbol();
-    this.failedActions.set(input.operationId, action);
-    try {
-      // Preparation never dispatched an immutable submission; it has no native admission to delete.
-      const result =
-        input.dispatched === false
-          ? { deleted: true }
-          : await client.deleteFailed({
-              sessionId,
-              operationId: input.operationId,
-            });
-      if (this.view?.sessionId !== sessionId || this.closed) return;
-      if (!result.deleted) {
-        const receipt = await client.lookup(input.operationId);
-        if (this.view?.sessionId === sessionId) {
-          if (receipt) this.applyReceipt(receipt);
-          if (!receipt || receipt.state === "failed") {
-            this.error = "暂时无法删除，请等待连接恢复后重试。";
-            this.changed();
-          }
-        }
-        return;
-      }
-      if (!this.pending.includes(input) || input.state !== "failed") return;
-      this.pending = this.pending.filter((p) => p !== input);
-      this.retirements.get(input.operationId)?.({ reason: "observed" });
-      this.retirements.delete(input.operationId);
-      this.originals.delete(input.operationId);
-      this.fileOriginals.delete(input.operationId);
-      this.attachmentPreparations.get(input.operationId)?.abort();
-      this.verifiedFileRetries.delete(input.operationId);
-      this.fileRetryCheckAfter.delete(input.operationId);
-      this.localPreviews = this.localPreviews.filter(
-        (item) =>
-          item.sessionId !== sessionId ||
-          item.operationId !== input.operationId,
-      );
-      this.updateRecovery();
-      this.save();
-      this.changed();
-    } catch {
-      if (this.view?.sessionId === sessionId) {
-        this.error = "删除失败，请在连接恢复后重试。";
-        this.changed();
-      }
-    } finally {
-      if (this.failedActions.get(input.operationId) === action)
-        this.failedActions.delete(input.operationId);
-    }
+    this.save();
+    this.changed();
   }
   private discardPreview() {
     if (!this.view?.streamingReply) return;
@@ -1071,7 +857,7 @@ export class ChatController {
       for (const preparation of this.attachmentPreparations.values())
         preparation.abort();
       for (const retire of this.retirements.values())
-        retire({ reason: "observed" });
+        retire();
       this.retirements.clear();
       this.originals.clear();
       this.fileOriginals.clear();
@@ -1089,9 +875,7 @@ export class ChatController {
       }));
     }
     if (!this.view) this.error = "连接未能建立，请重试。";
-    clearTimeout(this.deadlineTimer);
     this.discardPreview();
-    this.updateRecovery();
     if (this.storageKey) this.save();
     if (this.compactPending) {
       this.compactGeneration++;
@@ -1122,15 +906,25 @@ export class ChatController {
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(url);
       this.socket = socket;
+      let initialView = false;
+      const earlyReceipts: Receipt[] = [];
       const client = await openChat(
         socket,
         (view) => {
-          if (!this.closed && generation === this.connectionGeneration)
+          if (!this.closed && generation === this.connectionGeneration) {
             this.observe(view);
+            initialView = true;
+            for (const receipt of earlyReceipts.splice(0)) this.applyReceipt(receipt);
+          }
         },
         (error) => {
           if (generation === this.connectionGeneration)
             this.disconnected(error);
+        },
+        (receipt) => {
+          if (this.closed || generation !== this.connectionGeneration) return;
+          if (initialView) this.applyReceipt(receipt);
+          else if (earlyReceipts.length < 100) earlyReceipts.push(receipt);
         },
       );
       if (
@@ -1145,7 +939,6 @@ export class ChatController {
       this.connected = true;
       this.retryFailures = 0;
       this.connecting = false;
-      this.finalized.clear();
       this.panelRevision++;
       void this.refreshRelationship();
       if (!this.error.includes("整理结果尚未确认")) this.error = "";
@@ -1167,162 +960,21 @@ export class ChatController {
     const pending = this.pending.find(
       (p) => p.operationId === receipt.operationId,
     );
-    if (!pending) return; // Native observation or a session change already retired it.
-    // A confirmed result cannot be revoked or remapped by a later receipt.
-    if (
-      pending.state === "sent" ||
-      (pending.state === "failed" && receipt.state === "failed")
-    )
-      return;
-    let retryImages: Submission["images"];
-    if (pending.retrySource && pending.images?.length && this.view?.sessionId) {
-      const sourcePreviews = this.localPreviews.filter(
-        (item) =>
-          item.sessionId === this.view!.sessionId &&
-          item.operationId === pending.retrySource,
-      );
-      try {
-        const mapping = validateRetryImageMapping(
-          receipt.retryImages,
-          this.view.sessionId,
-          pending.retrySource,
-          pending.images ?? [],
-        );
-        const refs = new Map(
-          mapping.images.map((item) => [item.sourceAttachmentId, item.ref]),
-        );
-        if (
-          sourcePreviews.length &&
-          (sourcePreviews.length !== refs.size ||
-            sourcePreviews.some((item) => !refs.has(item.attachmentId)))
-        )
-          throw new Error("Unmatched local preview");
-        retryImages = pending.images.map((image) =>
-          refs.get(image.attachmentId)!,
-        );
-      } catch {
-        this.error = "重试图片关联尚未确认，请等待连接恢复后检查。";
-        this.changed();
-        return;
-      }
-    }
-    let retryFiles: Submission["files"];
-    if (pending.retrySource && pending.files?.length && this.view?.sessionId) {
-      try {
-        const mapping = validateRetryFileMapping(
-          receipt.retryFiles,
-          this.view.sessionId,
-          pending.retrySource,
-          pending.files,
-        );
-        const refs = new Map(
-          mapping.files.map((item) => [item.sourceAttachmentId, item.ref]),
-        );
-        retryFiles = pending.files.map((file) => refs.get(file.attachmentId)!);
-      } catch {
-        this.error = "重试文件关联尚未确认，请等待连接恢复后检查。";
-        this.changed();
-        return;
-      }
-    }
-    if (retryFiles && receipt.state === "submitted") {
-      this.verifiedFileRetries.set(pending.operationId, {
-        files: retryFiles,
-        ...(retryImages ? { images: retryImages } : {}),
-      });
-      this.retireObserved();
-      this.updateRecovery();
-      this.save();
-      this.changed();
-      return;
-    }
-    if (
-      retryFiles &&
-      receipt.state === "failed" &&
-      this.verifiedFileRetries.has(pending.operationId)
-    )
-      return;
-    if (
-      retryFiles &&
-      receipt.state === "failed" &&
-      [...this.older, ...(this.view?.messages ?? [])].some(
-        (message) =>
-          message.role === "user" &&
-          message.operationId === pending.operationId,
-      )
-    ) {
-      this.error = "重试结果与聊天记录不一致，请等待连接恢复后检查。";
-      this.changed();
-      return;
-    }
-    if (retryImages && pending.images) {
-      const refs = new Map(
-        pending.images.map((image, index) => [
-          image.attachmentId,
-          retryImages![index]!,
-        ]),
-      );
-      this.localPreviews = this.localPreviews.map((item) =>
-        item.sessionId === this.view!.sessionId &&
-        item.operationId === pending.retrySource
-          ? {
-              ...item,
-              operationId: pending.operationId,
-              attachmentId: refs.get(item.attachmentId)!.attachmentId,
-            }
-          : item,
-      );
-    }
+    if (!pending || pending.state === "sent") return;
+    if ((pending.attempt && receipt.attempt < pending.attempt) ||
+        (pending.retryAfter && receipt.attempt <= pending.retryAfter)) return;
+    // A definitive result settles this attempt even if its original RPC reply
+    // is delayed; a retry gets a new local generation before dispatch.
+    this.inFlight.delete(receipt.operationId);
     this.pending = this.pending.map((p) =>
       p === pending
-        ? {
-            ...p,
-            ...(retryImages ? { images: retryImages } : {}),
-            ...(retryFiles ? { files: retryFiles } : {}),
-            state: receipt.state === "submitted" ? "sent" : "failed",
-          }
+        ? { ...p, attempt: receipt.attempt, retryAfter: undefined, state: receipt.state === "submitted" ? "sent" : "failed" }
         : p,
     );
     if (receipt.state === "failed")
       this.error = receipt.error || "发送失败，请重试或删除这条消息。";
-    this.updateRecovery();
     this.retireObserved();
     this.save();
-    this.changed();
-  }
-  private updateRecovery() {
-    this.recovery = (this.view?.recovery ?? []).filter(
-      (r) =>
-        !this.dismissed.has(r.sourceId) &&
-        !this.pending.some(
-          (p) =>
-            (p.state !== "sent" && p.operationId === r.operationId) ||
-            p.retrySource === r.operationId,
-        ),
-    );
-  }
-  dismissRecovery(sourceId: string) {
-    const local = this.pending.find(
-      (p) => p.operationId === sourceId && p.state === "failed",
-    );
-    if (local) {
-      this.retirements.get(sourceId)?.({ reason: "observed" });
-      this.retirements.delete(sourceId);
-      this.originals.delete(sourceId);
-      this.fileOriginals.delete(sourceId);
-      this.attachmentPreparations.get(sourceId)?.abort();
-      this.localPreviews = this.localPreviews.filter(
-        (item) =>
-          item.sessionId !== this.view?.sessionId ||
-          item.operationId !== sourceId,
-      );
-    }
-    this.pending = this.pending.filter(
-      (p) => !(p.operationId === sourceId && p.state === "failed"),
-    );
-    this.save();
-    this.dismissed.add(sourceId);
-    this.recovery = this.recovery.filter((r) => r.sourceId !== sourceId);
     this.changed();
   }
   async compact() {
@@ -1369,9 +1021,8 @@ export class ChatController {
   }
   async send(
     text: string,
-    retired?: (result: PendingSubmissionRetirement) => void,
+    retired?: () => void,
     images: readonly CompanionImageDraft[] = [],
-    replacementSourceIds: readonly string[] = [],
     previous?: PendingSend,
     stickerInput?: StickerIdentity,
     files: readonly ChatFileDraft[] = [],
@@ -1380,7 +1031,7 @@ export class ChatController {
       if (images.length || files.length)
         throw new Error("compact-with-attachments");
       await this.compact();
-      retired?.({ reason: "observed" });
+      retired?.();
       return;
     }
     if (this.compactPending || this.view?.compaction?.status === "running")
@@ -1413,7 +1064,11 @@ export class ChatController {
         ATTACHMENT_CAPACITY_ERROR,
         ATTACHMENT_CAPACITY_MESSAGE,
       );
-    const operationId = crypto.randomUUID();
+    const operationId = previous?.dispatched === false && files.length
+      ? crypto.randomUUID()
+      : previous?.operationId ?? crypto.randomUUID();
+    const sendGeneration = (this.generations.get(operationId) ?? 0) + 1;
+    this.generations.set(operationId, sendGeneration);
     const stickerGeneration = this.stickerGeneration;
     const sessionGeneration = this.sessionGeneration;
     const current = () =>
@@ -1421,19 +1076,6 @@ export class ChatController {
       this.client === client &&
       this.view?.sessionId === sessionId &&
       !this.closed;
-    const replacements = [...replacementSourceIds];
-    const checkReplacement = () => {
-      if (
-        replacements.some(
-          (id) =>
-            !this.view?.recovery.some(
-              (r) => r.sourceId === id && r.replacementEligible,
-            ),
-        )
-      )
-        throw new Error("恢复状态已改变，请检查聊天记录。");
-    };
-    checkReplacement();
     const pending: PendingSend = {
       operationId,
       logicalId: previous?.logicalId ?? previous?.operationId ?? operationId,
@@ -1453,7 +1095,6 @@ export class ChatController {
       text,
       createdAt: Date.now(),
       state: "sending",
-      ...(replacements.length ? { replacementSourceIds: replacements } : {}),
       ...(images.length
         ? {
             previews: images.map((draft) => ({
@@ -1483,13 +1124,13 @@ export class ChatController {
     if (retired) this.retirements.set(operationId, retired);
     this.inFlight.add(operationId);
     this.error = "";
-    this.updateRecovery();
     this.save();
     this.changed();
     let submitted = false;
     const sameSession = () =>
       this.sessionGeneration === sessionGeneration &&
       this.view?.sessionId === sessionId &&
+      (this.generations.get(operationId) ?? 0) === sendGeneration &&
       !this.closed &&
       (submitted ||
         !stickerInput ||
@@ -1571,13 +1212,11 @@ export class ChatController {
         fileRefs = result.files.map((item) => item.ref);
       }
       if (!current()) throw new Error("连接已改变，请重新发送");
-      checkReplacement();
       const input = validateSubmission({
         operationId,
         text,
         ...(refs ? { images: refs } : {}),
         ...(fileRefs ? { files: fileRefs } : {}),
-        ...(replacements.length ? { replacementSourceIds: replacements } : {}),
       });
       this.pending = this.pending.map((p) =>
         p.operationId === operationId
@@ -1588,7 +1227,6 @@ export class ChatController {
       this.changed();
       submitted = true;
       this.attachmentPreparations.delete(operationId);
-      this.scheduleDeadline();
       const receipt = await client.submit(input);
       if (sameSession()) this.applyReceipt(receipt);
     } catch (error) {
@@ -1601,19 +1239,21 @@ export class ChatController {
           );
           this.error =
             error instanceof Error ? error.message : "消息未发送，请重试。";
-          this.updateRecovery();
           this.save();
           this.changed();
         }
       } else if (sameSession()) {
         // A transport error cannot undo durable admission or native observation.
-        this.updateRecovery();
         this.save();
         this.changed();
       }
     } finally {
-      this.attachmentPreparations.delete(operationId);
-      this.inFlight.delete(operationId);
+      if (this.attachmentPreparations.get(operationId) === preparation)
+        this.attachmentPreparations.delete(operationId);
+      if ((this.generations.get(operationId) ?? 0) === sendGeneration) {
+        this.inFlight.delete(operationId);
+        if (!this.closed) this.changed();
+      }
       if (
         sameSession() &&
         this.client &&
@@ -1657,23 +1297,26 @@ export class ChatController {
         this.closed
       )
         return;
-      const liveIds = new Set(this.view?.messages.map(message => message.id));
+      const liveIds = new Set(this.view?.messages.map((message) => message.id));
       this.older = [
         ...new Map(
           [...page.messages, ...this.older]
-            .filter(message => !liveIds.has(message.id))
-            .map(message => [message.id, message]),
+            .filter((message) => !liveIds.has(message.id))
+            .map((message) => [message.id, message]),
         ).values(),
       ];
       this.noteHistory(page.messages);
       this.retireObserved();
       this.save();
-      this.updateRecovery();
       this.before = page.before;
       this.historySyncFailed = false;
       if (this.error === "加载历史失败，请重试。") this.error = "";
     } catch {
-      if (!this.closed && this.historyEpoch === epoch && this.client === client) {
+      if (
+        !this.closed &&
+        this.historyEpoch === epoch &&
+        this.client === client
+      ) {
         this.historySyncFailed = true;
         this.error = "加载历史失败，请重试。";
       }
@@ -1689,9 +1332,14 @@ export class ChatController {
   async fillGap(id: number) {
     const gap = this.gaps.find((item) => item.id === id);
     if (
-      !gap || gap.status === "loading" || gap.status === "unavailable" ||
-      !gap.cursor || !this.client || this.closed
-    ) return;
+      !gap ||
+      gap.status === "loading" ||
+      gap.status === "unavailable" ||
+      !gap.cursor ||
+      !this.client ||
+      this.closed
+    )
+      return;
     // Match the host's bounded concurrent history limit; expose overload for retry.
     if (this.gaps.filter((item) => item.status === "loading").length >= 8) {
       this.gaps = this.gaps.map((item) =>
@@ -1705,38 +1353,66 @@ export class ChatController {
       session = this.view?.sessionId;
     const cursor = gap.cursor;
     const update = (patch: Partial<GapState>) => {
-      this.gaps = this.gaps.map((item) => item.id === id ? { ...item, ...patch } : item);
+      this.gaps = this.gaps.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      );
       this.changed();
     };
     update({ status: "loading" });
     try {
       const page = await client.history(cursor);
       if (
-        this.closed || this.client !== client || this.historyEpoch !== epoch ||
+        this.closed ||
+        this.client !== client ||
+        this.historyEpoch !== epoch ||
         this.view?.sessionId !== session ||
-        !this.gaps.some((item) => item.id === id && item.cursor === cursor && item.status === "loading")
-      ) return;
+        !this.gaps.some(
+          (item) =>
+            item.id === id &&
+            item.cursor === cursor &&
+            item.status === "loading",
+        )
+      )
+        return;
       const anchor = this.older.findIndex((item) => item.id === gap.afterId);
-      if (anchor < 0) { update({ status: "error" }); return; }
-      const boundary = page.messages.findIndex((item) => item.id === gap.afterId);
-      if (new Set(page.messages.map((item) => item.id)).size !== page.messages.length) {
+      if (anchor < 0) {
+        update({ status: "error" });
+        return;
+      }
+      const boundary = page.messages.findIndex(
+        (item) => item.id === gap.afterId,
+      );
+      if (
+        new Set(page.messages.map((item) => item.id)).size !==
+        page.messages.length
+      ) {
         update({ status: "error" });
         return;
       }
       const known = new Map(
-        [...this.older, ...(this.view?.messages ?? [])].map((item, index) => [item.id, index]),
+        [...this.older, ...(this.view?.messages ?? [])].map((item, index) => [
+          item.id,
+          index,
+        ]),
       );
-      const candidates = boundary < 0 ? page.messages : page.messages.slice(boundary + 1);
+      const candidates =
+        boundary < 0 ? page.messages : page.messages.slice(boundary + 1);
       const fresh: ChatMessage[] = [];
       let overlap = false,
         lastKnown = anchor;
       for (const item of candidates) {
         const position = known.get(item.id);
         if (position === undefined) {
-          if (overlap) { update({ status: "error" }); return; }
+          if (overlap) {
+            update({ status: "error" });
+            return;
+          }
           fresh.push(item);
         } else {
-          if (position <= lastKnown) { update({ status: "error" }); return; }
+          if (position <= lastKnown) {
+            update({ status: "error" });
+            return;
+          }
           overlap = true;
           lastKnown = position;
         }
@@ -1745,25 +1421,36 @@ export class ChatController {
         update({ status: "unavailable" });
         return;
       }
-      this.older = [...this.older.slice(0, anchor + 1), ...fresh, ...this.older.slice(anchor + 1)];
+      this.older = [
+        ...this.older.slice(0, anchor + 1),
+        ...fresh,
+        ...this.older.slice(anchor + 1),
+      ];
       this.noteHistory(page.messages);
       if (boundary >= 0) this.gaps = this.gaps.filter((item) => item.id !== id);
-      else this.gaps = this.gaps.map((item) => item.id === id
-        ? {
-            ...item,
-            beforeId: fresh[0]?.id ?? item.beforeId,
-            cursor: page.before,
-            visited: new Set([...item.visited, page.before!]),
-            status: "pending",
-          }
-        : item);
+      else
+        this.gaps = this.gaps.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                beforeId: fresh[0]?.id ?? item.beforeId,
+                cursor: page.before,
+                visited: new Set([...item.visited, page.before!]),
+                status: "pending",
+              }
+            : item,
+        );
       this.retireObserved();
-      this.updateRecovery();
       this.save();
       this.changed();
     } catch {
-      if (!this.closed && this.client === client && this.historyEpoch === epoch &&
-        this.view?.sessionId === session && this.gaps.some((item) => item.id === id && item.status === "loading"))
+      if (
+        !this.closed &&
+        this.client === client &&
+        this.historyEpoch === epoch &&
+        this.view?.sessionId === session &&
+        this.gaps.some((item) => item.id === id && item.status === "loading")
+      )
         update({ status: "error" });
     }
   }

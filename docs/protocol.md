@@ -15,11 +15,8 @@ Reloading the page reads updated configuration.
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `view`                                                                 | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
 | `history(before)`                                                      | Previous page of source messages and its opaque continuation cursor                     |
-| `submit({ operationId, text, images?, replacementSourceIds? })`        | New input; the engine adapter starts or steers its native conversation                  |
-| `lookup(operationId)`                                                  | Reconcile admission after lost acknowledgement                                          |
-| `finalizeSubmission({ sessionId, submission } / { sessionId, retry })` | Fenced terminal admission decision for an expired immutable attempt                     |
-| `retryFailed({ sessionId, operationId, attemptId })`                   | Retry failed original content with a new attempt and native-owned media                 |
-| `deleteFailed({ sessionId, operationId })`                             | Acknowledge failed presentation deletion, preserving admission proof                    |
+| `submit({ operationId, text, images?, files? })`                       | Submit one logical message and return a correlated native outcome                      |
+| `lookup(operationId)`                                                 | Inspect a logical message's current confirmed outcome, or unknown                      |
 | `compact({ sessionId })`                                               | Explicit native idle compaction; refusal preserves drafts, success has no chat message  |
 | `stop(turnId)`                                                         | Stop this specific turn; a stale turn returns `stopped: false`                          |
 
@@ -60,60 +57,41 @@ Completed messages are retained independently of a turn's final outcome.
 Successful completion clears the active turn without adding a chat notice.
 Failed and stopped results remain stable notice messages, independently of
 assistant text. A stop before generation must still produce its stopped outcome.
-Online sends appear immediately as normal-color outgoing bubbles, before image
-preparation/upload or receipt. No delivery labels or success toast are shown.
-Offline submission is blocked and leaves the draft editable. The App tracks only
-`sending`, `sent`, and `failed`; these are local UI states, not engine persistence.
-A `submitted` receipt retains the local echo until a persisted user message with
-its operation ID appears. Observation wins over late errors. Replies failing or
-stopping do not change submission success and never produce input recovery.
+Outgoing messages appear immediately as ordinary bubbles. A `submitted` receipt
+means reliable native acceptance, not merely storage or an intermediate queue
+acknowledgement. A `failed` receipt means definite failure to deliver that input;
+a reply that later fails or stops does not revoke accepted input. `null`, transport
+errors and timeouts mean unknown. They neither prove failure nor authorize replay.
+Sending while a response is active continues to steer that active turn in real
+time; it does not wait for the turn to finish.
 
-```ts
-Receipt = { operationId: string; state: "submitted" | "failed";
-  messageId: string | null; turnId: string | null; error: string | null;
-  retryImages?: { sessionId: string; sourceOperationId: string;
-    images: Array<{ sourceAttachmentId: string; ref: ImageRef }> } }
-submit(input: Submission): Promise<Receipt>
-lookup(operationId: string): Promise<Receipt | null>
-```
+Submit and lookup results are correlated to the logical operation ID. Lookup may
+return `failed` only when the native host can prove that it describes the current
+attempt; otherwise it returns `null`. The frontend retains definite failures and
+allows explicit retry or local discard. Retry after submission uses the same
+operation ID and content. Before submission, retrying failed file staging uses a
+new operation ID while preserving the displayed logical message if the required
+originals remain available. Unknown outcomes are never automatically replayed;
+once no send is in flight, the item may be removed from this device without
+marking it failed or deleting native history that may appear later. The native host
+must establish the identity and deduplication boundary required for safe retry;
+the shared socket cannot manufacture one. Accepted input cannot be delivered twice.
+Each receipt also carries a positive safe integer `attempt`: first 1, then advanced
+by the native host for each explicit retry after definite failure. A host with
+durable source identity preserves the sequence across restart. The host publishes
+only proven current-attempt results, and the client fences local retries and
+compares attempts so a late older result cannot overwrite the current one.
 
-`submitted` proves durable reception; `failed` proves the input was not received.
-The receipt is about submission, not model consumption or execution. Lookup
-returns `null` when there is currently no definitive result. Repeated nulls,
-timeouts, RPC errors and disconnection do not prove failure and cannot authorize
-retry or deletion. They retain the pending bubble and original identity
-for reconciliation on reload/reconnect. The App never automatically replays input.
-
-Same operation ID and identical text, ordered image references and replacement
-source IDs deduplicate. Changing content under that ID must be rejected. This
-identity is distinct from socket request, native turn and message identities.
-Failed web submissions retain a bubble with direct Retry and confirmed Delete,
-without Composer restoration or undo. Independent inputs explicitly withdrawn
-before processing remain recoverable through `view.recovery`; its entries have
-no delivery state.
-A withdrawn input retains a `submitted` receipt and can remain visible in history.
-Replacement eligibility is authoritative and checked atomically by the native
-adapter. Reply execution failures belong in timeline notices, not recovery.
-
-The 60-second deadline runs from original local creation, and applies only after
-dispatch of a complete immutable submission. It requests `finalizeSubmission`,
-never infers failure. Reconnect/publication rechecks unresolved results without
-automatic resubmission or polling. Native admission serialization must fence late
-original requests before returning failed; submitted always wins. Retry finalization
-uses the exact source/attempt association because reassociated media is native-owned.
-For a bound retry with images, `retryFailed`, `lookup(attemptId)` and
-`finalizeSubmission({sessionId,retry})` expose the same `retryImages` mapping.
-The host verifies the original staged bytes and source IDs before binding the new
-refs. Both source and target IDs are unique, and the source set must equal the
-original operation's image set. An unbound attempt remains null/unknown. A lost
-receipt is reconciled through lookup/finalization, never by resending the attempt.
-See [required methods and native proof](native-durable-submissions.md#failed-message-actions--spec-3936).
-
-The browser persists bounded reference-only pending inputs per origin/session.
-It retains observed messages evicted from the live window and merges paged history
-by message identity. Local old pending records are normalized once to the three
-UI states without dropping text, images or operation IDs; unknown outcomes remain
-sending and recorded admission remains sent. No old wire DTOs are accepted.
+A queued input removed by stop is failed only on affirmative evidence that it was
+not processed. A missing history item or missing lookup result is not such evidence.
+If that evidence cannot be recovered after disconnection, the result remains
+unknown. Backends recheck authenticated owner/session before handing work to the
+native execution owner and use a pre-commit guard where that owner supports one.
+Work already handed off may complete after revocation; reconcile the actual or
+unknown outcome without replay. Responses and events remain authorized per
+connection, and remote revocation is not atomic with native commit. Backends
+notify the existing subscription of observable changes. See
+[native delivery](native-durable-submissions.md) and [attachments](image-send-recovery.md).
 
 The view remains version 2 and the Chord service remains `lamplit.chat.v2`.
 Deploy matching clients and host together: there is no negotiation or old-wire
@@ -146,7 +124,14 @@ reply and publish it atomically; App DTO fixture success is not native proof.
 
 Calls use `{ type: "call", version: 1, id, call }`, where `call` is Chord's own
 service-call grammar. Replies are `result` or `error`; subscriptions emit `update`
-frames keyed by subscription ID. The wrapper handles framing and correlation,
+frames keyed by subscription ID. Definite delivery results use
+`{ type: "deliveryResult", subscriptionId, receipt }` under that same
+subscription. The backend emits `{ type: "deliveryResult", scope, receipt }`
+using the current process-local session scope. `openChat` accepts a fourth,
+independent receipt callback, installed before the subscription starts; it may
+run before `openChat` resolves. Events before subscription readiness, during a
+disconnect, or after closure are not replayed; lookup after readiness/reconnect
+reconciles missed results. The wrapper handles framing and correlation,
 not a second RPC service model. Chord control calls discover and subscribe services.
 
 TypeBox validates public application payloads; Chord validates its service and
@@ -189,14 +174,12 @@ adapter responsibilities and frozen acceptance commands. Reminder provenance is
 persisted in the optional message `source` field. No panel reads use CFL-only JSON
 endpoints, and image bytes remain on authenticated same-origin HTTP.
 
-## Images and submitted-input recovery
+## Images and message delivery
 
-The public [image contract](image-send-recovery.md) defines bounded authenticated
-HTTP upload/media, original plus JPEG variants, `messages.images`, host-advertised
-image limits and authoritative `view.recovery`. Submission identity includes ordered
-references and explicit replacement source IDs. Upload is not admission; recovery
-eligibility is native authority; a null lookup cannot authorize replacement.
-Image data is never replicated over WS or stored in pending metadata.
+The [image contract](image-send-recovery.md) defines authenticated uploads,
+media references and limits. Upload is not native message acceptance. Ordered
+attachment references belong to the logical submission; unresolved delivery is
+looked up, never automatically replayed.
 
 ## Native context and compaction
 
@@ -349,7 +332,7 @@ of such gaps is implied.
 
 `ChatMessage.images` in both `view` and `history` preserves every stored reference
 in order, for any message role. It has no image-count ceiling: the six-image
-intake limit applies to Submission, upload and input recovery, not saved output.
+intake limit applies to Submission and upload, not saved output.
 Each reference still requires the strict `ImageRefSchema` fields; unknown fields
 and invalid media IDs/types remain errors. The existing 2 MiB frame and 4 MiB
 outgoing queue protections still bound transport; this does not authorize
@@ -384,8 +367,10 @@ a validated conversation snapshot and installed update subscription, not socket 
 Silent carrier loss and missed autonomous updates may remain undiscovered until an
 actual request, lifecycle recovery, or transport event; recovery obtains a fresh snapshot.
 
-The 10-second opening and 30-second request bounds remain. A transport deadline,
-send failure, close, or error invalidates that carrier once. Valid business errors
-reject only their request; caller-context cancellation does not invalidate the carrier.
+The 10-second opening and 30-second request bounds remain. A history or lookup
+deadline rejects only that read; its backend work may still occupy a read slot until
+it finishes. Other request deadlines, send failure, close, or error invalidate the
+carrier once. Valid business errors reject only their request; caller-context
+cancellation does not invalidate the carrier.
 A dispatched submission with a lost acknowledgement stays unconfirmed: reconcile
 its original operation ID and receipt, never replay submit, stop, or compact.

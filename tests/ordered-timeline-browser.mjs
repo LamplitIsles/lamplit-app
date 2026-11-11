@@ -39,13 +39,12 @@ const backend = {
   },
   async submit(input) {
     await (input.text === "第二条图片" ? secondGate : input.text === "第三条图片" ? thirdGate : input.text === "第四条图片" ? fourthGate : submitGate);
-    return fixture.backend.submit(input);
-  },
-  async retryFailed(input) {
-    const result = await fixture.backend.retryFailed(input);
-    trailing = [{ ...base, id: "after-retry", text: "重试后的回复" }];
-    await host.publish();
-    await retryGate;
+    const result = await fixture.backend.submit(input);
+    if (input.text === "重试图片" && result.state === "submitted") {
+      trailing = [{ ...base, id: "after-retry", text: "重试后的回复" }];
+      await host.publish();
+      await retryGate;
+    }
     return result;
   },
 };
@@ -136,7 +135,7 @@ try {
   await page.locator("#companion-textarea").press("Enter");
   const sent = page.locator(".companion-image-entry img[alt='photo.png']");
   await expect(sent).toHaveCount(2);
-  await expect(page.getByText("正在发送…", { exact: true })).toBeVisible();
+  await expect(page.getByText("正在发送…", { exact: true })).toHaveCount(0);
   const localSrc = await sent.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("src")));
   expect(localSrc.every((src) => src?.startsWith("blob:"))).toBe(true);
   await sent.evaluateAll((nodes) => { window.__sentPreviews = nodes; });
@@ -211,7 +210,7 @@ try {
   await failed.click();
   await page.locator(".companion-action-menu").getByRole("button", { name: "重试", exact: true }).click();
   await expect(page.getByText("重试后的回复", { exact: true })).toBeVisible();
-  await expect(page.getByText("正在发送…", { exact: true })).toBeVisible();
+  await expect(page.getByText("正在发送…", { exact: true })).toHaveCount(0);
   await expect(retryImages).toHaveCount(2);
   expect(await follows("重试图片", "重试后的回复")).toBe(true);
   await context.request.post(new URL("/__test/release-retry", url).href);

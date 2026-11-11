@@ -13,15 +13,18 @@ or switch engines inside a conversation.
 The app supports main-session text history, sending and steering,
 completed-message delivery, targeted stop, and reconnect reconciliation. Online
 sends appear immediately as normal outgoing bubbles, including images before
-upload finishes. Success is silent; offline text/images stay editable. Confirmed
-nonadmission retains a failed bubble with direct Retry and confirmed Delete. Lost replies keep the
-optimistic message while its exact operation is looked up, without automatic replay. Companion answers display as messages at source line breaks, with complete source lines
+upload finishes. Success requires reliable native acceptance and is silent;
+offline text/images stay editable. A definite failure stays in the originating
+frontend for explicit retry or local deletion. An unknown result keeps the
+optimistic message for reconciliation and is never automatically resent. When no
+send is in flight, it can also be removed from this device; a later native history
+entry can still appear. Companion answers display as messages at source line breaks, with complete source lines
 appearing during generation when the backend provides an in-progress reply. Multiline
 Markdown blocks remain together; completion reveals the final tail. Each display message has its own
 visible avatar, source time and local long-press Copy. History and complete-only arrivals show all
 text immediately; preserved messages remain unchanged. See [sentence replies](docs/sentence-replies.md). Existing voice messages remain playable. Relationship history, date-based Markdown diaries, session albums and pending
-reminders are available through the shared connection. Image selection, sending, image-bearing history and explicit submitted-input recovery
-use the same native contract. Album browsing and saving originals work independently;
+reminders are available through the shared connection. Image selection, sending
+and image-bearing history use the same native contract. Album browsing and saving originals work independently;
 hosts that advertise file support can also receive general file attachments. TTS
 and native releases remain outside this app. The shared app is the direct default
 frontend: standalone `/`, hosted `/chat`, with root-relative assets and no `/slice` alias.
@@ -129,21 +132,28 @@ chat as **App reminders**, with creation/editing still handled by Agent tools.
 See [public contract and native fixture facts](docs/companion-panels.md) for
 field definitions, limits and native integration requirements.
 
-## Attachments and recovery
+## Attachments and delivery
 
 Use the plus menu to take a photo, choose photos, or upload files; paste supported
 images directly into the composer. Preview or remove drafts and send them alone or
 with text. File upload is available only when the connected host advertises it;
 files are displayed in chat and can be downloaded without joining the image album.
 The connected host advertises its limits: Pi up to six / 8 MB each / 24 MB originals
-per operation; CFL five / 5 MiB / 20 MiB. Failed upload retains its bubble and page-owned originals for direct retry.
-Submitted input recovery offers explicit inspection/restoration without replacing
-current edits. Missing originals require explicit removal. Null lookup or disconnection
-keeps the original pending bubble without recovery or automatic replay. Receipts are
-submitted/failed; reply failure and stopping remain independent. Failed submissions never restore or replace newer Composer drafts. After 60 seconds,
-dispatched inputs request authoritative fenced finalization while connected; null or
-unreachable results remain sending. Failed deletion persists after acknowledgement
-and has no undo. Unsent drafts and pre-upload originals are not saved across reload. The v2 service requires a matching frontend after update.
+per operation; CFL five / 5 MiB / 20 MiB. A definite failure after submission
+remains in the originating frontend for explicit retry with the same operation ID
+or local deletion. If file staging fails before submission, Retry uses a new
+operation ID while retaining the same displayed message, provided the original
+files and any accompanying images are still available on the page. Browser-held
+original files are not saved across reload; if unavailable, delete the failed
+message and select the attachments again.
+
+Reliable native acceptance confirms delivery; reply failure or stopping is
+independent. A null lookup, lost response or disconnection leaves delivery unknown:
+the pending bubble remains for reconciliation and is not automatically resent.
+Once no send is in flight, it can be removed locally without declaring failure or
+deleting native history; a later native history entry can still appear.
+Failed messages do not replace newer composer drafts. The v2 service requires a
+matching frontend after update.
 
 See [image protocol](docs/image-send-recovery.md), [file contract](docs/chat-file-contract.md), [v2 submission handoff](docs/native-durable-submissions.md), and the [sticker backend contract](docs/sticker-contract.md).
 

@@ -29,22 +29,16 @@ import {
   awaitWithContext,
 } from "@earendil-works/chord/context";
 import {
-  FinalizeSubmissionSchema,
-  RetryFailedSchema,
-  DeleteFailedSchema,
-  DeleteFailedResultSchema,
-  type FinalizeSubmission,
-  type RetryFailed,
-  type DeleteFailed,
   Chat,
   ViewSchema,
   PageSchema,
   validateReceipt,
   validateLookup,
   validate,
-  validateRecovery,
   validateSubmission,
   type ChatView,
+  type Receipt,
+  OperationIdSchema,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -68,6 +62,7 @@ export async function openChat(
   socket: WebSocket,
   changed: (view: ChatView) => void,
   offline: (error: ChatConnectionError) => void,
+  deliveryResult: (receipt: Receipt) => void = () => {},
 ) {
   await new Promise<void>((resolve, reject) => {
     if (socket.readyState === 1) return resolve();
@@ -121,7 +116,7 @@ export async function openChat(
         if (
           call.serviceId === Chat.id &&
           !call.instance &&
-          call.member === "history"
+          (call.member === "history" || call.member === "lookup")
         ) {
           const request = pending.get(id);
           if (!request) return;
@@ -242,6 +237,10 @@ export async function openChat(
         )
           throw new Error("Unknown subscription");
         listeners.get(frame.subscriptionId)!(frame.update);
+      } else if (frame.type === "deliveryResult") {
+        if (typeof frame.subscriptionId !== "string" || !listeners.has(frame.subscriptionId))
+          throw new Error("Unknown subscription");
+        deliveryResult(validateReceipt(frame.receipt));
       } else if (
         (frame.type === "result" || frame.type === "error") &&
         typeof frame.id === "string"
@@ -267,7 +266,6 @@ export async function openChat(
     unsubscribe = service.view.subscribe((value) => {
       try {
         const view = validate(ViewSchema, boundA2UIInMessages(value));
-        view.recovery.forEach(validateRecovery);
         view.messages.forEach(message => validateReplySource(message, isReplySource(message)));
         if (view.streamingReply) validateReplySource(view.streamingReply, true);
         changed(view);
@@ -335,80 +333,13 @@ export async function openChat(
         return receipt;
       },
       async lookup(id: string) {
+        const value = validate(OperationIdSchema, id);
         const receipt = validateLookup(
-          await service.lookup(id, BACKGROUND_CONTEXT),
+          await service.lookup(value, BACKGROUND_CONTEXT),
         );
-        if (receipt && receipt.operationId !== id)
+        if (receipt && receipt.operationId !== value)
           throw new Error("Wrong operation receipt");
         return receipt;
-      },
-      async finalizeSubmission(input: FinalizeSubmission) {
-        const value = validate(FinalizeSubmissionSchema, input);
-        if ("submission" in value) validateSubmission(value.submission);
-        else if (value.retry.sessionId !== value.sessionId)
-          throw new Error("Wrong retry session");
-        const receipt = validateLookup(
-          await service.finalizeSubmission(value, BACKGROUND_CONTEXT),
-        );
-        if (
-          receipt &&
-          receipt.operationId !==
-            ("submission" in value
-              ? value.submission.operationId
-              : value.retry.attemptId)
-        )
-          throw new Error("Wrong operation receipt");
-        if (
-          receipt?.retryImages &&
-          (receipt.retryImages.sessionId !== value.sessionId ||
-            !("retry" in value) ||
-            receipt.retryImages.sourceOperationId !== value.retry.operationId)
-        )
-          throw new Error("Wrong retry mapping");
-        if (
-          receipt?.retryFiles &&
-          (receipt.retryFiles.sessionId !== value.sessionId ||
-            !("retry" in value) ||
-            receipt.retryFiles.sourceOperationId !== value.retry.operationId)
-        )
-          throw new Error("Wrong retry file mapping");
-        return receipt;
-      },
-      async retryFailed(input: RetryFailed) {
-        const value = validate(RetryFailedSchema, input);
-        if (value.operationId === value.attemptId)
-          throw new Error("Retry requires new attempt");
-        const receipt = validateReceipt(
-          await service.retryFailed(value, BACKGROUND_CONTEXT),
-        );
-        if (receipt.operationId !== value.attemptId)
-          throw new Error("Wrong operation receipt");
-        if (
-          receipt.retryImages &&
-          (receipt.retryImages.sessionId !== value.sessionId ||
-            receipt.retryImages.sourceOperationId !== value.operationId)
-        )
-          throw new Error("Wrong retry mapping");
-        if (
-          receipt.retryFiles &&
-          (receipt.retryFiles.sessionId !== value.sessionId ||
-            receipt.retryFiles.sourceOperationId !== value.operationId)
-        )
-          throw new Error("Wrong retry file mapping");
-        return receipt;
-      },
-      async deleteFailed(input: DeleteFailed) {
-        const value = validate(DeleteFailedSchema, input);
-        const result = validate(
-          DeleteFailedResultSchema,
-          await service.deleteFailed(value, BACKGROUND_CONTEXT),
-        );
-        if (
-          result.sessionId !== value.sessionId ||
-          result.operationId !== value.operationId
-        )
-          throw new Error("Wrong deletion acknowledgement");
-        return result;
       },
       async stop(id: string) {
         const v = await service.stop(id, BACKGROUND_CONTEXT);

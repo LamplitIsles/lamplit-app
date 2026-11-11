@@ -432,7 +432,7 @@ test("direct changes preserve admission, media, history and session fences", asy
       listener({ type: "update", scope: scopeA, messages: [{ type: "upsert", afterId: null, message: {
         id: input.operationId, role: "user", text: input.text, createdAt: 1, operationId: input.operationId, turnId: "turn",
       } }], state: { activeTurnId: "turn" } });
-      return { operationId: input.operationId, state: "submitted" as const, messageId: input.operationId, turnId: "turn", error: null };
+      return { operationId: input.operationId, attempt: 1, state: "submitted" as const, messageId: input.operationId, turnId: "turn", error: null };
     },
     subscribe(changed: (change: ChatChange) => void) {
       listener = changed;
@@ -485,7 +485,7 @@ test("provider error disconnects every client and a fresh host restores state wi
   const done = new Promise<void>(resolve => { finished = resolve; });
   const acceptedId = crypto.randomUUID(), unknownId = crypto.randomUUID();
   const calls: string[] = [];
-  const receipts = new Map<string, { operationId: string; state: "submitted"; messageId: string; turnId: string; error: null }>();
+  const receipts = new Map<string, { operationId: string; attempt: number; state: "submitted"; messageId: string; turnId: string; error: null }>();
   let reads = 0, latest = "before";
   const backend = {
     ...fixture.backend,
@@ -493,7 +493,7 @@ test("provider error disconnects every client and a fresh host restores state wi
     async submit(input: Parameters<typeof fixture.backend.submit>[0]) {
       calls.push(input.operationId);
       if (input.operationId === unknownId) await held;
-      const receipt = { operationId: input.operationId, state: "submitted" as const, messageId: input.operationId, turnId: "turn", error: null };
+      const receipt = { operationId: input.operationId, attempt: 1, state: "submitted" as const, messageId: input.operationId, turnId: "turn", error: null };
       receipts.set(input.operationId, receipt);
       if (input.operationId === unknownId) finished();
       return receipt;

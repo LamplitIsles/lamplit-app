@@ -21,14 +21,6 @@ import {
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
-  FinalizeSubmissionSchema,
-  RetryFailedSchema,
-  DeleteFailedSchema,
-  DeleteFailedResultSchema,
-  type FinalizeSubmission,
-  type RetryFailed,
-  type DeleteFailed,
-  type DeleteFailedResult,
   Chat,
   ViewSchema,
   PageSchema,
@@ -37,13 +29,13 @@ import {
   validateLookup,
   validate,
   validateId,
-  validateRecovery,
   type ChatView,
   type ChatMessage,
   type StreamingReply,
   type HistoryPage,
   type Receipt,
   type Submission,
+  OperationIdSchema,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -62,10 +54,12 @@ export type ChatScope = symbol;
  * Use a window when the existing visible order cannot be expressed by changes. */
 export type ChatChange =
   | { type: "session"; scope: ChatScope; nextScope: ChatScope; view: ChatView }
+  /** A proven current-attempt result; transport may deliver it after a retry. */
+  | { type: "deliveryResult"; scope: ChatScope; receipt: Receipt }
   | { type: "update"; scope: ChatScope;
       messages?: Array<{ type: "upsert"; message: ChatMessage; afterId?: string | null } | { type: "remove"; id: string }>;
       window?: { messages: ChatMessage[]; before: string | null };
-      state?: Partial<Pick<ChatView, "activeTurnId" | "name" | "before" | "capabilities" | "recovery" | "contextUsage" | "compaction">> & {
+      state?: Partial<Pick<ChatView, "activeTurnId" | "name" | "before" | "capabilities" | "contextUsage" | "compaction">> & {
         streamingReply?: StreamingReply | null;
         replyCompletedTurnId?: string | null;
       };
@@ -77,11 +71,10 @@ export interface ChatBackend extends PanelBackend, SearchBackend {
   read(signal?: AbortSignal): Promise<ChatView>;
   compact(input: CompactInput): Promise<CompactResult>;
   history(before: string): Promise<HistoryPage>;
+  /** Attempts start at 1 and advance only on an explicit retry after failure.
+   * Durable source identities preserve attempt numbering across restart. */
   submit(input: Submission): Promise<Receipt>;
   lookup(operationId: string): Promise<Receipt | null>;
-  finalizeSubmission(input: FinalizeSubmission): Promise<Receipt | null>;
-  retryFailed(input: RetryFailed): Promise<Receipt>;
-  deleteFailed(input: DeleteFailed): Promise<DeleteFailedResult>;
   stop(turnId: string): Promise<{ stopped: boolean }>;
   /** Install before read(); changes use absolute source values and delivery order.
    * Startup changes are applied to the initial read in order: the provider must
@@ -89,6 +82,7 @@ export interface ChatBackend extends PanelBackend, SearchBackend {
    * deliver subsequent facts the read did not include. This does not require a
    * global atomic snapshot across independent sources.
    * Use a fresh scope on each session lifetime, including a return to the same ID.
+   * Emit deliveryResult for proven current-attempt changes even if view is unchanged.
    * Filter obsolete asynchronous results before delivery; close stops delivery. */
   subscribe(changed: (change: ChatChange) => void): { scope: ChatScope; close(): void };
 }
@@ -149,7 +143,6 @@ export async function createChatHost(
   const report = (error: unknown) => { try { onError(error); } catch {} };
   const publish = (source: ChatView, reset = false) => {
     const checked = validate(ViewSchema, boundA2UIInMessages(source));
-    checked.recovery.forEach(validateRecovery);
     const projection = reset ? createReplyProjection() : replyProjection;
     const next = projection.view(checked, reset ? undefined : view?.value);
     if (reset) replyProjection = projection;
@@ -166,7 +159,6 @@ export async function createChatHost(
       draft.name = next.name;
       draft.sessionId = next.sessionId;
       draft.capabilities = next.capabilities;
-      draft.recovery = next.recovery;
       draft.contextUsage = next.contextUsage;
       draft.compaction = next.compaction;
     });
@@ -180,6 +172,7 @@ export async function createChatHost(
       sessionEpoch++;
       return change.view;
     }
+    if (change.type === "deliveryResult") return base;
     if (change.window && change.messages?.length) throw new Error("Conflicting message updates");
     const preserveCompleted = (existing: ChatMessage | undefined, message: ChatMessage) => {
       if (!bootstrap || !existing || !isReplySource(existing) || !isReplySource(message) || existing.textState === "streaming") return message;
@@ -236,6 +229,14 @@ export async function createChatHost(
     if (change.type === "error") {
       closeHost();
       report(change.error);
+      return;
+    }
+    if (change.type === "deliveryResult") {
+      if (change.scope !== scope) return;
+      try {
+        const receipt = validateReceipt(change.receipt);
+        for (const connection of connections) connection.deliveryResult(receipt, sessionEpoch);
+      } catch (error) { report(error); }
       return;
     }
     const oldScope = scope, oldEpoch = sessionEpoch;
@@ -337,101 +338,27 @@ export async function createChatHost(
     },
     async submit(input: Submission) {
       const value = validateSubmission(input);
+      const sessionId = view.value.sessionId;
+      const epoch = sessionEpoch;
       const receipt = validateReceipt(await backend.submit(value));
       if (receipt.operationId !== value.operationId)
         throw new Error("Wrong operation receipt");
-      return receipt;
-    },
-    async lookup(id: string) {
-      const sessionId = view.value.sessionId;
-      const epoch = sessionEpoch;
-      const receipt = validateLookup(await backend.lookup(validateId(id)));
-      if (receipt && receipt.operationId !== id)
-        throw new Error("Wrong operation receipt");
-      if (
-        sessionEpoch !== epoch || view.value.sessionId !== sessionId ||
-        (receipt?.retryFiles && receipt.retryFiles.sessionId !== sessionId) ||
-        (receipt?.retryImages && receipt.retryImages.sessionId !== sessionId)
-      )
+      if (closed || sessionEpoch !== epoch || view.value.sessionId !== sessionId)
         throw new Error("Wrong receipt session");
       return receipt;
     },
-    async finalizeSubmission(input) {
-      const value = validate(FinalizeSubmissionSchema, input);
-      if ("submission" in value) validateSubmission(value.submission);
-      else if (value.retry.sessionId !== value.sessionId)
-        throw new Error("Wrong retry session");
-      if (value.sessionId !== view.value.sessionId)
-        throw new Error("Wrong session");
+    async lookup(id: string) {
+      const value = validate(OperationIdSchema, id);
+      const sessionId = view.value.sessionId;
       const epoch = sessionEpoch;
-      const receipt = validateLookup(await backend.finalizeSubmission(value));
-      if (
-        receipt &&
-        receipt.operationId !==
-          ("submission" in value
-            ? value.submission.operationId
-            : value.retry.attemptId)
-      )
+      const receipt = validateLookup(await backend.lookup(value));
+      if (receipt && receipt.operationId !== value)
         throw new Error("Wrong operation receipt");
       if (
-        receipt?.retryImages &&
-        (receipt.retryImages.sessionId !== value.sessionId ||
-          !("retry" in value) ||
-          receipt.retryImages.sourceOperationId !== value.retry.operationId)
+        closed || sessionEpoch !== epoch || view.value.sessionId !== sessionId
       )
-        throw new Error("Wrong retry mapping");
-      if (
-        receipt?.retryFiles &&
-        (receipt.retryFiles.sessionId !== value.sessionId ||
-          !("retry" in value) ||
-          receipt.retryFiles.sourceOperationId !== value.retry.operationId)
-      )
-        throw new Error("Wrong retry file mapping");
-      if (sessionEpoch !== epoch || view.value.sessionId !== value.sessionId)
-        throw new Error("Wrong session");
+        throw new Error("Wrong receipt session");
       return receipt;
-    },
-    async retryFailed(input) {
-      const value = validate(RetryFailedSchema, input);
-      if (value.attemptId === value.operationId)
-        throw new Error("Retry requires new attempt");
-      if (value.sessionId !== view.value.sessionId)
-        throw new Error("Wrong session");
-      const epoch = sessionEpoch;
-      const receipt = validateReceipt(await backend.retryFailed(value));
-      if (receipt.operationId !== value.attemptId)
-        throw new Error("Wrong operation receipt");
-      if (
-        receipt.retryImages &&
-        (receipt.retryImages.sessionId !== value.sessionId ||
-          receipt.retryImages.sourceOperationId !== value.operationId)
-      )
-        throw new Error("Wrong retry mapping");
-      if (
-        receipt.retryFiles &&
-        (receipt.retryFiles.sessionId !== value.sessionId ||
-          receipt.retryFiles.sourceOperationId !== value.operationId)
-      )
-        throw new Error("Wrong retry file mapping");
-      if (sessionEpoch !== epoch || view.value.sessionId !== value.sessionId)
-        throw new Error("Wrong session");
-      return receipt;
-    },
-    async deleteFailed(input) {
-      const value = validate(DeleteFailedSchema, input);
-      if (value.sessionId !== view.value.sessionId)
-        throw new Error("Wrong session");
-      const epoch = sessionEpoch;
-      const result = validate(
-        DeleteFailedResultSchema,
-        await backend.deleteFailed(value),
-      );
-      if (
-        sessionEpoch !== epoch || result.sessionId !== value.sessionId ||
-        result.operationId !== value.operationId
-      )
-        throw new Error("Wrong deletion acknowledgement");
-      return result;
     },
     async stop(id: string) {
       const result = await backend.stop(validateId(id));
@@ -457,7 +384,7 @@ export async function createChatHost(
     const subscriptions = new Map<string, ServiceSubscription>();
     let subscription: ChatSubscription | null = null;
     let incoming: Promise<void> = Promise.resolve();
-    let activeHistory = 0;
+    let activeReads = 0;
     const enqueue = (work: () => Promise<void>) => {
       const next = incoming.then(work);
       incoming = next.catch(() => {});
@@ -490,7 +417,7 @@ export async function createChatHost(
     }
     let outgoing: Promise<void> = Promise.resolve();
     let queuedBytes = 0;
-    const deliver = (frame: unknown) => {
+    const deliver = (frame: unknown, current: () => boolean = () => true) => {
       if (disposed) return;
       const raw = JSON.stringify(frame);
       const bytes = new TextEncoder().encode(raw).byteLength;
@@ -512,7 +439,7 @@ export async function createChatHost(
               dispose();
               return;
             }
-            if (!disposed) socket.send(raw);
+            if (!disposed && current()) socket.send(raw);
           } finally {
             queuedBytes -= bytes;
           }
@@ -531,7 +458,7 @@ export async function createChatHost(
       subscription = null;
       connections.delete(connection);
     }
-    async function process(raw: string, historyOverloaded = false) {
+    async function process(raw: string, readOverloaded = false) {
       if (disposed) return;
       if (!(await authorize())) {
         socket.close(1008, "Session expired");
@@ -584,9 +511,6 @@ export async function createChatHost(
               "history",
               "submit",
               "lookup",
-              "finalizeSubmission",
-              "retryFailed",
-              "deleteFailed",
               "stop",
               "compact",
               "search",
@@ -596,7 +520,7 @@ export async function createChatHost(
             call.args.length !== 1
           )
             throw new Error("Invalid method");
-          if (historyOverloaded) throw new Error("Too many history reads");
+          if (readOverloaded) throw new Error("Too many concurrent reads");
           result = (await provider.invoke(
             call,
             BACKGROUND_CONTEXT,
@@ -624,31 +548,37 @@ export async function createChatHost(
       }
     }
     const connection = {
+      deliveryResult(receipt: Receipt, epoch: number) {
+        const record = subscription;
+        if (!record || !subscriptions.has(record.subscriptionId)) return;
+        deliver({ type: "deliveryResult", subscriptionId: record.subscriptionId, receipt },
+          () => sessionEpoch === epoch && subscription === record && subscriptions.has(record.subscriptionId));
+      },
       receive(raw: string) {
         return enqueue(async () => {
-          let history = false;
+          let read = false;
           try {
             const frame = decodeFrame(raw);
             const call = readCall(frame.call);
-            history =
+            read =
               frame.type === "call" &&
               frame.version === 1 &&
               typeof frame.id === "string" &&
               frame.id.length <= 100 &&
               call.serviceId === Chat.id &&
               !call.instance &&
-              call.member === "history" &&
+              (call.member === "history" || call.member === "lookup") &&
               call.args.length === 1;
           } catch {
             /* Invalid frames follow the ordinary validation path. */
           }
-          if (!history) return process(raw);
-          const accepted = activeHistory < 8;
-          if (accepted) activeHistory++;
+          if (!read) return process(raw);
+          const accepted = activeReads < 8;
+          if (accepted) activeReads++;
           void process(raw, !accepted)
             .catch(onError)
             .finally(() => {
-              if (accepted) activeHistory--;
+              if (accepted) activeReads--;
             });
         }).catch(onError);
       },

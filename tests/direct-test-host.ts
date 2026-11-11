@@ -20,7 +20,7 @@ export async function createDirectTestHost(backend: Omit<ChatBackend, "subscribe
       sessionId = view.sessionId;
     } else listener({ type: "update", scope, window: { messages: view.messages, before: view.before }, state: {
       name: view.name, activeTurnId: view.activeTurnId, capabilities: view.capabilities,
-      recovery: view.recovery, contextUsage: view.contextUsage, compaction: view.compaction,
+      contextUsage: view.contextUsage, compaction: view.compaction,
       streamingReply: view.streamingReply ?? null, replyCompletedTurnId: view.replyCompletedTurnId ?? null,
     } });
     if (errors.length !== errorCount) throw errors.at(-1);

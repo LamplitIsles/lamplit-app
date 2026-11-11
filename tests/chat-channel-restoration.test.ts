@@ -130,7 +130,7 @@ test("original openChat socket accepts gap reset, future deltas and lookup witho
     host = await serverApi.createChatHost(backend);
     channel = connect();
     const restore = channel.restoreSubscription(saved);
-    const lookup = client.lookup("lookup-after-restore");
+    const lookup = client.lookup(crypto.randomUUID());
     await restore;
     expect(await lookup).toBeNull();
     await until(() => views.at(-1)?.name === "during gap");

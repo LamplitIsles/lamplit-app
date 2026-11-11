@@ -1,10 +1,10 @@
-# Image sending and submitted-input recovery
+# Image sending and message delivery
 
 Framework7 presentation references below describe the historical baseline
 before the spec #108 migration.
 
 Spec #3096 owns this app contract. The public root exports the TypeBox schemas,
-DTO types, `validateUpload`, `validateRecovery`, `mediaUrl`, `UPLOAD_PATH`, and
+DTO types, `validateUpload`, `mediaUrl`, `UPLOAD_PATH`, and
 `MAX_UPLOAD_BODY_BYTES`; `/server` exports `imageHttp` and `ImageBackend`. Both
 native adapters consume the same compiled package and browser archive.
 
@@ -57,15 +57,18 @@ the UI calls `releasePreviews(sessionId, operationId)` when it no longer needs
 those previews. When switching sessions in the same page, retain undispatched
 local attachment originals, previews and their retirement ownership for their
 originating authorized session; do not expose them in another session. Returning
-restores the failed pending input for explicit retry only. A controller close,
+retains the failed pending input; a pre-dispatch file failure can be retried with
+a new operation ID while the required originals remain available. Otherwise the
+user deletes the failed message and reselects the attachments. A controller close,
 authorization loss, observation or confirmed deletion releases that ownership.
 Page-wide retained attachment operations and unsettled preparations are limited
 to 20; further attachment sends wait for an item to be resolved or deleted,
 or for cancellation of an earlier preparation to settle.
-For a retry, the mapping moves to the new operation and attachment IDs only after
-the server's source-to-target receipt is verified.
-Use `validateUpload`, `validateSubmission` and `validateRecovery`, not schemas alone. The host can enforce smaller native
-request bounds, provided its advertised supported images can fit.
+An explicit retry after a definite submitted failure retains the operation ID and
+ordered attachment references. A file-staging retry before submission uses a new
+operation ID but keeps the displayed logical message. Use `validateUpload` and
+`validateSubmission`; the native host
+checks owner/session and attachment ownership at its admission boundary.
 
 `GET /api/chat/media/{attachmentId}/{original|preview|model}` returns authorized
 image bytes, with a finite 32 MiB original read ceiling independent of intake
@@ -92,127 +95,28 @@ it does not independently establish the native backend's session isolation.
 GET can remain available for previously stored media when new uploads are disabled;
 custom native routing may implement that distinction.
 
-`submit` is `{ operationId: UUID, text: string, images?: ImageRef[],
-replacementSourceIds?: string[] }`. Text is at most 16,000 UTF-16 units; empty text
-is allowed with images. Empty text plus empty images is rejected. Ordered references and replacement
-IDs are part of immutable identity. Upload success never admits input. Same ID and
-same full payload reconciles without execution; changed payload conflicts. The
-native adapter rejects refs not uploaded under this owner/session/operation and
-performs eligibility checking plus replacement atomically with admission. It must
-check current durable state, the portable WS host validates payloads and correlated receipts, while the native adapter owns atomic eligibility.
+`submit` includes the logical operation ID, text and optional ordered image and
+file references. It rejects empty input and unavailable or duplicate attachment
+references. Upload alone does not establish native acceptance; it associates the
+bytes with the owner, session and operation. The native adapter verifies that
+association before submitting and supplies reliable acceptance or definite failure.
 
-`view.recovery` is a bounded array (at most 20) of:
+## Message and attachment behavior
 
-```ts
-{ sourceId: string; operationId: UUID; text: string; images: ImageRef[];
-  replacementEligible: boolean }
-```
-
-These are only confirmed recoverable inputs: definite rejection or explicit
-withdrawal before processing, including native frontend inputs. There is no state
-field. Only the native adapter authorizes replacement; `validateRecovery` enforces
-bounded, nonempty content. Replaced/processed sources disappear durably. Receipts
-are `submitted` or `failed`; lookup is nullable, and null/disconnection never
-creates a recovery entry. Reply failure or stop is separate from submission.
-Recent/paginated `messages.images` projects actual persisted message membership,
-including completed agent images; staged uploads alone are not chat/album membership.
-
-## User behavior
-
-Choose photos or take a photo from the attachment menu, or paste images. Image drafts use
-the pinned CFL Framework7 presentation: a horizontal row of 72px squares with
-44px removal targets and native preview/gallery behavior. Images can be sent alone.
-Online send immediately shows normal-color text and local image previews while
-the composer clears, before preparation/upload; no sending/receipt/consumption
-labels or success toast appear. Offline clicks keep editable text/images.
-Preparation/upload failure or definite submission rejection retains a failed bubble.
-Retry sends original text/images directly; Delete requires confirmation. Neither
-action changes the Composer, newer images or selection. Generic RPC errors,
-disconnection and null lookup retain the bubble without showing recovery. A
-submitted receipt marks local input sent until observation merges it by operation ID.
-Reply failure and stopping remain notices and never restore the Composer.
-Explicit native withdrawal before processing offers human recovery separately,
-using its own source ID, while the submitted receipt remains successful.
-
-Page-owned previews/originals live until observation or confirmed deletion and never enter storage.
-Reference-only pending metadata is saved after upload; storage failure is visible.
-Before upload finishes, Files remain page-owned and survive a switch away and back
-to the same authorized session while the controller remains open; they cannot
-survive reload. A stale upload completion cannot submit after a session switch,
-and retry creates a new operation only on explicit user action. Unsent Composer
-drafts likewise remain page-owned. Reloaded dispatched failures retry through native-owned originals, reassociated
-under the new attempt and existing owner/session guard. Missing originals block retry
-without partial send, with a human error and Delete still available. Pending unknown inputs reconcile the same identity and, after 60 seconds, request
-fenced finalization only for dispatched complete payloads. Pre-upload local failures
-can retry their retained page-owned Files; reload cannot preserve those originals
-and must block image retry rather than silently drop images. Independent withdrawn
-input recovery uses a new ID and verified replacement source IDs. Restored local pending records retire separately
-from native replacement sources.
-
-Independent withdrawn-input recovery offers inspect, restore to edit, and dismiss. Restore is disabled while
-current text or attachments are present; it cannot overwrite new edits. Restore puts only text in
-the composer and does not fetch or restore image or file originals. Attachments must be selected
-and uploaded again if wanted; a person can also send the restored text without them. Explicit
-failed-message retry remains separate and retains its existing original-attachment behavior.
-Edited recovery sends with a new operation ID and verified replacement source ID.
-Native state is checked again before send. Dismiss hides a recovery offer for this
-page/session only; it does not consume or delete native input. Clearing all restored
-text/images returns its offer. Explicitly discarding restored input dismisses that
-page-local offer and exposes the next source without changing native consumption. Unsent composer
-persistence is outside this feature. General files have a separate [file contract](chat-file-contract.md).
-
-## Current verification and native handoff
-
-Spec #3096 completed same-artifact native Pi/CFL acceptance, including exact image
-bytes and corrected route lifecycle, and merged (App PR #4, Pi #24, CFL #64).
-Historical ebde803 product/091c0def runner archives remain unchanged evidence.
-Use the [complete default handoff](default-shared-frontend.md) for current full
-checks, one committed-source archive, extraction/hash checks and Owner approval.
-The current image runner uses canonical `/` (hosted `/chat`) with native
-public HTTP/WS, test-owned stores and fake engines. It still denies anonymous media.
-
-From the extracted `acceptance/`, after approved native fixtures start:
-
-```sh
-APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/ \
-APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:CONTROL_PORT/__test/image-send-recovery \
-APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence/images bun images-browser.mjs
-bun route-lifecycle-browser.mjs
-```
-
-The control endpoint is **test infrastructure only**, never production routing.
-Implement it against native storage/execution, not an alternative mock chat adapter.
-It accepts JSON POST actions matching `tests/images-fixture.ts`:
-
-| Action                                      | Required native fixture effect                                                                             |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `reset`                                     | Clear only this fixture's session/media/receipts; reset fake execution count; expose native limits.        |
-| `mode`, `state: submitted/withdrawn/failed` | Configure native submission/withdrawal outcome for the next inputs. Do not infer state from WS disconnect. |
-| `uploadFailure`, `enabled`                  | Fail/restore native storage before admission.                                                              |
-| `disabled`, `enabled`                       | Advertise unavailable/available image intake, retaining text.                                              |
-| `complete`                                  | Complete current fake turn with text `完整图片回复` and native-generated image membership.                 |
-| `history`                                   | Seed 32 complete text replies after current image messages, forcing pagination.                            |
-| `nativeRecovery`                            | Seed verified native-origin withdrawn input `原生恢复输入` and `native.png` original.                      |
-| `missing`                                   | Remove originals referenced by current fixture recovery only.                                              |
-| `consume`                                   | Process fixture recovery and clear it durably; submission receipts stay submitted.                         |
-| `state`                                     | Read state without mutation.                                                                               |
-
-Every control result returns `{ executions, submissions, recovery, messages, limits,
-album }`; submissions are actual admitted immutable public DTOs, album includes
-actual native membership and provenance. Execution counts must represent native
-fake execution rather than upload/RPC counts. The runner requests anonymous media
-without owner credentials and requires denial. Native authenticated session IDs
-need not equal the local fixture's ID: the runner captures real upload identity.
-Numeric intake limits are read from native capabilities; assertions for safe
-identity, ownership, recovery, history, replacement and no replay are fixed.
-The existing text, local composer touch and panel runners remain additional regression checks.
-New exact-artifact Pi and CFL reports remain the Owner's joint acceptance gate
-for #3162; prior acceptance does not prove the new canonical routes. No deployment.
-
-The delayed-media and delayed-upload probes release their held requests and await
-`page.unrouteAll({ behavior: "wait" })` before advancing. Ordinary `unroute` does
-not await handlers and can race a later fulfillment. No route exceptions are
-suppressed; a genuine handler failure still fails the acceptance process.
+A send immediately displays the outgoing message and local previews. Definite
+failure remains on the originating frontend for explicit retry or local discard.
+A definite failure after submission retries the same operation ID and payload;
+staged references can be reused only while valid under the native owner/session
+and upload lifecycle. Before submission, explicit retry of failed file staging
+uses a new operation ID and keeps the displayed logical message if the required
+originals remain available. After reload, unavailable originals require deletion
+and reselection. Unknown results are never automatically replayed; once no send
+is in flight, the pending item can be removed locally without marking it failed or
+deleting native history, which can still appear later.
+Reply failure or stop does not revoke an accepted input. If stop definitely removes
+a queued input before acceptance, the host can report that input failed; absent
+proof remains unknown. See [native delivery](native-durable-submissions.md) and the
+[file contract](chat-file-contract.md).
 
 # Design authority update — 2026-10-03
 
@@ -232,12 +136,12 @@ are historical evidence for the removed Capacitor path, not validation of the
 current browser selection. `bun test tests/image-drafts.test.ts` checks batch
 limits; `bun tests/file-attachments-browser.mjs` checks browser photo/camera and
 file selection, including stale session results. `bun run test:images-browser`
-checks upload and recovery behavior, subject to any separately reported failures.
+checks image upload behavior, subject to any separately reported failures.
 Physical device picker behavior requires device verification.
 
 ## Saved output cardinality — spec #4011
 
-Saved message references are independent of the six-image input/upload/recovery
+Saved message references are independent of the six-image input/upload
 limit. A reply with 7 or 11 generated images retains its full ordered reference
 list through initial View, history and the existing gallery renderer. Per-item
 reference validation, media authorization and transport bounds still apply.

@@ -6,6 +6,7 @@ import { ChatController } from "../apps/web/src/lib/chat-controller.ts";
 import {
   capabilities,
   type ChatMessage,
+  type Receipt,
 } from "../packages/contracts/src/index.ts";
 import {
   createChatHost,
@@ -47,15 +48,6 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
         messages: live,
         before: "11",
         capabilities,
-        recovery: [
-          {
-            sourceId: historicalOperation,
-            operationId: historicalOperation,
-            text: "message 1",
-            images: [],
-            replacementEligible: false,
-          },
-        ],
       };
     },
     async compact(input) {
@@ -75,6 +67,7 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
       changed({ type: "update", scope, state: { activeTurnId: active } });
       return {
         operationId: input.operationId,
+        attempt: 1,
         state: "submitted",
         messageId: null,
         turnId: "stopped",
@@ -84,6 +77,7 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
     async lookup(id) {
       return {
         operationId: id,
+        attempt: 1,
         state: "submitted",
         messageId: null,
         turnId: null,
@@ -98,12 +92,21 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
     },
     subscribe(listener) {
       changed = listener;
-      return { scope, close() { changed = () => {}; } };
+      return {
+        scope,
+        close() {
+          changed = () => {};
+        },
+      };
     },
   };
   const publish = async () => {
     const value = await backend.read();
-    changed({ type: "update", scope, window: { messages: value.messages, before: value.before } });
+    changed({
+      type: "update",
+      scope,
+      window: { messages: value.messages, before: value.before },
+    });
   };
   let host = await createChatHost(backend);
   const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -146,6 +149,7 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
           operationId: historicalOperation,
           text: "message 1",
           state: "sent",
+          deliveryVersion: 2,
           createdAt: 1,
         },
       ]),
@@ -162,11 +166,9 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
   try {
     controller.start();
     await eventually(() => controller.connected);
-    expect(controller.recovery).toHaveLength(1);
     expect(controller.pending).toHaveLength(1);
     await controller.loadOlder();
     expect(controller.pending).toEqual([]);
-    expect(controller.recovery).toHaveLength(1);
     expect(controller.before).toBeNull();
     live = Array.from({ length: 30 }, (_, i) => message(i + 12));
     await publish();
@@ -259,20 +261,31 @@ async function controllerHarness(
 ) {
   let changed: (change: ChatChange) => void = () => {};
   let scope: symbol, sessionId: string;
-  const host = await createChatHost({
-    ...backend,
-    async read(signal) {
-      const value = await backend.read(signal);
-      sessionId = value.sessionId;
-      return value;
+  const host = await createChatHost(
+    {
+      ...backend,
+      async read(signal) {
+        const value = await backend.read(signal);
+        sessionId = value.sessionId;
+        return value;
+      },
+      subscribe(listener) {
+        changed = listener;
+        const subscription = backend.subscribe(() => {
+          void publish();
+        });
+        scope = subscription.scope;
+        return {
+          scope,
+          close() {
+            subscription.close();
+            changed = () => {};
+          },
+        };
+      },
     },
-    subscribe(listener) {
-      changed = listener;
-      const subscription = backend.subscribe(() => { void publish(); });
-      scope = subscription.scope;
-      return { scope, close() { subscription.close(); changed = () => {}; } };
-    },
-  }, () => {});
+    () => {},
+  );
   async function publish() {
     const value = await backend.read();
     if (value.sessionId !== sessionId) {
@@ -280,11 +293,21 @@ async function controllerHarness(
       changed({ type: "session", scope, nextScope, view: value });
       scope = nextScope;
       sessionId = value.sessionId;
-    } else changed({ type: "update", scope, window: { messages: value.messages, before: value.before }, state: {
-      activeTurnId: value.activeTurnId, recovery: value.recovery, capabilities: value.capabilities,
-      contextUsage: value.contextUsage, compaction: value.compaction, name: value.name,
-      streamingReply: value.streamingReply ?? null, replyCompletedTurnId: value.replyCompletedTurnId ?? null,
-    } });
+    } else
+      changed({
+        type: "update",
+        scope,
+        window: { messages: value.messages, before: value.before },
+        state: {
+          activeTurnId: value.activeTurnId,
+          capabilities: value.capabilities,
+          contextUsage: value.contextUsage,
+          compaction: value.compaction,
+          name: value.name,
+          streamingReply: value.streamingReply ?? null,
+          replyCompletedTurnId: value.replyCompletedTurnId ?? null,
+        },
+      });
   }
   const channels = new Map<object, ReturnType<typeof host.connect>>();
   const received: unknown[] = [];
@@ -339,6 +362,9 @@ async function controllerHarness(
   return {
     host,
     publish,
+    deliver(receipt: Receipt) {
+      changed({ type: "deliveryResult", scope, receipt });
+    },
     received,
     saved,
     get disconnections() {
@@ -360,21 +386,48 @@ async function controllerHarness(
 }
 
 test("single channel history overlap never duplicates the current live source", async () => {
-  const live: ChatMessage = { id: "live", role: "agent", text: "answer\n", textState: "complete", createdAt: 2, operationId: null, turnId: "turn" };
-  const old: ChatMessage = { id: "old", role: "user", text: "question", createdAt: 1, operationId: null, turnId: null };
+  const live: ChatMessage = {
+    id: "live",
+    role: "agent",
+    text: "answer\n",
+    textState: "complete",
+    createdAt: 2,
+    operationId: null,
+    turnId: "turn",
+  };
+  const old: ChatMessage = {
+    id: "old",
+    role: "user",
+    text: "question",
+    createdAt: 1,
+    operationId: null,
+    turnId: null,
+  };
   const fixture = fixtureBackend();
   const backend: ChatBackend = {
     ...fixture.backend,
-    async read() { return { ...(await fixture.backend.read()), messages: [live], before: "older" }; },
-    async history() { return { messages: [old, live], before: null }; },
+    async read() {
+      return {
+        ...(await fixture.backend.read()),
+        messages: [live],
+        before: "older",
+      };
+    },
+    async history() {
+      return { messages: [old, live], before: null };
+    },
   };
   const h = await controllerHarness(backend);
   try {
     const c = await h.create();
     await c.loadOlder();
-    expect(c.older.map(message => message.id)).toEqual(["old"]);
-    expect([...c.older, ...c.view!.messages].map(message => message.id)).toEqual(["old", "live"]);
-  } finally { h.close(); }
+    expect(c.older.map((message) => message.id)).toEqual(["old"]);
+    expect(
+      [...c.older, ...c.view!.messages].map((message) => message.id),
+    ).toEqual(["old", "live"]);
+  } finally {
+    h.close();
+  }
 });
 
 test("single channel reconnect retains loaded history without an automatic history scan", async () => {
@@ -382,89 +435,189 @@ test("single channel reconnect retains loaded history without an automatic histo
   const fixture = fixtureBackend();
   const backend: ChatBackend = {
     ...fixture.backend,
-    async read() { return { ...(await fixture.backend.read()), messages: [{ id: "live", role: "user", text: "live", createdAt: 2, operationId: null, turnId: null }], before: "older" }; },
-    async history() { calls++; return { messages: [{ id: "old", role: "user", text: "old", createdAt: 1, operationId: null, turnId: null }], before: null }; },
+    async read() {
+      return {
+        ...(await fixture.backend.read()),
+        messages: [
+          {
+            id: "live",
+            role: "user",
+            text: "live",
+            createdAt: 2,
+            operationId: null,
+            turnId: null,
+          },
+        ],
+        before: "older",
+      };
+    },
+    async history() {
+      calls++;
+      return {
+        messages: [
+          {
+            id: "old",
+            role: "user",
+            text: "old",
+            createdAt: 1,
+            operationId: null,
+            turnId: null,
+          },
+        ],
+        before: null,
+      };
+    },
   };
   const h = await controllerHarness(backend);
   try {
     const c = await h.create();
     await c.loadOlder();
-    expect(c.older.map(message => message.id)).toEqual(["old"]);
+    expect(c.older.map((message) => message.id)).toEqual(["old"]);
     h.disconnect();
     await eventually(() => h.disconnections > 0);
     await eventually(() => c.connected, 5000);
-    expect(c.older.map(message => message.id)).toEqual(["old"]);
+    expect(c.older.map((message) => message.id)).toEqual(["old"]);
     expect(c.historyGaps).toEqual([]);
     expect(calls).toBe(1);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 test("reconnect gap can be paged without losing source order", async () => {
-  const message = (i: number): ChatMessage => ({ id: `m${i}`, role: "user", text: `message ${i}`, createdAt: i, operationId: null, turnId: null });
+  const message = (i: number): ChatMessage => ({
+    id: `m${i}`,
+    role: "user",
+    text: `message ${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: null,
+  });
   let records = Array.from({ length: 65 }, (_, i) => message(i));
   const fixture = fixtureBackend();
   const backend: ChatBackend = {
     ...fixture.backend,
     async read() {
       const live = records.slice(-30);
-      return { ...(await fixture.backend.read()), messages: live, before: records.length > live.length ? live[0]!.id : null };
+      return {
+        ...(await fixture.backend.read()),
+        messages: live,
+        before: records.length > live.length ? live[0]!.id : null,
+      };
     },
     async history(before) {
-      const end = records.findIndex(message => message.id === before);
+      const end = records.findIndex((message) => message.id === before);
       if (end < 0) throw new Error("Unknown cursor");
       const start = Math.max(0, end - 30);
-      return { messages: records.slice(start, end), before: start ? records[start]!.id : null };
+      return {
+        messages: records.slice(start, end),
+        before: start ? records[start]!.id : null,
+      };
     },
   };
   const h = await controllerHarness(backend);
   try {
     const c = await h.create();
     await c.loadOlder();
-    expect(c.older.map(message => message.id)).toEqual(Array.from({ length: 30 }, (_, i) => `m${i + 5}`));
+    expect(c.older.map((message) => message.id)).toEqual(
+      Array.from({ length: 30 }, (_, i) => `m${i + 5}`),
+    );
     c.setVisible(false);
     h.disconnect();
     await eventually(() => h.disconnections > 0);
-    records = [...records, ...Array.from({ length: 60 }, (_, i) => message(i + 65))];
+    records = [
+      ...records,
+      ...Array.from({ length: 60 }, (_, i) => message(i + 65)),
+    ];
     await h.publish();
     c.setVisible(true);
-    await eventually(() => c.connected && c.view?.messages[0]?.id === "m95", 5000);
+    await eventually(
+      () => c.connected && c.view?.messages[0]?.id === "m95",
+      5000,
+    );
     expect(c.historyGaps).toHaveLength(1);
-    for (let i = 0; i < 4 && c.historyGaps.length; i++) await c.fillGap(c.historyGaps[0]!.id);
+    for (let i = 0; i < 4 && c.historyGaps.length; i++)
+      await c.fillGap(c.historyGaps[0]!.id);
     expect(c.historyGaps).toEqual([]);
     while (c.before) await c.loadOlder();
-    expect([...c.older, ...c.view!.messages].map(message => message.id))
-      .toEqual(Array.from({ length: 125 }, (_, i) => `m${i}`));
-  } finally { h.close(); }
+    expect(
+      [...c.older, ...c.view!.messages].map((message) => message.id),
+    ).toEqual(Array.from({ length: 125 }, (_, i) => `m${i}`));
+  } finally {
+    h.close();
+  }
 });
 
 async function gapHarness() {
-  const message = (i: number, session = "A"): ChatMessage => ({ id: `${session}-${i}`, role: "user", text: `${session} ${i}`, createdAt: i, operationId: null, turnId: null });
+  const message = (i: number, session = "A"): ChatMessage => ({
+    id: `${session}-${i}`,
+    role: "user",
+    text: `${session} ${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: null,
+  });
   const fixture = fixtureBackend();
-  let session = "A", records = Array.from({ length: 65 }, (_, i) => message(i));
-  let behavior: "normal" | "error" | "no-progress" | "empty" | "cycle" | "end" | "inclusive" = "normal";
-  let hold: { entered: ReturnType<typeof gate>; release: ReturnType<typeof gate> } | undefined;
+  let session = "A",
+    records = Array.from({ length: 65 }, (_, i) => message(i));
+  let behavior:
+    | "normal"
+    | "error"
+    | "no-progress"
+    | "empty"
+    | "cycle"
+    | "end"
+    | "inclusive" = "normal";
+  let hold:
+    | { entered: ReturnType<typeof gate>; release: ReturnType<typeof gate> }
+    | undefined;
   let submissions = 0;
   const calls: string[] = [];
   const backend: ChatBackend = {
     ...fixture.backend,
-    async submit(input) { submissions++; return fixture.backend.submit(input); },
+    async submit(input) {
+      submissions++;
+      return fixture.backend.submit(input);
+    },
     async read() {
       const live = records.slice(-30);
-      return { ...(await fixture.backend.read()), sessionId: session, messages: live, before: records.length > live.length ? live[0]!.id : null };
+      return {
+        ...(await fixture.backend.read()),
+        sessionId: session,
+        messages: live,
+        before: records.length > live.length ? live[0]!.id : null,
+      };
     },
     async history(before) {
       calls.push(before);
       if (behavior === "end") return { messages: [], before: null };
-      if (behavior === "cycle") return { messages: [], before: before.startsWith("cycle:") ? before.slice(6) : `cycle:${before}` };
-      if (behavior === "empty" && !before.startsWith("empty:")) return { messages: [], before: `empty:${before}` };
+      if (behavior === "cycle")
+        return {
+          messages: [],
+          before: before.startsWith("cycle:")
+            ? before.slice(6)
+            : `cycle:${before}`,
+        };
+      if (behavior === "empty" && !before.startsWith("empty:"))
+        return { messages: [], before: `empty:${before}` };
       if (before.startsWith("empty:")) before = before.slice(6);
-      const end = records.findIndex(item => item.id === before);
-      if (end < 0 || behavior === "error") throw new Error("invalid or unavailable cursor");
+      const end = records.findIndex((item) => item.id === before);
+      if (end < 0 || behavior === "error")
+        throw new Error("invalid or unavailable cursor");
       if (behavior === "no-progress") return { messages: [], before };
       const start = Math.max(0, end - (behavior === "inclusive" ? 29 : 30));
-      const result = { messages: records.slice(start, end + (behavior === "inclusive" ? 1 : 0)), before: start ? records[start]!.id : null };
+      const result = {
+        messages: records.slice(
+          start,
+          end + (behavior === "inclusive" ? 1 : 0),
+        ),
+        before: start ? records[start]!.id : null,
+      };
       const paused = hold;
-      if (paused) { paused.entered.release(); await paused.release.promise; }
+      if (paused) {
+        paused.entered.release();
+        await paused.release.promise;
+      }
       return result;
     },
   };
@@ -476,16 +629,37 @@ async function gapHarness() {
     h.disconnect();
     await eventually(() => h.disconnections > disconnected);
     const length = records.length;
-    records = [...records, ...Array.from({ length: count }, (_, i) => message(length + i, session))];
+    records = [
+      ...records,
+      ...Array.from({ length: count }, (_, i) => message(length + i, session)),
+    ];
     await h.publish();
     c.setVisible(true);
-    await eventually(() => c.connected && c.view?.messages.at(-1)?.id === records.at(-1)?.id, 5000);
+    await eventually(
+      () => c.connected && c.view?.messages.at(-1)?.id === records.at(-1)?.id,
+      5000,
+    );
   };
-  return { h, c, calls, reconnect, submissions: () => submissions,
-    behavior(value: typeof behavior) { behavior = value; },
-    hold() { hold = { entered: gate(), release: gate() }; return hold; },
-    unhold() { hold = undefined; },
-    session(value: string) { session = value; records = Array.from({ length: 35 }, (_, i) => message(i, value)); },
+  return {
+    h,
+    c,
+    calls,
+    reconnect,
+    submissions: () => submissions,
+    behavior(value: typeof behavior) {
+      behavior = value;
+    },
+    hold() {
+      hold = { entered: gate(), release: gate() };
+      return hold;
+    },
+    unhold() {
+      hold = undefined;
+    },
+    session(value: string) {
+      session = value;
+      records = Array.from({ length: 35 }, (_, i) => message(i, value));
+    },
   };
 }
 
@@ -495,27 +669,51 @@ test("overlapping reconnect windows need no gap or history scan", async () => {
     await f.reconnect(20);
     expect(f.c.historyGaps).toEqual([]);
     expect(f.calls).toHaveLength(0);
-    expect([...f.c.older, ...f.c.view!.messages].map(item => item.id))
-      .toEqual(Array.from({ length: 50 }, (_, i) => `A-${i + 35}`));
-  } finally { f.h.close(); }
+    expect(
+      [...f.c.older, ...f.c.view!.messages].map((item) => item.id),
+    ).toEqual(Array.from({ length: 50 }, (_, i) => `A-${i + 35}`));
+  } finally {
+    f.h.close();
+  }
 });
 
 test("a pending user in both windows does not prove their durable history is contiguous", async () => {
-  const message = (i: number): ChatMessage => ({ id: `durable-${i}`, role: "user", text: `${i}`, createdAt: i, operationId: null, turnId: null });
-  const pending: ChatMessage = { id: "same-native-submission-id", role: "user", text: "queued", createdAt: 10000, operationId: crypto.randomUUID(), turnId: null };
+  const message = (i: number): ChatMessage => ({
+    id: `durable-${i}`,
+    role: "user",
+    text: `${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: null,
+  });
+  const pending: ChatMessage = {
+    id: "same-native-submission-id",
+    role: "user",
+    text: "queued",
+    createdAt: 10000,
+    operationId: crypto.randomUUID(),
+    turnId: null,
+  };
   let records = Array.from({ length: 65 }, (_, i) => message(i));
   const fixture = fixtureBackend();
   const backend: ChatBackend = {
     ...fixture.backend,
     async read() {
       const durable = records.slice(-29);
-      return { ...(await fixture.backend.read()), messages: [...durable, pending], before: durable[0]!.id };
+      return {
+        ...(await fixture.backend.read()),
+        messages: [...durable, pending],
+        before: durable[0]!.id,
+      };
     },
     async history(before) {
-      const end = records.findIndex(item => item.id === before);
+      const end = records.findIndex((item) => item.id === before);
       if (end < 0) throw new Error("Unknown cursor");
       const start = Math.max(0, end - 30);
-      return { messages: records.slice(start, end), before: start ? records[start]!.id : null };
+      return {
+        messages: records.slice(start, end),
+        before: start ? records[start]!.id : null,
+      };
     },
   };
   const h = await controllerHarness(backend);
@@ -525,10 +723,16 @@ test("a pending user in both windows does not prove their durable history is con
     c.setVisible(false);
     h.disconnect();
     await eventually(() => h.disconnections > 0);
-    records = [...records, ...Array.from({ length: 60 }, (_, i) => message(i + 65))];
+    records = [
+      ...records,
+      ...Array.from({ length: 60 }, (_, i) => message(i + 65)),
+    ];
     await h.publish();
     c.setVisible(true);
-    await eventually(() => c.connected && c.view?.messages[0]?.id === "durable-96", 5000);
+    await eventually(
+      () => c.connected && c.view?.messages[0]?.id === "durable-96",
+      5000,
+    );
     expect(c.view!.messages.at(-1)!.id).toBe(pending.id);
     expect(c.historyGaps).toHaveLength(1);
     const gap = c.historyGaps[0]!;
@@ -538,36 +742,68 @@ test("a pending user in both windows does not prove their durable history is con
     await c.fillGap(gap.id);
     expect(c.historyGaps).toEqual([]);
     await c.loadOlder();
-    expect([...c.older, ...c.view!.messages].map(item => item.id)).toEqual([
-      ...Array.from({ length: 125 }, (_, i) => `durable-${i}`), pending.id,
+    expect([...c.older, ...c.view!.messages].map((item) => item.id)).toEqual([
+      ...Array.from({ length: 125 }, (_, i) => `durable-${i}`),
+      pending.id,
     ]);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 test("a locally observed queued input cannot bridge a gap after it moves to the window front", async () => {
-  const message = (i: number): ChatMessage => ({ id: `record-${i}`, role: "user", text: `${i}`, createdAt: i, operationId: null, turnId: null });
+  const message = (i: number): ChatMessage => ({
+    id: `record-${i}`,
+    role: "user",
+    text: `${i}`,
+    createdAt: i,
+    operationId: null,
+    turnId: null,
+  });
   const operationId = crypto.randomUUID();
-  const pending: ChatMessage = { id: "authoritative-submission-id", role: "user", text: "queued", createdAt: 1, operationId, turnId: null };
+  const pending: ChatMessage = {
+    id: "authoritative-submission-id",
+    role: "user",
+    text: "queued",
+    createdAt: 1,
+    operationId,
+    turnId: null,
+  };
   let records = Array.from({ length: 65 }, (_, i) => message(i));
   const fixture = fixtureBackend();
   const backend: ChatBackend = {
     ...fixture.backend,
     async read() {
       const durable = records.slice(-29);
-      return { ...(await fixture.backend.read()), messages: records.length === 65 ? [...durable, pending] : [pending, ...durable], before: durable[0]!.id };
+      return {
+        ...(await fixture.backend.read()),
+        messages:
+          records.length === 65 ? [...durable, pending] : [pending, ...durable],
+        before: durable[0]!.id,
+      };
     },
     async history(before) {
-      const end = records.findIndex(item => item.id === before);
+      const end = records.findIndex((item) => item.id === before);
       if (end < 0) throw new Error("Unknown cursor");
       const start = Math.max(0, end - 30);
-      return { messages: records.slice(start, end), before: start ? records[start]!.id : null };
+      return {
+        messages: records.slice(start, end),
+        before: start ? records[start]!.id : null,
+      };
     },
   };
-  const saved = new Map([["lamplit.pending:fixture-session", JSON.stringify([{ operationId, text: "queued", state: "sending", createdAt: 1 }])]]);
+  const saved = new Map([
+    [
+      "lamplit.pending:fixture-session",
+      JSON.stringify([
+        { operationId, text: "queued", state: "sending", createdAt: 1 },
+      ]),
+    ],
+  ]);
   const h = await controllerHarness(backend, saved);
   try {
     const c = await h.create();
-    expect(c.pending).toEqual([]); // Live observation retires the local bubble.
+    expect(c.pending[0]?.state).toBe("sending"); // A live item alone is not a durable receipt.
     await c.loadOlder();
     c.setVisible(false);
     h.disconnect();
@@ -579,12 +815,22 @@ test("a locally observed queued input cannot bridge a gap after it moves to the 
     c.setVisible(false);
     h.disconnect();
     await eventually(() => h.disconnections > disconnected);
-    records = [...records, ...Array.from({ length: 60 }, (_, i) => message(i + 65))];
+    records = [
+      ...records,
+      ...Array.from({ length: 60 }, (_, i) => message(i + 65)),
+    ];
     await h.publish();
     c.setVisible(true);
-    await eventually(() => c.connected && c.view?.messages.at(-1)?.id === "record-124", 5000);
-    expect(c.historyGaps.map(gap => [gap.afterId, gap.beforeId])).toEqual([["record-64", "record-96"]]);
-  } finally { h.close(); }
+    await eventually(
+      () => c.connected && c.view?.messages.at(-1)?.id === "record-124",
+      5000,
+    );
+    expect(c.historyGaps.map((gap) => [gap.afterId, gap.beforeId])).toEqual([
+      ["record-64", "record-96"],
+    ]);
+  } finally {
+    h.close();
+  }
 });
 
 test("multiple reconnect gaps fill separately with at most one page per trigger", async () => {
@@ -594,13 +840,21 @@ test("multiple reconnect gaps fill separately with at most one page per trigger"
     const originalBefore = f.c.before;
     await f.reconnect(60);
     await f.reconnect(60);
-    expect(f.c.historyGaps.map(gap => [gap.afterId, gap.beforeId])).toEqual([["A-64", "A-95"], ["A-124", "A-155"]]);
+    expect(f.c.historyGaps.map((gap) => [gap.afterId, gap.beforeId])).toEqual([
+      ["A-64", "A-95"],
+      ["A-124", "A-155"],
+    ]);
     expect(f.calls).toHaveLength(1);
     const firstId = f.c.historyGaps[0]!.id;
     let previousCalls = f.calls.length;
     await f.c.fillGap(firstId);
     expect(f.calls.length - previousCalls).toBe(1);
-    expect(f.c.historyGaps[0]).toMatchObject({ id: firstId, afterId: "A-64", beforeId: "A-65", status: "pending" });
+    expect(f.c.historyGaps[0]).toMatchObject({
+      id: firstId,
+      afterId: "A-64",
+      beforeId: "A-65",
+      status: "pending",
+    });
     previousCalls = f.calls.length;
     await f.c.fillGap(firstId);
     expect(f.calls.length - previousCalls).toBe(1);
@@ -611,8 +865,12 @@ test("multiple reconnect gaps fill separately with at most one page per trigger"
     expect(f.c.historyGaps).toEqual([]);
     expect(f.c.before).toBe(originalBefore);
     await f.c.loadOlder();
-    expect([...f.c.older, ...f.c.view!.messages].map(item => item.id)).toEqual(Array.from({ length: 185 }, (_, i) => `A-${i}`));
-  } finally { f.h.close(); }
+    expect(
+      [...f.c.older, ...f.c.view!.messages].map((item) => item.id),
+    ).toEqual(Array.from({ length: 185 }, (_, i) => `A-${i}`));
+  } finally {
+    f.h.close();
+  }
 });
 
 test("empty gap pages advance and cursor cycles stop without spinning", async () => {
@@ -620,11 +878,11 @@ test("empty gap pages advance and cursor cycles stop without spinning", async ()
   try {
     await f.reconnect(60);
     const id = f.c.historyGaps[0]!.id;
-    const before = f.c.older.map(item => item.id);
+    const before = f.c.older.map((item) => item.id);
     f.behavior("empty");
     await f.c.fillGap(id);
     expect(f.c.historyGaps[0]!.status).toBe("pending");
-    expect(f.c.older.map(item => item.id)).toEqual(before);
+    expect(f.c.older.map((item) => item.id)).toEqual(before);
     f.behavior("normal");
     await f.c.fillGap(id);
     expect(f.c.historyGaps[0]!.beforeId).toBe("A-65");
@@ -633,7 +891,9 @@ test("empty gap pages advance and cursor cycles stop without spinning", async ()
     expect(f.c.historyGaps[0]!.status).toBe("pending");
     await f.c.fillGap(id);
     expect(f.c.historyGaps[0]!.status).toBe("unavailable");
-  } finally { f.h.close(); }
+  } finally {
+    f.h.close();
+  }
 });
 
 test("overlapping gap pages deduplicate without losing order", async () => {
@@ -643,12 +903,18 @@ test("overlapping gap pages deduplicate without losing order", async () => {
     f.behavior("inclusive");
     const id = f.c.historyGaps[0]!.id;
     await f.c.fillGap(id);
-    expect(f.c.historyGaps[0]).toMatchObject({ beforeId: "A-66", status: "pending" });
+    expect(f.c.historyGaps[0]).toMatchObject({
+      beforeId: "A-66",
+      status: "pending",
+    });
     await f.c.fillGap(id);
     expect(f.c.historyGaps).toEqual([]);
-    expect([...f.c.older, ...f.c.view!.messages].map(item => item.id))
-      .toEqual(Array.from({ length: 90 }, (_, i) => `A-${i + 35}`));
-  } finally { f.h.close(); }
+    expect(
+      [...f.c.older, ...f.c.view!.messages].map((item) => item.id),
+    ).toEqual(Array.from({ length: 90 }, (_, i) => `A-${i + 35}`));
+  } finally {
+    f.h.close();
+  }
 });
 
 test("history ending without the retained boundary leaves an unavailable gap", async () => {
@@ -656,13 +922,15 @@ test("history ending without the retained boundary leaves an unavailable gap", a
   try {
     await f.reconnect(60);
     const id = f.c.historyGaps[0]!.id;
-    const before = f.c.older.map(item => item.id);
+    const before = f.c.older.map((item) => item.id);
     f.behavior("end");
     await f.c.fillGap(id);
     expect(f.c.historyGaps[0]!.status).toBe("unavailable");
-    expect(f.c.older.map(item => item.id)).toEqual(before);
+    expect(f.c.older.map((item) => item.id)).toEqual(before);
     expect(f.calls).toHaveLength(1);
-  } finally { f.h.close(); }
+  } finally {
+    f.h.close();
+  }
 });
 
 test("visible gaps can each request a single page concurrently", async () => {
@@ -671,18 +939,26 @@ test("visible gaps can each request a single page concurrently", async () => {
     await f.reconnect(60);
     await f.reconnect(60);
     const hold = f.hold();
-    const ids = f.c.historyGaps.map(gap => gap.id);
+    const ids = f.c.historyGaps.map((gap) => gap.id);
     const calls = f.calls.length;
     const first = f.c.fillGap(ids[0]!);
     const second = f.c.fillGap(ids[1]!);
     await hold.entered.promise;
     await eventually(() => f.calls.length === calls + 2);
-    expect(f.c.historyGaps.map(gap => gap.status)).toEqual(["loading", "loading"]);
+    expect(f.c.historyGaps.map((gap) => gap.status)).toEqual([
+      "loading",
+      "loading",
+    ]);
     hold.release.release();
     await Promise.all([first, second]);
-    expect(f.c.historyGaps.map(gap => gap.status)).toEqual(["pending", "pending"]);
+    expect(f.c.historyGaps.map((gap) => gap.status)).toEqual([
+      "pending",
+      "pending",
+    ]);
     expect(f.calls.length - calls).toBe(2);
-  } finally { f.h.close(); }
+  } finally {
+    f.h.close();
+  }
 });
 
 test("gap failures are explicit, retryable, and no progress stops paging", async () => {
@@ -690,11 +966,11 @@ test("gap failures are explicit, retryable, and no progress stops paging", async
   try {
     await f.reconnect(60);
     const id = f.c.historyGaps[0]!.id;
-    const before = f.c.older.map(item => item.id);
+    const before = f.c.older.map((item) => item.id);
     f.behavior("error");
     await f.c.fillGap(id);
     expect(f.c.historyGaps[0]!.status).toBe("error");
-    expect(f.c.older.map(item => item.id)).toEqual(before);
+    expect(f.c.older.map((item) => item.id)).toEqual(before);
     f.behavior("normal");
     await f.c.fillGap(id);
     expect(f.c.historyGaps[0]!.status).toBe("pending");
@@ -704,7 +980,9 @@ test("gap failures are explicit, retryable, and no progress stops paging", async
     const calls = f.calls.length;
     await f.c.fillGap(id);
     expect(f.calls).toHaveLength(calls);
-  } finally { f.h.close(); }
+  } finally {
+    f.h.close();
+  }
 });
 
 test("a held gap page cannot enter a later session after returning to the same session ID", async () => {
@@ -724,7 +1002,10 @@ test("a held gap page cannot enter a later session after returning to the same s
     await old;
     expect(f.c.historyGaps).toEqual([]);
     expect(f.c.older).toEqual([]);
-  } finally { held.release.release(); f.h.close(); }
+  } finally {
+    held.release.release();
+    f.h.close();
+  }
 });
 
 test("gap reconnect and page fills do not replay an acknowledged submission", async () => {
@@ -740,7 +1021,9 @@ test("gap reconnect and page fills do not replay an acknowledged submission", as
     expect(f.submissions()).toBe(1);
     expect(f.c.pending[0]!.operationId).toBe(id);
     expect(f.c.pending[0]!.state).toBe("sent");
-  } finally { f.h.close(); }
+  } finally {
+    f.h.close();
+  }
 });
 
 test("gap responses from a prior connection and session cannot alter a new request", async () => {
@@ -764,7 +1047,10 @@ test("gap responses from a prior connection and session cannot alter a new reque
     await eventually(() => f.c.view?.sessionId === "B");
     expect(f.c.historyGaps).toEqual([]);
     expect(f.c.older).toEqual([]);
-  } finally { held.release.release(); f.h.close(); }
+  } finally {
+    held.release.release();
+    f.h.close();
+  }
 });
 
 test("manual history failure retains the current range and retries only on request", async () => {
@@ -772,11 +1058,38 @@ test("manual history failure retains the current range and retries only on reque
   const fixture = fixtureBackend();
   const backend: ChatBackend = {
     ...fixture.backend,
-    async read() { return { ...(await fixture.backend.read()), messages: [{ id: "live", role: "user", text: "live", createdAt: 2, operationId: null, turnId: null }], before: "older" }; },
+    async read() {
+      return {
+        ...(await fixture.backend.read()),
+        messages: [
+          {
+            id: "live",
+            role: "user",
+            text: "live",
+            createdAt: 2,
+            operationId: null,
+            turnId: null,
+          },
+        ],
+        before: "older",
+      };
+    },
     async history() {
       calls++;
       if (calls === 1) throw new Error("temporary history error");
-      return { messages: [{ id: "old", role: "user", text: "old", createdAt: 1, operationId: null, turnId: null }], before: null };
+      return {
+        messages: [
+          {
+            id: "old",
+            role: "user",
+            text: "old",
+            createdAt: 1,
+            operationId: null,
+            turnId: null,
+          },
+        ],
+        before: null,
+      };
     },
   };
   const h = await controllerHarness(backend);
@@ -790,22 +1103,46 @@ test("manual history failure retains the current range and retries only on reque
     c.retryHistory();
     await eventually(() => c.before === null);
     expect(c.historySyncFailed).toBe(false);
-    expect(c.older.map(message => message.id)).toEqual(["old"]);
+    expect(c.older.map((message) => message.id)).toEqual(["old"]);
     expect(calls).toBe(2);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 test("old session page cannot clear a new session's in-flight pagination", async () => {
-  const aEntered = gate(), aRelease = gate(), bEntered = gate(), bRelease = gate();
+  const aEntered = gate(),
+    aRelease = gate(),
+    bEntered = gate(),
+    bRelease = gate();
   let sessionId = "A";
   const fixture = fixtureBackend();
-  const message = (id: string): ChatMessage => ({ id, role: "user", text: id, createdAt: 1, operationId: null, turnId: null });
+  const message = (id: string): ChatMessage => ({
+    id,
+    role: "user",
+    text: id,
+    createdAt: 1,
+    operationId: null,
+    turnId: null,
+  });
   const backend: ChatBackend = {
     ...fixture.backend,
-    async read() { return { ...(await fixture.backend.read()), sessionId, messages: [message(`${sessionId}-live`)], before: `${sessionId}-cursor` }; },
+    async read() {
+      return {
+        ...(await fixture.backend.read()),
+        sessionId,
+        messages: [message(`${sessionId}-live`)],
+        before: `${sessionId}-cursor`,
+      };
+    },
     async history(before) {
-      if (before === "A-cursor") { aEntered.release(); await aRelease.promise; return { messages: [message("A-old")], before: null }; }
-      bEntered.release(); await bRelease.promise;
+      if (before === "A-cursor") {
+        aEntered.release();
+        await aRelease.promise;
+        return { messages: [message("A-old")], before: null };
+      }
+      bEntered.release();
+      await bRelease.promise;
       return { messages: [message("B-old")], before: null };
     },
   };
@@ -826,8 +1163,12 @@ test("old session page cannot clear a new session's in-flight pagination", async
     bRelease.release();
     await newPage;
     expect(c.loadingOlder).toBe(false);
-    expect(c.older.map(message => message.id)).toEqual(["B-old"]);
-  } finally { aRelease.release(); bRelease.release(); h.close(); }
+    expect(c.older.map((message) => message.id)).toEqual(["B-old"]);
+  } finally {
+    aRelease.release();
+    bRelease.release();
+    h.close();
+  }
 });
 
 test("local image previews survive failed-send retry and a lost retry receipt without resending", async () => {
@@ -837,10 +1178,13 @@ test("local image previews survive failed-send retry and a lost retry receipt wi
   let retries = 0;
   const backend: ChatBackend = {
     ...f.backend,
-    async retryFailed(input) {
-      retries++;
-      await f.backend.retryFailed(input);
-      throw new Error("lost retry response");
+    async submit(input) {
+      const result = await f.backend.submit(input);
+      if (result.state === "submitted") {
+        retries++;
+        throw new Error("lost retry response");
+      }
+      return result;
     },
   };
   const h = await controllerHarness(backend);
@@ -897,14 +1241,14 @@ test("local image previews survive failed-send retry and a lost retry receipt wi
     await eventually(
       () =>
         c.pending.length === 0 &&
-        c.localPreviews.every((item) => item.operationId !== source),
+        c.localPreviews.every((item) => item.operationId === source),
     );
     expect(retries).toBe(1);
     expect(c.localPreviews.map((item) => item.previewUrl)).toEqual([
       "blob:first",
       "blob:second",
     ]);
-    expect(c.localPreviews.map((item) => item.attachmentId)).not.toEqual(
+    expect(c.localPreviews.map((item) => item.attachmentId)).toEqual(
       originalIds,
     );
     expect(released).toBe(0);
@@ -1170,34 +1514,33 @@ test("slow acknowledgement, publish ordering, null lookup, reload and reconnect 
   const harness = await controllerHarness(backend);
   try {
     let c = await harness.create();
-    const retirements: string[] = [];
-    const sending = c.send("slow", (r) => retirements.push(r.reason));
+    let retirements = 0;
+    const sending = c.send("slow", () => { retirements++; });
     expect(c.pending[0]?.state).toBe("sending");
-    expect(c.recovery).toEqual([]);
     await eventually(() => calls === 1);
     hold.release();
     await sending;
     expect(c.pending[0]?.state).toBe("sent");
-    expect(retirements).toEqual([]);
+    expect(retirements).toBe(0);
     hide = false;
     await harness.publish();
     await eventually(() => !c.pending.length);
-    expect(retirements).toEqual(["observed"]);
+    expect(retirements).toBe(1);
     hold = gate();
     mode = "publish-first";
-    const publish = c.send("published", (r) => retirements.push(r.reason));
+    const publish = c.send("published", () => { retirements++; });
     await eventually(() =>
       c.view!.messages.some((m) => m.text === "published"),
     );
-    expect(c.pending).toEqual([]);
+    expect(c.pending[0]?.state).toBe("sending");
     hold.release();
     await publish;
-    expect(retirements).toEqual(["observed", "observed"]);
+    await eventually(() => c.pending.length === 0);
+    expect(retirements).toBe(2);
     mode = "lost";
     await c.send("pending null");
     await eventually(() => lookups > 0);
     expect(c.pending[0]?.state).toBe("sending");
-    expect(c.recovery).toEqual([]);
     const id = c.pending[0]!.operationId;
     c.close();
     c = await harness.create();
@@ -1206,7 +1549,6 @@ test("slow acknowledgement, publish ordering, null lookup, reload and reconnect 
     const beforeDisconnect = harness.disconnections;
     harness.disconnect();
     await eventually(() => harness.disconnections > beforeDisconnect);
-    expect(c.recovery).toEqual([]);
     await eventually(() => c.connected, 5000);
     expect(c.pending[0]?.state).toBe("sending");
     expect(calls).toBe(3); // Reconciliation never creates a new submission.
@@ -1222,248 +1564,36 @@ test("slow acknowledgement, publish ordering, null lookup, reload and reconnect 
   }
 });
 
-test("definite rejection retains bubble until acknowledged delete; reply failure/stop stay sent; withdrawal alone offers recovery", async () => {
-  const { imagesFixture } = await import("./images-fixture.ts");
-  const f = imagesFixture();
-  const harness = await controllerHarness(f.backend);
-  try {
-    const c = await harness.create();
-    const reasons: string[] = [];
-    await f.control({ action: "mode", state: "failed" });
-    await c.send("rejected", (r) => reasons.push(r.reason));
-    expect(reasons).toEqual([]);
-    expect(c.pending[0]?.state).toBe("failed");
-    expect(c.recovery).toEqual([]);
-    await c.deleteFailed(c.pending[0]!.operationId);
-    expect(reasons).toEqual(["observed"]);
-    expect(c.pending).toEqual([]);
-    await f.control({ action: "consume" });
-    await f.control({ action: "mode", state: "submitted" });
-    await c.send("submitted");
-    await eventually(() =>
-      c.view!.messages.some((m) => m.text === "submitted"),
-    );
-    await c.stop();
-    expect(c.recovery).toEqual([]);
-    expect(c.pending).toEqual([]);
-    await f.control({ action: "mode", state: "withdrawn" });
-    await c.send("withdrawn");
-    await eventually(() => c.recovery.some((r) => r.text === "withdrawn"));
-    expect(c.view!.messages.filter((m) => m.text === "withdrawn")).toHaveLength(
-      1,
-    );
-    expect(
-      c.recovery.find((r) => r.text === "withdrawn")?.replacementEligible,
-    ).toBe(true);
-    c.dismissRecovery(c.recovery[0]!.sourceId);
-    expect(c.recovery).toEqual([]);
-  } finally {
-    harness.close();
-  }
-});
-
-test("persisted local inputs normalize once without losing text, image references or identity", async () => {
-  const { fixtureBackend } = await import("./fixture.ts");
-  const f = fixtureBackend();
-  const id = crypto.randomUUID();
-  const image = {
-    attachmentId: "saved-photo",
-    name: "photo.png",
-    mediaType: "image/png",
-    availability: "available",
-  };
-  const saved = new Map([
-    [
-      "lamplit.pending:fixture-session",
-      JSON.stringify([
-        {
-          operationId: id,
-          text: "preserved",
-          images: [image],
-          createdAt: Date.now(),
-          state: "uncertain",
-        },
-      ]),
-    ],
-  ]);
-  const h = await controllerHarness(f.backend, saved);
+test("definite failure is retried with the same message ID or discarded locally", async () => {
+  const { submissionsFixture } = await import("./submissions-fixture.ts");
+  const f = submissionsFixture();
+  const h = await controllerHarness(f.backend);
   try {
     const c = await h.create();
-    expect(c.pending[0]).toMatchObject({
-      operationId: id,
-      text: "preserved",
-      images: [image],
-      state: "sending",
-    });
-    expect(c.recovery).toEqual([]);
-    expect(
-      JSON.parse(saved.get("lamplit.pending:fixture-session")!)[0].state,
-    ).toBe("sending");
-  } finally {
-    h.close();
-  }
-});
-
-test("expired dispatched input finalizes once, survives lost acknowledgement/reopen, retry identity stays one bubble and delete waits for ack", async () => {
-  const { submissionsFixture } = await import("./submissions-fixture.ts");
-  const fixture = submissionsFixture();
-  const id = crypto.randomUUID();
-  const saved = new Map([
-    [
-      "lamplit.pending:fixture-session",
-      JSON.stringify([
-        {
-          operationId: id,
-          text: "expired original",
-          state: "sending",
-          dispatched: true,
-          createdAt: Date.now() - 61000,
-        },
-      ]),
-    ],
-  ]);
-  await fixture.control({ action: "finalizationLost", enabled: true });
-  const h = await controllerHarness(fixture.backend, saved);
-  try {
-    let c = await h.create();
-    await Bun.sleep(30);
-    expect(c.connected).toBe(true);
-    expect((await fixture.control({ action: "state" })).finalizeCalls).toBe(1);
-    expect((await fixture.backend.lookup(id))?.state).toBe("failed");
-    expect(c.pending[0]?.state).toBe("sending");
-    c.close();
-    await fixture.control({ action: "finalizationLost", enabled: false });
-    c = await h.create();
-    await eventually(() => c.pending[0]?.state === "failed");
-    await fixture.control({ action: "mode", state: "slow" });
-    const retry = c.retryFailed(id);
+    await f.control({ action: "mode", state: "failed" });
+    await c.send("retry me");
+    const id = c.pending[0]!.operationId;
+    expect(c.pending[0]?.state).toBe("failed");
+    await f.control({ action: "mode", state: "submitted" });
     await c.retryFailed(id);
-    await eventually(() => c.pending[0]?.state === "sending");
-    await Bun.sleep(30);
-    expect((await fixture.control({ action: "state" })).retryCalls).toBe(1);
-    expect(c.pending).toHaveLength(1);
-    expect(c.pending[0]?.logicalId).toBe(id);
-    expect(c.pending[0]?.operationId).not.toBe(id);
-    await fixture.control({ action: "mode", state: "failed" });
-    await retry;
-    expect(c.pending[0]?.state).toBe("failed");
-    await fixture.control({ action: "deleteFailure", enabled: true });
-    await c.deleteFailed(id);
-    expect(c.pending[0]?.state).toBe("failed");
-    c.close();
-    c = await h.create();
-    expect(c.pending[0]?.logicalId).toBe(id);
-    await fixture.control({ action: "deleteFailure", enabled: false });
-    await c.deleteFailed(id);
-    expect(c.pending).toEqual([]);
-    c.close();
-    c = await h.create();
-    expect(c.pending).toEqual([]);
-    expect(c.recovery).toEqual([]);
-    expect(
-      (
-        await fixture.backend.submit({
-          operationId: id,
-          text: "expired original",
-        })
-      ).state,
-    ).toBe("failed");
+    await eventually(() => c.view!.messages.some((m) => m.operationId === id));
+    const state = await f.control({ action: "state" });
+    expect(state.submissions).toHaveLength(1);
+    expect(state.submissions[0]?.operationId).toBe(id);
+    await f.control({ action: "mode", state: "failed" });
+    await c.send("discard me");
+    const failed = c.pending.find((p) => p.text === "discard me")!;
+    expect(failed.state).toBe("failed");
+    const calls = (await f.control({ action: "state" })).submitCalls;
+    await c.deleteFailed(failed.operationId);
+    expect(c.pending.some((p) => p.operationId === failed.operationId)).toBe(
+      false,
+    );
+    expect((await f.control({ action: "state" })).submitCalls).toBe(calls);
   } finally {
-    await fixture.control({ action: "release" });
     h.close();
   }
 });
-
-for (const original of ["submit", "retry"])
-  for (const action of ["retry", "delete"])
-    test(`fenced failure unlocks ${action} while original ${original} RPC remains held`, async () => {
-      const { imagesFixture } = await import("./images-fixture.ts");
-      const f = imagesFixture(),
-        held = gate(),
-        deletion = gate();
-      let heldId = "",
-        retryCalls = 0,
-        deleteCalls = 0;
-      const backend: ChatBackend = {
-        ...f.backend,
-        async submit(input) {
-          if (original === "submit" && !heldId) {
-            heldId = input.operationId;
-            await held.promise;
-          }
-          return f.backend.submit(input);
-        },
-        async retryFailed(input) {
-          retryCalls++;
-          if (original === "retry" && !heldId) {
-            heldId = input.attemptId;
-            await held.promise;
-          }
-          return f.backend.retryFailed(input);
-        },
-        async deleteFailed(input) {
-          deleteCalls++;
-          await deletion.promise;
-          return f.backend.deleteFailed(input);
-        },
-      };
-      const h = await controllerHarness(backend);
-      let unresolved: Promise<void> | undefined;
-      try {
-        const c = await h.create();
-        if (original === "retry") {
-          await f.control({ action: "mode", state: "failed" });
-          await c.send("held terminal original");
-          await f.control({ action: "mode", state: "submitted" });
-          unresolved = c.retryFailed(c.pending[0]!.operationId);
-        } else unresolved = c.send("held terminal original");
-        await eventually(() => !!heldId);
-        const logicalId = c.pending[0]!.logicalId!;
-        const beforeRetry = retryCalls;
-        await c.retryFailed(logicalId);
-        await c.deleteFailed(logicalId);
-        expect(retryCalls).toBe(beforeRetry);
-        expect(deleteCalls).toBe(0);
-        c.pending[0]!.createdAt = Date.now() - 61000;
-        // The host serializes calls on each carrier. Recover onto a new carrier
-        // before fencing a request whose native handler remains held.
-        c.setVisible(false);
-        c.setVisible(true);
-        await eventually(() => c.pending[0]?.state === "failed");
-        expect((await backend.lookup(heldId))?.state).toBe("failed");
-        if (action === "retry") {
-          await c.retryFailed(logicalId);
-          expect(retryCalls).toBe(beforeRetry + 1);
-          await eventually(() =>
-            c.view!.messages.some((m) => m.text === "held terminal original"),
-          );
-          held.release();
-          await unresolved;
-          expect(c.pending).toEqual([]);
-          expect(
-            c.view!.messages.filter((m) => m.text === "held terminal original"),
-          ).toHaveLength(1);
-        } else {
-          const deleting = c.deleteFailed(logicalId);
-          await eventually(() => deleteCalls === 1);
-          held.release();
-          await unresolved;
-          await c.deleteFailed(logicalId);
-          await c.retryFailed(logicalId);
-          expect(deleteCalls).toBe(1);
-          expect(retryCalls).toBe(beforeRetry);
-          deletion.release();
-          await deleting;
-          expect(c.pending).toEqual([]);
-          expect(c.recovery).toEqual([]);
-        }
-      } finally {
-        held.release();
-        deletion.release();
-        await unresolved;
-        h.close();
-      }
-    });
 
 test("unknown sticker admission survives reopen and reconnect without automatic replay", async () => {
   const { imagesFixture } = await import("./images-fixture.ts");
@@ -1560,6 +1690,239 @@ test("unknown sticker admission survives reopen and reconnect without automatic 
     ).toEqual(sticker);
     expect(calls).toBe(1);
   } finally {
+    h.close();
+  }
+});
+
+test("a delayed lookup from the prior attempt cannot fail an explicit retry", async () => {
+  const id = crypto.randomUUID();
+  const oldLookup = gate(),
+    retryResult = gate();
+  const saved = new Map<string, string>();
+  const controller = new ChatController(() => {}, {
+    getItem: (key) => saved.get(key) ?? null,
+    setItem: (key, value) => {
+      saved.set(key, value);
+    },
+  });
+  const c = controller as any;
+  const failed = {
+    operationId: id,
+    attempt: 1,
+    state: "failed",
+    messageId: null,
+    turnId: null,
+    error: "failed",
+  };
+  let submissions = 0;
+  c.view = { sessionId: "fixture-session", messages: [] };
+  c.storageKey = "lamplit.pending:fixture-session";
+  c.pending = [
+    {
+      operationId: id,
+      text: "retry",
+      state: "sending",
+      dispatched: true,
+      createdAt: 1,
+    },
+  ];
+  c.client = {
+    close() {},
+    async lookup() {
+      await oldLookup.promise;
+      return failed;
+    },
+    async submit(input: { operationId: string }) {
+      submissions++;
+      expect(input.operationId).toBe(id);
+      await retryResult.promise;
+      return { ...failed, attempt: 2, state: "submitted", error: null };
+    },
+  };
+  try {
+    const lookup = c.reconcile();
+    c.applyReceipt(failed);
+    const retry = controller.retryFailed(id);
+    expect(controller.pending[0]?.state).toBe("sending");
+    oldLookup.release();
+    await lookup;
+    expect(controller.pending[0]?.state).toBe("sending");
+    retryResult.release();
+    await retry;
+    expect(controller.pending[0]?.state).toBe("sent");
+    expect(submissions).toBe(1);
+  } finally {
+    oldLookup.release();
+    retryResult.release();
+    controller.close();
+  }
+});
+
+test("a locally failed text message remains retryable after reload", async () => {
+  const fixture = fixtureBackend();
+  const id = crypto.randomUUID();
+  const saved = new Map([["lamplit.pending:fixture-session", JSON.stringify([{
+    operationId: id, text: "not dispatched", state: "failed", dispatched: false,
+    createdAt: 1, deliveryVersion: 2,
+  }])]]);
+  const h = await controllerHarness(fixture.backend, saved);
+  try {
+    const c = await h.create();
+    expect(c.pending[0]?.state).toBe("failed");
+    await c.retryFailed(id);
+    await eventually(() => c.view?.messages.some(message => message.operationId === id) ?? false);
+    expect(fixture.executions).toBe(1);
+  } finally { h.close(); }
+});
+
+test("a file retry retains its logical message identity after reload", () => {
+  const logicalId = crypto.randomUUID(), operationId = crypto.randomUUID();
+  const files = [{ attachmentId: "file-ref", name: "file.txt", mediaType: "text/plain", size: 4, availability: "available" }];
+  const saved = new Map([["lamplit.pending:fixture-session", JSON.stringify([{
+    operationId, logicalId, text: "file", state: "sending", dispatched: true,
+    files, createdAt: 1, deliveryVersion: 2,
+  }])]]);
+  const controller = new ChatController(() => {}, {
+    getItem: (key) => saved.get(key) ?? null,
+    setItem: (key, value) => { saved.set(key, value); },
+  });
+  try {
+    (controller as any).hydrate("fixture-session");
+    expect(controller.pending[0]).toMatchObject({ operationId, logicalId, files, state: "sending" });
+  } finally { controller.close(); }
+});
+
+test("an uncertain retry can be removed locally without replay or hiding later history", async () => {
+  const fixture = fixtureBackend();
+  const pendingRetry = gate();
+  let calls = 0;
+  const backend: ChatBackend = {
+    ...fixture.backend,
+    async submit() { calls++; if (calls === 2) await pendingRetry.promise; throw new Error("response lost"); },
+    async lookup() { return null; },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    await c.send("uncertain retry");
+    const id = c.pending[0]!.operationId;
+    h.deliver({ operationId: id, attempt: 1, state: "failed", messageId: null, turnId: null, error: "failed" });
+    await eventually(() => c.pending[0]?.state === "failed");
+    const retry = c.retryFailed(id);
+    await eventually(() => calls === 2);
+    expect(c.canDiscardPending(id)).toBe(false);
+    c.discardPending(id);
+    expect(c.pending).toHaveLength(1);
+    pendingRetry.release();
+    await retry;
+    expect(c.pending[0]?.state).toBe("sending");
+    expect(c.canDiscardPending(id)).toBe(true);
+    c.discardPending(id);
+    expect(c.pending).toHaveLength(0);
+    h.deliver({ operationId: id, attempt: 2, state: "submitted", messageId: id, turnId: null, error: null });
+    expect(c.pending).toHaveLength(0);
+    expect(calls).toBe(2);
+    await fixture.backend.submit({ operationId: id, text: "uncertain retry" });
+    await h.publish();
+    await eventually(() => c.view?.messages.some(message => message.operationId === id) ?? false);
+    expect(calls).toBe(2);
+  } finally { pendingRetry.release(); h.close(); }
+});
+
+test("pushed delivery results settle without a view change and ignore an older retry", async () => {
+  const fixture = fixtureBackend();
+  const retry = gate();
+  let calls = 0;
+  const backend: ChatBackend = {
+    ...fixture.backend,
+    async submit(input) {
+      calls++;
+      if (calls === 1) throw new Error("response lost");
+      await retry.promise;
+      return { operationId: input.operationId, attempt: 2, state: "failed", messageId: null, turnId: null, error: "second failure" };
+    },
+    async lookup() { return null; },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    await c.send("message");
+    const id = c.pending[0]!.operationId;
+    const first: Receipt = { operationId: id, attempt: 1, state: "failed", messageId: null, turnId: null, error: "first failure" };
+    const nextResult = (controller: ChatController, attempt: number) => new Promise<void>((resolve) => {
+      const socket: WebSocket = (controller as any).socket;
+      const onMessage = (event: MessageEvent) => {
+        const frame = JSON.parse(String(event.data));
+        if (frame.type !== "deliveryResult" || frame.receipt.operationId !== id || frame.receipt.attempt !== attempt) return;
+        socket.removeEventListener("message", onMessage);
+        resolve();
+      };
+      socket.addEventListener("message", onMessage);
+    });
+    h.deliver(first);
+    await eventually(() => c.pending[0]?.state === "failed");
+    const pendingRetry = c.retryFailed(id);
+    await eventually(() => calls === 2);
+    const oldResult = nextResult(c, 1);
+    h.deliver(first);
+    await oldResult;
+    expect(c.pending[0]?.state).toBe("sending");
+    c.close();
+    const reopened = await h.create();
+    expect(reopened.pending[0]?.retryAfter).toBe(1);
+    const oldAfterReload = nextResult(reopened, 1);
+    h.deliver(first);
+    await oldAfterReload;
+    expect(reopened.pending[0]?.state).toBe("sending");
+    h.deliver({ ...first, attempt: 2, error: "second failure" });
+    await eventually(() => reopened.pending[0]?.state === "failed");
+    const oldAfterFailure = nextResult(reopened, 1);
+    h.deliver(first);
+    await oldAfterFailure;
+    expect(reopened.pending[0]?.attempt).toBe(2);
+    expect(reopened.pending[0]?.state).toBe("failed");
+    retry.release();
+    await pendingRetry;
+    expect(calls).toBe(2);
+  } finally {
+    retry.release();
+    h.close();
+  }
+});
+
+test("a definite pushed failure permits retry before the old submit response arrives", async () => {
+  const fixture = fixtureBackend();
+  const firstResponse = gate();
+  let calls = 0;
+  const backend: ChatBackend = {
+    ...fixture.backend,
+    async submit(input) {
+      calls++;
+      if (calls === 1) {
+        await firstResponse.promise;
+        return { operationId: input.operationId, attempt: 1, state: "failed", messageId: null, turnId: null, error: "failed" };
+      }
+      return { operationId: input.operationId, attempt: 2, state: "submitted", messageId: null, turnId: null, error: null };
+    },
+    async lookup() { return null; },
+  };
+  const h = await controllerHarness(backend);
+  try {
+    const c = await h.create();
+    const sending = c.send("message");
+    await eventually(() => calls === 1);
+    const id = c.pending[0]!.operationId;
+    h.deliver({ operationId: id, attempt: 1, state: "failed", messageId: null, turnId: null, error: "failed" });
+    await eventually(() => c.pending[0]?.state === "failed");
+    const retrying = c.retryFailed(id);
+    expect(c.pending[0]?.state).toBe("sending");
+    firstResponse.release();
+    await Promise.all([sending, retrying]);
+    expect(calls).toBe(2);
+    expect(c.pending[0]?.state).toBe("sent");
+    expect(c.pending[0]?.attempt).toBe(2);
+  } finally {
+    firstResponse.release();
     h.close();
   }
 });

@@ -1,7 +1,7 @@
-> Current submission cutover: spec #3435 uses service/view v2. Follow
-> [native durable submission handoff](native-durable-submissions.md) for the current
-> candidate path, controls and immutable identity. Earlier archive identities below
-> are historical evidence, not acceptance of this contract.
+> Current delivery semantics are defined by spec #5706 and the
+> [native delivery contract](native-durable-submissions.md). Earlier archive
+> identities and failed-message candidates below are historical evidence;
+> they do not establish acceptance of this contract.
 
 # Default shared frontend and complete acceptance
 
@@ -40,7 +40,7 @@ bun tests/notifications-browser.mjs
 
 `test:browser` runs the text runner followed by the local composer touch fixture.
 The commands above also run panels, images, compact, search, notifications, route
-lifecycle and submission timing/recovery. The composer touch fixture uses a
+lifecycle and submission timing. The composer touch fixture uses a
 loopback test-owned host and checks that tap and hold do not request microphone
 access. It has no external-host mode and does not validate native iPhone behavior.
 Notifications use a recording native API fake. The route lifecycle regression uses
@@ -48,8 +48,9 @@ real intercepted requests and waits for held handlers to settle; genuine route
 errors fail the process. Fixture hosts use canonical root paths and reject missing
 assets and `/slice`, without SPA fallback. Text also boots `/chat` and checks
 standalone PWA assets; this does not establish actual platform gateway acceptance.
-Images check original/model variants, authenticated media, native limits and
-recovery. Screenshots cover 390/1280; image/compact retain 320px overflow probes.
+The image runner's earlier recovery assertions are historical and must not be
+treated as acceptance of #5706. Screenshots cover 390/1280; image/compact retain
+320px overflow probes.
 
 ## One committed-source candidate
 
@@ -87,14 +88,14 @@ frozen source. For extracted App fixture acceptance, from `acceptance/` set
 `bun voice-browser.mjs`, `bun panels-browser.mjs`, `bun images-browser.mjs`,
 `bun compact-browser.mjs`, `bun search-browser.mjs`,
 `bun notifications-browser.mjs`, then `bun route-lifecycle-browser.mjs` and `bun optimistic-send-browser.mjs` using
-its submission controls described in the v2 handoff. `voice-browser.mjs` is a
+its submission controls described below. `voice-browser.mjs` is a
 compatibility entry for the local composer touch regression; the packaged runner
 uses `APP_ACCEPTANCE_ASSETS` (default `../browser`) and rejects external host/control
 URLs. It requires installed Chrome and does not claim external voice acceptance.
-The submission runner supports isolated image/WS fixtures and actual native hosts through
-test-owned submission controls. It verifies receipt/view ordering, persisted App
-pending state, stop outcome and 390/1280 light/dark screenshots. Configure actual-host
-URLs as described in `native-durable-submissions.md`. Set
+The current submission runner supports a local socket fixture and external test-owned
+hosts through the controls described below. It checks optimistic text display,
+unknown-state reload without replay, explicit retry and local deletion at 390/1280;
+it does not itself establish native acceptance. Set
 `APP_ACCEPTANCE_EVIDENCE` to a separate
 absolute test-owned directory for each feature. Repeat all three per-file checks
 and archive/manifest hash checks after every native run; never rebuild or edit
@@ -192,26 +193,31 @@ the local composer touch regression, not the former PCM or native voice runner.
 also covers the composer runner and helpers. No current runner makes a native
 voice-input acceptance claim.
 
-## Failed-message actions candidate (#3936)
+## Message delivery runner (#5706)
 
-Use `bun tests/prepare-default.mjs --failed-message-actions` from verified clean
-committed source. The new `.scratch/failed-message-actions/candidate-<full HEAD>/`
-contains `lamplit-failed-message-actions.tgz`, compiled required contracts and all
-current composer touch/layout/source/default runners. Historical identities stay unchanged.
-Freeze the archive, three manifests and `SOURCE_HEAD`; verify before and after
-source-built and extracted `optimistic-send-browser.mjs` runs at existing 390/1280
-light/dark viewports. Install only extracted owned dependencies with frozen locks.
-Native consumers use the identical approved artifact without rebuilding.
+`bun tests/optimistic-send-browser.mjs` defaults to a loopback socket host and the
+test-owned `submissionsFixture`. `APP_ACCEPTANCE_ASSETS` selects the local browser
+assets; `APP_ACCEPTANCE_BROWSER` selects the browser executable. To run against an
+external test-owned host, set both `APP_ACCEPTANCE_URL` and
+`APP_ACCEPTANCE_CONTROL_URL`; the external host serves its own assets, so
+`APP_ACCEPTANCE_ASSETS` applies only to the local fixture. Optional
+`APP_ACCEPTANCE_USERNAME` and `APP_ACCEPTANCE_PASSWORD` are for synthetic fixture
+credentials. `APP_ACCEPTANCE_EVIDENCE` optionally names an existing test-owned
+directory for screenshots.
 
-The existing submissions controls additionally return `finalizeCalls`, `retryCalls`
-and `deleteCalls`. `finalizationLost` and `deleteFailure` with `enabled: boolean`
-lose the terminal acknowledgement or reject deletion respectively. Existing `slow`
-and `null` modes apply to retry as well as submit. Native controls drive real native
-state; they cannot forge failed receipts or bypass admission fences. The runner
-checks authoritative deadline failure, direct image/text retry with retained new
-drafts, repeated failure, keyboard menus, delete cancel/failure/success and reload.
-Controller/socket checks cover lost finalization acknowledgement/reopen, repeated
-click suppression, immutable identity and late admission after deletion. App fixture
-passes do not prove Chat native atomicity; the same artifact and actual native joint
-gate require Orc review before merge. Existing CFL pin remains unchanged; its next
-upgrade must implement all required methods with no silent fallback.
+The runner posts JSON controls: `reset`; `mode` with `slow`, `null`, `failed` or
+`submitted` (and `hidden` where used); `release`; `publish`; `complete`; and
+`state`. State must expose `submitCalls` and `submissions` for its assertions.
+The local fixture also exposes `lookupCalls`; the runner does not require the old
+finalization, retry or deletion counters. Native test controls must operate on
+test-owned state and must not fabricate public receipts or bypass authorization.
+
+The browser checks one immediate outgoing bubble with no sending label, an
+unconfirmed input surviving reload without another submit, explicit retry of a
+definite failure while preserving the current draft, and local deletion remaining
+absent after reload. It runs at 390 and 1280 pixels. The separate
+`tests/native-confirmed-delivery.test.ts` exercises the App socket contract with an
+isolated fake, including queued stop and source identity. Neither fixture result
+proves CFL or Pi native acceptance; each requires its own real native boundary and
+an attributable matching App artifact. The former #3936 failed-message candidate
+and its finalization/retry/delete controls are historical, superseded by #5706.

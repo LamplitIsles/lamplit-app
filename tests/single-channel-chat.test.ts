@@ -30,7 +30,7 @@ async function harness() {
     async history() { entered = true; await gate; return { messages: [history], before: null }; },
     async submit(input: import("../packages/contracts/src/index.ts").Submission) {
       submitCount++;
-      receipt = { operationId: input.operationId, state: "submitted", messageId: "accepted", turnId: "turn", error: null };
+      receipt = { operationId: input.operationId, attempt: 1, state: "submitted", messageId: "accepted", turnId: "turn", error: null };
       if (conflictOnSubmit) { current = record("rewritten\n"); await publish(); }
       return receipt;
     },
@@ -84,7 +84,7 @@ test("change notification publishes no independent timeline frame", async () => 
   try {
     h.notify();
     await h.publish();
-    await h.client.lookup("unused");
+    await h.client.lookup(crypto.randomUUID());
     expect(h.frames.some(frame => frame.type === "timeline")).toBe(false);
     expect(h.offline()).toBe(false);
   } finally { h.close(); }
@@ -227,7 +227,7 @@ test("accepted send retains its receipt when a direct view update conflicts", as
     expect(h.submitCount()).toBe(1);
     expect(h.view().messages[0]!.text).toBe("new\n");
     h.rewrite("new\n");
-    expect(await h.client.lookup(operationId)).toEqual({ operationId, state: "submitted", messageId: "accepted", turnId: "turn", error: null });
+    expect(await h.client.lookup(operationId)).toEqual({ operationId, attempt: 1, state: "submitted", messageId: "accepted", turnId: "turn", error: null });
     expect(h.submitCount()).toBe(1);
   } finally { h.close(); }
 });

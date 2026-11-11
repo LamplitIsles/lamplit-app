@@ -53,7 +53,6 @@ test("page teardown detaches permission and notice callbacks and rejects stale l
     compaction: null,
     before: null,
     capabilities,
-    recovery: [],
     messages: [
       {
         id,

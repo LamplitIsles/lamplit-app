@@ -7,11 +7,10 @@ import type {
 } from "../continuity.js";
 import type { ImageAttachmentLimits } from "./contracts.js";
 import type { CompanionImageDraft } from "./image-drafts.js";
-import type { PendingSubmissionRetirement } from "./contracts.js";
 import type { CompanionReadiness } from "./readiness.js";
 import type { CompanionStateRecord } from "../domain.js";
 import type { StickerClient } from "../../sticker-client.js";
-import type { StickerIdentity, FileRef, FileLimits } from "@lamplit/contracts";
+import type { StickerIdentity, FileLimits } from "@lamplit/contracts";
 import type { ChatFileDraft } from "../../file-upload.js";
 
 export interface CompanionIdentityView {
@@ -35,13 +34,12 @@ export interface CompanionActions {
   send: (
     text: string,
     images: readonly CompanionImageDraft[],
-    onRetire?: (retirement: PendingSubmissionRetirement) => void,
-    replacementSourceIds?: readonly string[],
+    onRetire?: () => void,
     files?: readonly ChatFileDraft[],
   ) => Promise<void>;
   retryFailed?: (key: string) => Promise<void>;
   deleteFailed?: (key: string) => Promise<void>;
-  dismissRecovery?: (key: string) => void;
+  discardPending?: (key: string) => void;
   readPanel?: <K extends keyof PanelBackend>(
     method: K,
     input: Omit<Parameters<PanelBackend[K]>[0], "sessionId">,
@@ -68,17 +66,6 @@ export interface CompanionContinuityView {
   contextPressure?: ContextPressureProjection;
   /** Session-scoped compaction lifecycle facts from the public view registry. */
   lifecycle?: CompactionLifecycleState | null;
-}
-
-export interface CompanionRecoveredDraft {
-  key: string;
-  /** Local pending record retired when this restored draft is intentionally submitted. */
-  localPendingKey?: string;
-  sourceIds: readonly string[];
-  input: string;
-  replacementEligible: boolean;
-  images: readonly { id: string; name: string; url: string }[];
-  files?: readonly FileRef[];
 }
 
 export interface CompanionHistoryView {
@@ -108,7 +95,6 @@ export interface CompanionBridgeProps {
   imageLimits?: ImageAttachmentLimits;
   fileLimits?: FileLimits;
   continuity?: CompanionContinuityView;
-  recoveredDraft?: CompanionRecoveredDraft;
   history?: CompanionHistoryView;
   onHistoryOpenChange?: (open: boolean) => void;
   onAdvanced?: () => void;

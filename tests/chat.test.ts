@@ -106,8 +106,7 @@ test("held history does not reorder mutations, and revoked access blocks reads a
   });
   let authorized = true,
     historyCalls = 0;
-  const source = crypto.randomUUID(),
-    attempt = crypto.randomUUID();
+  const source = crypto.randomUUID();
   const host = await createChatHost({
     ...fixture.backend,
     async history() {
@@ -121,21 +120,16 @@ test("held history does not reorder mutations, and revoked access blocks reads a
       order.push("submit-end");
       return {
         operationId: input.operationId,
+        attempt: 1,
         state: "submitted",
         messageId: null,
         turnId: null,
         error: null,
       };
     },
-    async retryFailed(input) {
-      order.push("retry");
-      return {
-        operationId: input.attemptId,
-        state: "submitted",
-        messageId: null,
-        turnId: null,
-        error: null,
-      };
+    async lookup(input) {
+      order.push("lookup");
+      return { operationId: input, attempt: 1, state: "submitted", messageId: null, turnId: null, error: null };
     },
   });
   const connection = host.connect(
@@ -163,11 +157,7 @@ test("held history does not reorder mutations, and revoked access blocks reads a
       call("s", "submit", { operationId: source, text: "hello" }),
     );
     const second = connection.receive(
-      call("r", "retryFailed", {
-        sessionId: "fixture-session",
-        operationId: source,
-        attemptId: attempt,
-      }),
+      call("r", "lookup", source),
     );
     await eventually(() => order.includes("submit-start"));
     await Bun.sleep(20);
@@ -175,7 +165,7 @@ test("held history does not reorder mutations, and revoked access blocks reads a
     releaseSubmit();
     await first;
     await second;
-    expect(order).toEqual(["submit-start", "submit-end", "retry"]);
+    expect(order).toEqual(["submit-start", "submit-end", "lookup"]);
     await eventually(() => frames.some((frame) => frame.id === "r"));
     authorized = false;
     await connection.receive(call("h2", "history", "new"));
@@ -365,17 +355,17 @@ test("Chord over WebSocket: admission, complete messages, steer, targeted stop, 
   }
 });
 
-test("v2 submission contract rejects old receipts/delivery/recovery and validates nullable lookup", async () => {
+test("v2 submission contract rejects old receipts and validates nullable lookup", async () => {
   const {
     ReceiptSchema,
     LookupSchema,
     MessageSchema,
-    RecoverySchema,
     ViewSchema,
   } = await import("../packages/contracts/src/index.ts");
   const id = crypto.randomUUID();
   const receipt = {
     operationId: id,
+    attempt: 1,
     state: "submitted" as const,
     messageId: id,
     turnId: null,
@@ -403,17 +393,7 @@ test("v2 submission contract rejects old receipts/delivery/recovery and validate
   expect(() =>
     validate(MessageSchema, { ...message, delivery: "consumed" }),
   ).toThrow();
-  const recovery = {
-    sourceId: id,
-    operationId: id,
-    text: "x",
-    images: [],
-    replacementEligible: true,
-  };
-  expect(validate(RecoverySchema, recovery)).toEqual(recovery);
-  expect(() =>
-    validate(RecoverySchema, { ...recovery, state: "unconsumed" }),
-  ).toThrow();
   const view = await fixtureBackend().backend.read();
   expect(() => validate(ViewSchema, { ...view, version: 1 })).toThrow();
+  expect(() => validate(ViewSchema, { ...view, recovery: [] })).toThrow();
 });

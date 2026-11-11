@@ -1,220 +1,76 @@
-# Native durable submission handoff — spec #3435
+# Native-confirmed message delivery — spec #5706
 
-App owns the only public schema and the shared Svelte frontend. References to
-Framework7 styling in this historical handoff predate spec #108.
-Pi (#3436) and CFL (#3437) consume the same Orc-approved source/build/contracts/
-runner identity. App fixture success establishes local readiness; actual Pi DO and
-CFL handler/socket joint acceptance remains pending Orc. Do not merge or deploy
-based on these fixture results. Do not adapt the runner or manufacture DTOs to
-make a native implementation pass; return semantic conflicts to the App owner.
+App owns the public Chat contract. CFL (#5707) and lamplit-chat (#5708) must
+implement it using their own execution owner's evidence and the exact approved
+App artifact. Passing App fixture tests does not prove native acceptance. No
+native acceptance, deployment or production data cleanup is implied here.
 
-## Public boundary
+## Outcomes and identity
 
-The view is `version: 2`, Chord singleton `lamplit.chat.v2`, socket path
-`/api/chat/socket`. The transport envelope still uses `version: 1`. Runtime
-validation rejects old receipt states, `ChatMessage.delivery` and recovery state.
-There is no old-wire fallback or second execution engine. Existing PWA pages must
-reload/update to the matching frontend: the old service ID cannot subscribe to v2.
-
-```ts
-Submission = {
-  operationId: UUID; text: string; images?: ImageRef[];
-  replacementSourceIds?: string[];
-}
-Receipt = {
-  operationId: string; state: "submitted" | "failed";
-  messageId: string | null; turnId: string | null; error: string | null;
-}
-InputRecovery = {
-  sourceId: string; operationId: UUID; text: string; images: ImageRef[];
-  replacementEligible: boolean;
-}
-ChatBackend.submit(input: Submission): Promise<Receipt>
-ChatBackend.lookup(operationId: string): Promise<Receipt | null>
-ChatBackend.stop(turnId: string): Promise<{ stopped: boolean }>
-```
-
-`ChatService` has the same methods with Chord `Context` as the last parameter;
-`openChat` supplies that context. Both host and client validate lookup nullability
-and operation correlation. `submitted` proves durable reception. `failed` proves
-not received, independent of reply execution; a nullable message/turn identity
-never acts as another outcome classifier. Null lookup is no definitive result.
-Repeated nulls or lost transport acknowledgements cannot authorize recovery.
-Identical operation ID and full payload deduplicate; different content conflicts.
-After explicit withdrawal before processing, retain a submitted receipt and add a
-confirmed recovery item. Failed/stopped replies only publish stable notices.
-
-Timeline user messages are persisted receptions. The App manages local
-`sending`/`sent`/`failed`, merges by operation ID, and persists pending references.
-Text-only submissions omit optional fields. Image upload, ordering, ownership and
-replacement eligibility remain governed by [image recovery](image-send-recovery.md).
-Original bytes survive in authorized native media; browser Files/previews remain
-page-owned until observation/failure. A reload before image upload completes
-cannot preserve those Files. The deterministic old local pending decoder preserves
-text/images/IDs and admission facts; it never infers failure from network ambiguity
-or resubmits automatically. Native storage conversion remains backend-owned.
-
-## Reproducible local checks and freezing
-
-From the App checkout, with committed source and a clean tree:
-
-```sh
-bun install --frozen-lockfile
-bun run check
-bun run lint
-bun run format:check
-bun run test
-bun run build
-bun tests/optimistic-send-browser.mjs
-bun tests/images-browser.mjs
-bun tests/keet-browser.mjs
-bun run prepare:default
-```
-
-`prepare:default` now creates `.scratch/native-durable-submissions/candidate/`,
-refusing to overwrite an identity. It builds only this checkout, records the
-source HEAD and SHA-256 manifests for browser/contracts/acceptance, and packages
-`lamplit-native-durable-submissions.tgz`. The archive includes compiled contracts,
-all relevant runners/fixtures/docs, and `SOURCE_HEAD`. Verify the archive hash and
-all three manifests after extraction. Install contracts dependencies in their own
-package directory before acceptance dependencies: Bun file-links that package and
-resolves its runtime imports from the original directory.
-
-```sh
-(cd contracts/package && bun install)
-(cd acceptance && bun install)
-```
-
-Run these only inside the test-owned extraction, then verify all manifest files
-still match. Lockfiles created
-by that isolated install are auxiliary evidence, never product compatibility.
-
-Orc approves this final identity before either backend freezes its consumption.
-A later App source or runner correction requires another identity and approval.
-Local screenshots/results and final source, artifact and evidence hashes are
-recorded in `.scratch/native-durable-submissions/implementation-report.md`.
-The repository has no AGENTS.md; user/host instructions govern implementation.
-README, protocol, integration, image documentation and CONTEXT cover this change.
-No Penpot design change applies; actual mobile/desktop send, failure and recovery
-states retain the existing Composer and Framework7 styles.
-
-## Joint submission runner
-
-From the extracted `acceptance/`, run the identical approved runner against each
-backend's real handler/socket, isolated native store and fake model/tools:
-
-```sh
-APP_ACCEPTANCE_URL=http://127.0.0.1:TEST_PORT/ \
-APP_ACCEPTANCE_CONTROL_URL=http://127.0.0.1:CONTROL_PORT/__test/submissions \
-APP_ACCEPTANCE_ASSETS=/absolute/extracted/browser \
-APP_ACCEPTANCE_EVIDENCE=/absolute/test-owned/evidence/submissions \
-bun optimistic-send-browser.mjs
-```
-
-Use test-only owner auth; optional `APP_ACCEPTANCE_USERNAME/PASSWORD` apply to the
-browser, controls and separate socket correlation probes. Cookies from the isolated
-browser context accompany the socket probes. Never use production credentials.
-The native controls are test infrastructure, not production routes or replacement
-chat adapters. Model/MCP/Keet external calls are fixtures/fakes. Controls must drive
-real native submit/persistence/projection/recovery; do not forge public messages,
-receipts, recovery DTOs or storage. Timing gates may hold transport result/publication
-without changing the native submission result. In the slow scenario, `hidden` must
-hold publication through acknowledgement until `publish`, so the App's persisted
-`sent` state can be observed. A lost-ack initial/reconnected native snapshot may
-already expose the persisted message.
-
-Every JSON POST action returns native `{ executions, submissions, recovery,
-messages, limits, album, submitCalls, lookupCalls }`. `submitCalls`/`lookupCalls`
-count socket invocations (including retries), while `executions` counts actual fake
-native runs, never HTTP uploads. `submissions` contains immutable original payloads,
-including definitively failed attempts needed for fixture diagnostics. A same-ID
-retry cannot create another native run or timeline entry.
-
-| Action                                | Test-owned native effect                                                                            |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `reset`                               | Reset this fixture's store/media/receipts/counters only; release old gates.                         |
-| `mode`, `state: submitted`            | Normal durable submission and fake reply execution.                                                 |
-| `mode`, `state: slow`, `hidden: true` | Hold next submission before durable reception; hold outgoing publication if supported.              |
-| `mode`, `state: publishFirst`         | Persist and publish next input before releasing its RPC acknowledgement.                            |
-| `mode`, `state: lost`, `hidden: true` | Persist input and lose its acknowledgement; lookup must find submitted.                             |
-| `mode`, `state: null`                 | Lose acknowledgement before reception; lookup remains null; never synthesize recovery.              |
-| `mode`, `state: failed`               | Definite nonreception with recoverable text and owned image originals.                              |
-| `mode`, `state: withdrawn`            | Submit then explicitly withdraw before processing; publish recovery and retain submitted receipt.   |
-| `release`                             | Release only the current timing gate.                                                               |
-| `publish`                             | Release held native view publication.                                                               |
-| `replyFailure`                        | Fail the current fake reply through native execution; publish `回复失败` notice, no input recovery. |
-| `complete`                            | Finish fake turn with `完整图片回复` and actual generated-image membership, as in image runner.     |
-| `consume`                             | Process/resolve recovery sources and remove them durably; preserve submitted receipts.              |
-| `state`                               | Read diagnostics without mutation.                                                                  |
-
-The runner checks immediate text/image bubbles, slow acknowledgement and publish
-order, lost acknowledgement/reload/reconnect without replay, null without recovery,
-definite rejection and original-image direct retry/delete, independent withdrawn-input replacement, pre-processing
-withdrawal, reply failure/targeted stop independence, exact-ID dedup/content conflict,
-reload history uniqueness, and light/dark 390/1280 layouts. Local runs use
-`tests/submissions-fixture.ts`; native runs must exercise actual native boundaries.
-The runner waits for persisted `sent`, then exact-operation pending retirement;
-publish-first retirement must precede ACK release. Sending/null display the existing
-quiet sending label; confirmed/observed inputs do not. Native stop must retire the
-active stop control, publish the existing `已停止回复` notice, and preserve the exact
-stopped operation's `submitted` lookup result without input recovery.
-The image runner continues 390/1280/320 ownership/media/history/album/recovery gates
-using `submitted/withdrawn/failed` modes. Its full controls remain in the image doc.
-
-Run existing browser, local composer touch, panels, images, compact, search, route
-lifecycle and Keet runners against the same approved artifact, with their documented
-isolated controls. Composer touch uses only its test-owned local host. One ordinary reply and the Keet maintenance path must retain original
-public text/source privacy and exclude internal attribution/context from timeline,
-search and panels. The unchanged Keet runner supports both image profiles; native
-provider prompts/maintenance requests require backend-side evidence in addition to
-browser projection checks. Web attachment selection uses the browser file input;
-physical device selection remains separate from fixture acceptance.
-
-## Failed-message actions — spec #3936
-
-Required public methods on `ChatBackend`/`ChatService` and `openChat`:
+A submitted operation has one stable operation ID and text and/or ordered
+attachment references. A correlated `submitted` receipt means the native
+execution owner reliably accepted the input. Host storage and a temporary native
+queue acknowledgement do not by themselves establish this. A `failed` receipt
+means definite failure of that input, not failure of a later companion reply.
+Lookup may return either proven outcome or `null` for unknown. A lookup failure
+must be provably for the current attempt; when it cannot exclude an old failure,
+return `null`. Timeouts, disconnections, missing history and null are unknown.
+No request is automatically replayed after an uncertain outcome.
 
 ```ts
-finalizeSubmission(input:
-  | { sessionId: string; submission: Submission }
-  | { sessionId: string; retry: RetryFailed }): Promise<Receipt | null>
-retryFailed(input: RetryFailed): Promise<Receipt>
-deleteFailed(input: { sessionId: string; operationId: UUID }):
-  Promise<{ sessionId: string; operationId: UUID; deleted: boolean }>
-type RetryFailed = { sessionId: string; operationId: UUID; attemptId: UUID }
+submit(input: { operationId: UUID; text: string; images?: ImageRef[]; files?: FileRef[] }): Promise<Receipt>
+lookup(operationId: UUID): Promise<Receipt | null>
+type Receipt = { operationId: UUID; attempt: number; state: "submitted" | "failed";
+  messageId: string | null; turnId: string | null; error: string | null }
 ```
 
-For an initial attempt, finalization carries the original immutable submission.
-For a retry, it carries its exact source/new-attempt identity: the browser cannot
-construct the new image references, which belong to the native adapter. Finalization
-must verify that association and target `retry.attemptId`; an unknown association
-returns null until the host can durably reject that exact retry identity. Never
-interpret it as permission to resubmit. All returned receipts correlate to the
-attempt being finalized or retried, and deletion acknowledges its source operation.
-The retry session must match the outer finalization session.
+`attempt` is a positive safe integer, starting at 1 for the logical operation.
+The native host advances it for each explicit retry after a definite failure;
+it never advances because an outcome is unknown. A host with durable source
+identity must preserve this sequence across restart. Every submit result, lookup
+result and delivery event uses the same current attempt; stale asynchronous
+native work must not be published as the current attempt. A result already in
+transport can arrive late, so the consumer must compare attempts and its local
+retry/connection lifecycle before applying it. A local retry remains fenced until
+the current attempt can be associated; the logical operation ID stays unchanged.
 
-Hosts recheck authenticated owner/session at the final native mutation boundary.
-They serialize original submit, retry and finalization through existing native
-admission, checking durable rejection immediately before admission. Submitted
-native operations remain submitted, including queued/working/completed. Persist
-immutable payload fingerprints and minimal rejected proof across reopen and failed
-deletion. Same ID with changed payload or changed retry source rejects. The public
-host validates session/payload/results; it cannot create the native atomic guarantee.
-If the public native seam cannot establish that guarantee, report concrete evidence;
-never return failed based on time, null or a socket error.
+The owning socket binds the request to its authenticated session. The shared host
+rejects a response from an obsolete session lifetime. The native adapter rechecks
+owner and session before handing work to the native execution owner and uses a
+pre-commit guard when that owner supports one. Work already handed off may still
+complete after authorization is revoked; reconcile its actual or unknown outcome
+without replay. Responses and events remain subject to authorization, so a revoked
+connection receives neither. Remote revocation and native commit are not assumed
+to be atomic. A new message during an active reply continues to steer that turn in
+real time.
 
-Retry uses server-owned original text and exact stored image bytes. Reassociate
-originals with the new attempt under existing owner/session guards; old-operation
-references cannot simply be submitted under another ID. Missing originals reject
-without partial admission. Duplicate calls with the same retry identity return the
-same attempt outcome. Delete removes failed presentation/recovery only and retains
-admission proof and accepted history/album/originals. `deleted: false` means no
-removal, including accepted racing actions; the client reconciles acceptance.
+The frontend owns the failure presentation and explicitly retries or discards a
+definitely failed message locally. A retry after submission uses the same
+operation ID and content. A file-staging failure before submission can instead
+be explicitly retried with a new operation ID while preserving the displayed
+logical message, if the necessary originals remain available. Once no send is
+in flight, the frontend can also remove an unknown submitted item locally; that
+does not mark it failed, resend it or delete native history that may appear later.
+The native host must verify owner and session, preserve immutable identity, and
+ensure an explicit retry cannot consume an already accepted input again. Any
+identity or deduplication capability must be established from actual native
+behavior; adding an ID to a DTO does not provide it. The frontend associates
+asynchronous results with its local request and session generations.
 
-`bun test tests/failed-message-actions.test.ts` exercises the public socket and owned
-fixture with delayed admission, finalization, identity conflict, repeated retry,
-reopened host/deletion barrier and exact original image bytes. It proves App's
-contract, not native Pi atomicity. The whole final immutable App artifact and Chat
-native joint gate require Orc approval before merge. CFL's existing older pin stays
-unchanged; its next App upgrade must implement these required methods. No capability
-fallback, old wire path, deployment or native SDK patch is supplied.
+If stop definitively removes an unprocessed queued message, the host may report
+that message failed. If the failure cannot be proven or recovered after a lost
+response, it remains unknown. Native hosts must report their evidence and gaps;
+the public contract does not prescribe a history representation or infer failure
+from missing entries. Hosts emit a scoped `deliveryResult` change for definite
+results even when the view does not change, without idle polling. Events are not
+durable; after a missed event or reconnect the client uses `lookup`.
+
+## Acceptance
+
+`bun test tests/native-confirmed-delivery.test.ts` uses the actual App socket host
+and client with isolated in-memory fixture state. It exercises accepted, failed,
+unknown, explicit retry, stop, source correlation, authentication and session
+lifetime; the fixture is not a native adapter. CFL and Pi must separately test
+native acceptance, identity, owner/session boundaries, lost responses, stop,
+concurrent consumption and attachment ownership against their real execution
+seams and an attributable App artifact. Existing production data is out of scope.

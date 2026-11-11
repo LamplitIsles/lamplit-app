@@ -193,7 +193,7 @@ test("healthy idle has zero RPC beyond initialization; live updates and domain e
   }
 }, 20000);
 
-test("silent blackhole demand deadline invalidates once; send failure also invalidates", async () => {
+test("lookup timeout is isolated; submit timeout and socket send failure invalidate once", async () => {
   const h = await harness();
   const time = clock();
   let offline = 0;
@@ -210,6 +210,18 @@ test("silent blackhole demand deadline invalidates once; send failure also inval
     await until(() => h.calls > initial);
     time.fire(30000);
     expect((await lost).retryable).toBe(true);
+    expect(offline).toBe(0);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    h.blackhole = false;
+    expect(await c.lookup(crypto.randomUUID())).toBeNull();
+    expect(offline).toBe(0);
+
+    h.blackhole = true;
+    const beforeSubmit = h.calls;
+    const submitted = c.submit({ operationId: crypto.randomUUID(), text: "blackholed input" }).catch((e) => e);
+    await until(() => h.calls > beforeSubmit);
+    time.fire(30000);
+    expect((await submitted).retryable).toBe(true);
     expect(offline).toBe(1);
     socket.dispatchEvent(new Event("error"));
     expect(offline).toBe(1);

@@ -267,7 +267,6 @@ try {
     const choose = page.locator("#companion-image-library");
     const drafts = page.locator(".companion-image-draft-preview img");
     const recovery = page.getByTestId("input-recovery");
-    const restore = page.getByRole("button", { name: "恢复编辑", exact: true });
     await expect(input).toBeVisible();
     await expect(page.locator(".companion-attach")).toBeVisible();
     if (!external) {
@@ -638,7 +637,7 @@ try {
       fullPage: true,
     });
     await control({ action: "uploadFailure", enabled: false });
-    await control({ action: "mode", state: "withdrawn" });
+    await control({ action: "mode", state: "submitted" });
     await page
       .locator(".k-message.outgoing")
       .filter({ hasText: "上传失败保留" })
@@ -649,112 +648,10 @@ try {
       .getByRole("button", { name: "重试", exact: true })
       .click();
     await expect(input).toHaveValue("");
-    await expect(recovery).toBeVisible();
-    await input.fill("当前编辑");
-    await expect(restore).toBeDisabled();
-    await page.screenshot({
-      path: `${evidence}/recovery-protected-${width}.png`,
-      fullPage: true,
-    });
-    await input.fill("");
-    await page.reload();
-    await expect(recovery).toBeVisible();
-    await restore.click();
-    await expect(input).toHaveValue("上传失败保留");
-    await expect(drafts).toHaveCount(0);
-    await expect(page.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
-    await input.fill("恢复后编辑");
-    await control({ action: "mode", state: "submitted" });
-    await input.press("Enter");
-    await expect
-      .poll(async () => (await control({ action: "state" })).recovery.length)
-      .toBe(0);
-    state = await control({ action: "state" });
-    const replacement = state.submissions.at(-1);
-    expect(replacement.text).toBe("恢复后编辑");
-    expect(replacement.replacementSourceIds.length).toBe(1);
-    expect(replacement.operationId).not.toBe(
-      replacement.replacementSourceIds[0],
-    );
-    const executions = state.executions;
-    await page.reload();
-    expect((await control({ action: "state" })).executions).toBe(executions);
     await expect(recovery).toHaveCount(0);
-    // Restoring text never fetches original attachments.
-    await control({ action: "nativeRecovery" });
+    await expect.poll(async () => (await control({ action: "state" })).submissions.length).toBe(beforeFailure + 1);
     await page.reload();
-    await expect(recovery).toBeVisible();
-    let mediaRequests = 0;
-    await page.route("**/api/chat/media/**/original", async (route) => {
-      mediaRequests++;
-      await route.abort();
-    });
-    await restore.click();
-    await expect(input).toHaveValue("原生恢复输入");
-    await expect(drafts).toHaveCount(0);
-    expect(mediaRequests).toBe(0);
-    await input.fill("恢复期间编辑");
-    await expect(input).toHaveValue("恢复期间编辑");
-    await page.unrouteAll({ behavior: "wait" });
-    await input.fill("");
-    await expect(recovery).toBeVisible();
-    await page.getByRole("button", { name: "忽略", exact: true }).click();
     await expect(recovery).toHaveCount(0);
-    expect((await control({ action: "state" })).recovery.length).toBe(1);
-    await control({ action: "consume" });
-    await input.fill("");
-    // Clearing a restored source returns its offer; Ignore reaches the next source without reload.
-    for (const discard of [false, true]) {
-      await control({ action: "nativeRecovery" });
-      await control({ action: "nativeRecovery" });
-      const sources = (await control({ action: "state" })).recovery;
-      const restoredSource = sources[0];
-      const nextSource = sources.find(
-        (source) => source.sourceId !== restoredSource.sourceId,
-      );
-      expect(nextSource).toBeDefined();
-      const assertOriginal = async (source) => {
-        await expect(input).toHaveValue(source.text);
-        await expect(drafts).toHaveCount(0);
-        await expect(page.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
-      };
-      // The control acknowledgement is not delivery of its recovery view to the browser.
-      await expect(recovery.locator("img")).toHaveAttribute(
-        "src",
-        new RegExp(restoredSource.images[0].attachmentId),
-      );
-      await restore.click();
-      await assertOriginal(restoredSource);
-      if (discard)
-        await page
-          .getByRole("button", { name: "丢弃恢复的输入", exact: true })
-          .click();
-      else {
-        await input.fill("");
-        await expect(recovery).toBeVisible();
-        await page.getByRole("button", { name: "忽略", exact: true }).click();
-      }
-      await expect(input).toHaveValue("");
-      await expect(recovery).toBeVisible();
-      await expect(recovery.locator("img")).toHaveAttribute(
-        "src",
-        new RegExp(nextSource.images[0].attachmentId),
-      );
-      await restore.click();
-      await assertOriginal(nextSource);
-      await page.screenshot({
-        path: `${evidence}/recovery-${discard ? "discard" : "clear"}-next-${width}.png`,
-        fullPage: true,
-      });
-      expect(
-        (await control({ action: "state" })).recovery.map((r) => r.sourceId),
-      ).toEqual(sources.map((r) => r.sourceId));
-      await page
-        .getByRole("button", { name: "丢弃恢复的输入", exact: true })
-        .click();
-      await expect(recovery).toHaveCount(0);
-      await control({ action: "consume" });
-    }
     // A newer send cannot silently discard Files from a delayed failed upload.
     await control({ action: "uploadFailure", enabled: true });
     let releaseUpload;
@@ -790,19 +687,6 @@ try {
     await page.unrouteAll({ behavior: "wait" });
     await control({ action: "uploadFailure", enabled: false });
     await input.fill("");
-    // Missing originals do not block restoring and sending the text.
-    await control({ action: "nativeRecovery" });
-    await page.reload();
-    await expect(recovery).toBeVisible();
-    await control({ action: "missing" });
-    await restore.click();
-    await expect(input).toHaveValue("原生恢复输入");
-    await expect(drafts).toHaveCount(0);
-    await expect(page.getByText("附件未恢复，请重新选择。", { exact: true })).toBeVisible();
-    await input.press("Enter");
-    await expect
-      .poll(async () => (await control({ action: "state" })).recovery.length)
-      .toBe(0);
     await control({ action: "mode", state: "failed" });
     await input.fill("拒绝输入");
     await input.press("Enter");
@@ -815,7 +699,6 @@ try {
     ).toBeVisible();
     await expect(recovery).toHaveCount(0);
     await input.fill("");
-    await control({ action: "consume" });
     await page.reload();
     await expect(recovery).toHaveCount(0);
     await control({ action: "disabled", enabled: true });
@@ -886,7 +769,7 @@ try {
       ? "Sticker panel fake-host browser acceptance passed."
       : process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1"
       ? "Output6/7/11 initial/history ordered refs, connection and six-image input guard passed."
-      : "Image/recovery browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, protected recovery/refresh/edit/replacement, missing originals, rejection/withdrawal/submission, disabled storage, 390/1280/320 overflow.",
+      : "Image browser acceptance passed: file/paste, measured thumbnails/removal, image-only/text+image/steering, immutable uploads, owner isolation, history/album provenance, failure retention, explicit retry, rejection, disabled storage, 390/1280/320 overflow.",
   );
 } finally {
   await browser.close();

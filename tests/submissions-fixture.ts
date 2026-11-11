@@ -7,14 +7,10 @@ export function submissionsFixture() {
   let mode = "submitted",
     hidden = false,
     submitCalls = 0,
-    lookupCalls = 0,
-    finalizeCalls = 0,
-    retryCalls = 0,
-    deleteCalls = 0,
-    finalizationLost = false,
-    deleteFailure = false;
+    lookupCalls = 0;
   let release: (() => void) | undefined;
   let gate: Promise<void> | undefined;
+  const unknown = new Set<string>();
   const backend: ChatBackend = {
     ...fixture.backend,
     async read() {
@@ -23,36 +19,28 @@ export function submissionsFixture() {
     },
     async submit(input) {
       submitCalls++;
+      if (unknown.has(input.operationId))
+        throw new Error("Test-owned outcome remains unknown");
+      unknown.add(input.operationId);
       if (mode === "null")
         throw new Error("Test-owned lost acknowledgement before submission");
       if (mode === "slow") await gate;
-      const receipt = await fixture.backend.submit(input);
+      let receipt;
+      try {
+        receipt = await fixture.backend.submit(input);
+      } catch (error) {
+        if (mode === "queued") unknown.delete(input.operationId);
+        throw error;
+      }
+      unknown.delete(input.operationId);
       if (mode === "publishFirst") await gate;
       if (mode === "lost")
         throw new Error("Test-owned lost acknowledgement after submission");
       return receipt;
     },
-    async finalizeSubmission(input) {
-      finalizeCalls++;
-      const receipt = await fixture.backend.finalizeSubmission(input);
-      if (finalizationLost)
-        throw new Error("Test-owned lost finalization acknowledgement");
-      return receipt;
-    },
-    async retryFailed(input) {
-      retryCalls++;
-      if (mode === "slow") await gate;
-      if (mode === "null")
-        throw new Error("Test-owned lost retry before admission");
-      return fixture.backend.retryFailed(input);
-    },
-    async deleteFailed(input) {
-      deleteCalls++;
-      if (deleteFailure) throw new Error("Test-owned deletion failure");
-      return fixture.backend.deleteFailed(input);
-    },
     async lookup(id) {
       lookupCalls++;
+      if (unknown.has(id)) return null;
       return fixture.backend.lookup(id);
     },
   };
@@ -64,13 +52,8 @@ export function submissionsFixture() {
         release = undefined;
         mode = "submitted";
         hidden = false;
-        submitCalls =
-          lookupCalls =
-          finalizeCalls =
-          retryCalls =
-          deleteCalls =
-            0;
-        finalizationLost = deleteFailure = false;
+        submitCalls = lookupCalls = 0;
+        unknown.clear();
         await fixture.control(input);
         break;
       case "mode": {
@@ -85,7 +68,7 @@ export function submissionsFixture() {
           });
         await fixture.control({
           action: "mode",
-          state: ["failed", "withdrawn"].includes(mode) ? mode : "submitted",
+          state: ["failed", "queued"].includes(mode) ? mode : "submitted",
         });
         break;
       }
@@ -102,12 +85,6 @@ export function submissionsFixture() {
         await fixture.control({ action: "replyFailure" });
         break;
       }
-      case "finalizationLost":
-        finalizationLost = input.enabled === true;
-        break;
-      case "deleteFailure":
-        deleteFailure = input.enabled === true;
-        break;
       case "state":
         break;
       default:
@@ -117,9 +94,6 @@ export function submissionsFixture() {
       ...(await fixture.control({ action: "state" })),
       submitCalls,
       lookupCalls,
-      finalizeCalls,
-      retryCalls,
-      deleteCalls,
     };
   };
   return { ...fixture, backend, control };

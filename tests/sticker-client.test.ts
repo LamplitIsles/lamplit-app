@@ -982,7 +982,7 @@ test("disconnect settles a pending sticker stage and reconnect requires explicit
     expect(submissions).toHaveLength(0);
     const retry = c.retryFailed(originalId);
     expect(requests).toHaveLength(2);
-    expect(requests[1]!.input.operationId).not.toBe(originalId);
+    expect(requests[1]!.input.operationId).toBe(originalId);
     requests[1]!.resolve(
       json({
         sessionId: "session",
@@ -1054,7 +1054,7 @@ test("stage timeout may leave an attachment but never replays or submits without
     expect(submissions).toHaveLength(0);
     await c.retryFailed(c.pending[0]!.operationId);
     expect(stages).toHaveLength(2);
-    expect(stages[1].operationId).not.toBe(stages[0].operationId);
+    expect(stages[1].operationId).toBe(stages[0].operationId);
     expect(submissions).toHaveLength(1);
   } finally {
     globalThis.fetch = previousFetch;

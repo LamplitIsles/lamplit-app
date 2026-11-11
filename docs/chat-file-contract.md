@@ -11,12 +11,12 @@ limits again when admitting a submission. Existing hosts may omit the capability
 are untrusted metadata, never storage paths, HTTP headers, markup or instructions. Names have
 1–200 Unicode code points; media types may be empty and have at most 255 code points. File IDs
 use the existing opaque media ID syntax. `availability` is `available` or `missing`. Files are
-ordered separately from images and are not image library members. `Submission.files`,
-`ChatMessage.files`, and `InputRecovery.files` are optional arrays; the latter remains present
+ordered separately from images and are not image library members. `Submission.files` and
+`ChatMessage.files` are optional arrays; message file references remain present
 only when the backend supplies file references. File-only and mixed messages are valid.
 Submission references must be available, unique and within the global limits; host admission
-must additionally check current capability, ownership, session, immutable staging provenance,
-aggregate limits and replacement eligibility. History and recovery may indicate missing files.
+must additionally check current capability, ownership, session, immutable staging provenance
+and aggregate limits. History may indicate missing files.
 
 ## HTTP and staging
 
@@ -59,15 +59,18 @@ owner and session before returning either scoped response. The backend must reta
 across restarts and prevent stale uploads or completion from reviving retired IDs. Reclamation
 must not delete admitted or otherwise retained user data.
 
-Any staging failure, including HTTP 410 or an unknown response, is terminal for that attempt.
-The client preserves the failed input and available page-owned originals; an explicit retry
-creates a new operation only when the user requests it. After reload, files must be reselected.
-If message admission is uncertain, its original durable identity is looked up or finalized
-and is never automatically resubmitted.
+An incomplete or failed staging operation does not establish message acceptance.
+The App retains the failed message locally. When the original files and any
+accompanying images remain available on the page, an explicit Retry starts a new
+operation ID and preserves the displayed logical message; it does not resume the
+incomplete file operation. Browser-held originals do not survive reload. If the
+needed originals are unavailable, delete the failed message and reselect the
+attachments. An uncertain submitted message is checked, never replayed
+automatically. The host must enforce the existing operation-retirement fence.
 
 `PUT /api/chat/file-operations/<operationId>/files/<id>` sends the raw bytes as `application/octet-stream` and returns 204. Exactly the declared number of bytes, including zero, must be consumed. `POST /api/chat/file-operations/<operationId>/complete` returns the existing `{ sessionId, operationId, files: [{ id, order, ref }] }` shape only after all files have been verified. IDs, metadata, order and unique available refs are checked. Mutations require an exact same-origin `Origin`; all routes require authentication. Mount `fileStreamHttp` before `fileHttp` and static assets. `FileStreamBackend` supplies `reserve`, `status`, `receive`, and `complete`; each mutation calls its `check()` immediately before atomic publication. The adapter bounds manifest and streamed byte counts and propagates backpressure. The host must incrementally hash every received stream, compare duplicate bytes and metadata, reject conflicts, enforce scoped access and resource/concurrency limits, atomically publish without overwriting, recheck authorization/session/capability at commit, and clean only operation-owned temporary resources. The adapter itself is not durable storage and does not supply a hash or atomicity.
 
-For download, `FileBackend.fileStream` returns `{ body: ReadableStream<Uint8Array>, size }` for authorized exact-size bytes; `fileHttp` enforces the 100 MB ceiling and checks identity during streaming. Direct browser downloads may use the authenticated same-origin download URL so bytes flow to the browser download manager; the browser may use the anchor’s `download` filename; Chrome 156 was verified in isolation, while Safari and real devices require acceptance. Names remain untrusted local suggestions and must never enter response headers. Restoring input to the composer restores text only; images and files must be selected again.
+For download, `FileBackend.fileStream` returns `{ body: ReadableStream<Uint8Array>, size }` for authorized exact-size bytes; `fileHttp` enforces the 100 MB ceiling and checks identity during streaming. Direct browser downloads may use the authenticated same-origin download URL so bytes flow to the browser download manager; the browser may use the anchor’s `download` filename; Chrome 156 was verified in isolation, while Safari and real devices require acceptance. Names remain untrusted local suggestions and must never enter response headers.
 
 When file capability is enabled, clients use this streaming protocol for every file, regardless
 of the advertised limits. Absent or false capability disables file intake. Old clients, old
@@ -77,26 +80,19 @@ before CFL pins it; deployment and native acceptance remain separate.
 
 ## Durable submission and retry
 
-The existing operation, lookup and finalization rules in [native durable submissions](native-durable-submissions.md)
-apply to the entire ordered text/image/file payload. Unknown admission is inspected or finalized;
-never replay it automatically. An explicitly retried failed submission gets a new operation ID.
-Its receipt carries `retryFiles: { sessionId, sourceOperationId, files: [{ sourceAttachmentId,
-ref }] }`, with a one-to-one mapping to the original file references. The names, types and sizes
-must match the source, and the host must bind mapped references to the original bytes and
-provenance. Image mapping remains independent. Mismatched or absent mappings cannot be treated
-as success. A reload before staging completes loses browser File objects; the local failed input
-retains metadata and requires the user to delete and reselect files. Dispatched references and
-uncertain outcomes remain durable local pending state and are checked, not resent.
-
-Explicit recovery to the composer restores text only, without fetching or restoring image or
-file originals. A person who wants attachments in the replacement selects and uploads them
-again. The source remains subject to the existing replacement-eligibility checks. This is
-separate from explicit failed-message retry, which retains the existing original-file and
-retry-mapping behavior.
+The [native delivery contract](native-durable-submissions.md) applies to the
+complete ordered text/image/file payload. A definite failure after submission may
+be explicitly retried under the same operation ID only with valid references and
+native identity protections. A file-staging failure before submission instead
+uses a new operation ID on explicit Retry while preserving the displayed logical
+message, if the originals remain available. A retired staging operation is never
+revived. Unknown submissions are checked, never replayed automatically; once no
+send is in flight, the pending item may be removed from this device without
+claiming failure or deleting any later native history.
 
 The App’s `createFileDrafts`, `fileIntakeError`, and `streamFileUploads` are in
 `apps/web/src/lib/file-upload.ts`. `ChatController.send` accepts file
-drafts as its seventh argument after the existing sticker argument; pending items expose
+drafts as its sixth argument after the existing sticker argument; pending items expose
 `fileDrafts` metadata and, after staging, `files`. Use the current view capability for intake,
 preserve draft ownership until retirement, and resolve session changes before using async results.
 Use `fileDownloadUrl` only for opaque validated IDs. `tests/files-fixture.ts` is an isolated fake

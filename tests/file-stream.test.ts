@@ -571,7 +571,7 @@ test("controller streams even with small advertised limits and persists refs bef
     close() {},
   };
   try {
-    await controller.send("", undefined, [], [], undefined, undefined, [
+    await controller.send("", undefined, [], undefined, undefined, [
       { id: "f0", file: new File(["abc"], "a") },
     ]);
     expect(puts).toBe(1);
@@ -863,7 +863,7 @@ test("controller rejects non-204 successful PUT responses before completion and 
         },
       };
       try {
-        await c.send("text", undefined, [], [], undefined, undefined, [
+        await c.send("text", undefined, [], undefined, undefined, [
           { id: "f0", file: new File(["a"], "a") },
         ]);
         expect(c.pending[0]).toMatchObject({
@@ -888,7 +888,7 @@ test("controller rejects non-204 successful PUT responses before completion and 
   }
 });
 
-test("controller retains a failed pre-submit attempt and only explicit retry creates a new one", async () => {
+test("controller retries an incomplete upload with a fresh operation and no automatic replay", async () => {
   const { ChatController } =
     await import("../apps/web/src/lib/chat-controller.ts");
   const previousLocation = Object.getOwnPropertyDescriptor(
@@ -978,7 +978,7 @@ test("controller retains a failed pre-submit attempt and only explicit retry cre
   };
   const draft = { id: "f0", file: new File(["a"], "a") };
   try {
-    await c.send("text", undefined, [], [], undefined, undefined, [draft]);
+    await c.send("text", undefined, [], undefined, undefined, [draft]);
     const failed = c.pending[0]!;
     expect(failed).toMatchObject({
       state: "failed",
@@ -993,10 +993,8 @@ test("controller retains a failed pre-submit attempt and only explicit retry cre
     expect(reservations).toHaveLength(2);
     expect(reservations[1]).not.toBe(reservations[0]);
     expect(submissions).toBe(1);
+    expect(c.pending[0]!.logicalId).toBe(failed.operationId);
     expect(c.pending[0]!.state).toBe("sending");
-    await internal.reconcile();
-    expect(lookups).toBeGreaterThan(0);
-    expect(submissions).toBe(1);
   } finally {
     c.close();
     globalThis.fetch = previousFetch;

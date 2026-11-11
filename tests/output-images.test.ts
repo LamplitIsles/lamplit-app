@@ -5,7 +5,6 @@ import { openChat } from "../packages/contracts/src/client.ts";
 import {
   MessageSchema,
   validate,
-  validateRecovery,
   validateSubmission,
   validateUpload,
   type ChatView,
@@ -91,7 +90,7 @@ for (const count of [6, 7, 11])
       }
     });
 
-test("output references stay strict while submission, upload and recovery retain six-image bounds", async () => {
+test("output references stay strict while submission and upload retain six-image bounds", async () => {
   const fixture = imagesFixture();
   const { messages } = await fixture.control({ action: "complete", count: 7 });
   const message = messages[0]!,
@@ -109,11 +108,6 @@ test("output references stay strict while submission, upload and recovery retain
       }),
     ).toThrow();
   const submission = { operationId, text: "owned", images };
-  const recovery = {
-    sourceId: operationId,
-    ...submission,
-    replacementEligible: true,
-  };
   const original = btoa("\x89PNG\r\n\x1a\n");
   const upload = {
     sessionId: "fixture-session",
@@ -132,16 +126,12 @@ test("output references stay strict while submission, upload and recovery retain
     validateSubmission({ ...submission, images: images.slice(0, 6) }).images,
   ).toHaveLength(6);
   expect(
-    validateRecovery({ ...recovery, images: images.slice(0, 6) }).images,
-  ).toHaveLength(6);
-  expect(
     validateUpload(
       { ...upload, images: upload.images.slice(0, 6) },
       imageLimits,
     ).images,
   ).toHaveLength(6);
   expect(() => validateSubmission(submission)).toThrow();
-  expect(() => validateRecovery(recovery)).toThrow();
   expect(() => validateUpload(upload, imageLimits)).toThrow();
 });
 

@@ -51,12 +51,12 @@ For ID sending, `POST /stage` accepts `{sessionId, operationId, sticker:
 returned available image includes the identical sticker identity, and is bound
 to that session and operation. The host snapshots bytes and variants; staging
 alone creates neither a message nor a conversation-image member. Send the image
-with the existing Chord `submit` / `finalizeSubmission` payload. The operation ID
-and entire ordered payload remain immutable: identical operations deduplicate,
-changed content conflicts, and lost acknowledgements/null lookup never authorize
-an automatic replay. Explicit retry uses the existing failed-submission method
-and new attempt ID. The host retains the original version for retry and history,
-including after pack updates or unfavorite. Message and recovery `ImageRef`s
+with the Chord `submit` payload. The operation ID
+and entire ordered payload remain immutable: an accepted operation must not be
+delivered twice, changed content conflicts, and lost acknowledgements/null lookup
+never authorize an automatic replay. Explicit retry of a definite failure uses the
+same logical operation ID. The host retains the original version for retry and history,
+including after pack updates or unfavorite. Message `ImageRef`s
 carry optional `sticker: {id, version}`; ordinary image references omit it. Name
 and MIME remain in the existing image reference, not duplicated in sticker
 metadata. Actual Partner image messages likewise require completed native tool

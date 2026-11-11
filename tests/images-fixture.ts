@@ -7,7 +7,6 @@ import {
   type ImageUpload,
   type ImageRef,
   type ImageLimits,
-  type InputRecovery,
   type StickerIdentity,
   type Receipt,
   type Submission,
@@ -32,11 +31,11 @@ export function imagesFixture() {
   const media = new Map<string, ImageUpload["images"][number]>();
   const submissions = new Map<string, Submission>();
   const receipts = new Map<string, Receipt>();
-  const deleted = new Set<string>();
-  const retries = new Map<string, string>();
+  const attempts = new Map<string, number>();
+  const fingerprints = new Map<string, string>();
+  const queued = new Set<string>();
   const messages: ChatMessage[] = [];
-  let recovery: InputRecovery[] = [],
-    active: string | null = null,
+  let active: string | null = null,
     executions = 0,
     mode = "submitted",
     disabled = false,
@@ -44,7 +43,10 @@ export function imagesFixture() {
   const changed = () => {
     for (const fn of listeners) fn({ type: "update", scope,
       window: { messages: messages.slice(-15), before: messages.length > 15 ? messages.at(-15)!.id : null },
-      state: { activeTurnId: active, recovery: [...recovery], capabilities: { ...capabilities, images: disabled ? false : imageLimits } } });
+      state: { activeTurnId: active, capabilities: { ...capabilities, images: disabled ? false : imageLimits } } });
+  };
+  const deliveryResult = (receipt: Receipt) => {
+    for (const fn of listeners) fn({ type: "deliveryResult", scope, receipt });
   };
   const imageBackend: ImageBackend = {
     async upload(input) {
@@ -138,7 +140,6 @@ export function imagesFixture() {
           ...capabilities,
           images: disabled ? false : imageLimits,
         },
-        recovery: [...recovery],
       };
     },
     async compact(input) {
@@ -153,216 +154,50 @@ export function imagesFixture() {
       };
     },
     async submit(input) {
-      const old = submissions.get(input.operationId);
-      if (old) {
-        if (JSON.stringify(old) !== JSON.stringify(input))
-          throw new Error("Identity conflict");
-        return receipts.get(input.operationId)!;
-      }
-      if (!input.text.trim() && !input.images?.length) throw new Error("Empty");
+      const fingerprint = new Bun.CryptoHasher("sha256")
+        .update(JSON.stringify(input)).digest("hex");
+      const prior = fingerprints.get(input.operationId);
+      if (prior && prior !== fingerprint) throw new Error("Identity conflict");
+      const old = receipts.get(input.operationId);
+      if (old?.state === "submitted") return old;
+      if (queued.has(input.operationId)) throw new Error("Outcome unknown");
+      if (!input.text.trim() && !input.images?.length && !input.files?.length)
+        throw new Error("Empty");
       if (
         input.images?.length &&
-        (disabled ||
-          JSON.stringify(uploads.get(input.operationId)?.refs) !==
-            JSON.stringify(input.images))
-      )
-        throw new Error("Images not owned by operation");
-      if (
-        input.replacementSourceIds?.some(
-          (id) =>
-            !recovery.some((r) => r.sourceId === id && r.replacementEligible),
-        )
-      )
-        throw new Error("Ineligible replacement");
-      submissions.set(input.operationId, structuredClone(input));
-      recovery = recovery.filter(
-        (r) => !input.replacementSourceIds?.includes(r.sourceId),
-      );
-      const state: Receipt["state"] =
-        mode === "failed" ? "failed" : "submitted";
+        (disabled || JSON.stringify(uploads.get(input.operationId)?.refs) !==
+          JSON.stringify(input.images))
+      ) throw new Error("Images not owned by operation");
+      fingerprints.set(input.operationId, fingerprint);
+      // A new call after definite failure models an explicit user retry.
+      const attempt = (attempts.get(input.operationId) ?? 0) + 1;
+      attempts.set(input.operationId, attempt);
+      receipts.delete(input.operationId);
+      if (mode === "queued") {
+        queued.add(input.operationId);
+        throw new Error("Native outcome unknown");
+      }
+      const state: Receipt["state"] = mode === "failed" ? "failed" : "submitted";
       const receipt: Receipt = {
-        operationId: input.operationId,
-        state,
+        operationId: input.operationId, attempt, state,
         messageId: state === "submitted" ? input.operationId : null,
-        turnId: active,
+        turnId: state === "submitted" ? active : null,
         error: state === "failed" ? "输入未被接收" : null,
       };
       receipts.set(input.operationId, receipt);
-      if (state === "submitted")
+      if (state === "submitted") {
+        submissions.set(input.operationId, structuredClone(input));
         messages.push({
-          id: input.operationId,
-          role: "user",
-          text: input.text,
+          id: input.operationId, role: "user", text: input.text,
           ...(input.images ? { images: input.images } : {}),
-          createdAt: Date.now(),
-          operationId: input.operationId,
-          turnId: active,
+          ...(input.files ? { files: input.files } : {}),
+          createdAt: Date.now(), operationId: input.operationId, turnId: active,
         });
-      if (mode === "withdrawn" || state === "failed")
-        recovery.push({
-          sourceId: input.operationId,
-          operationId: input.operationId,
-          text: input.text,
-          images: input.images ?? [],
-          replacementEligible: true,
-        });
-      if (mode === "submitted") {
-        if (!active) {
-          active = input.operationId;
-          executions++;
-        }
+        if (!active) { active = input.operationId; executions++; }
       }
       changed();
+      deliveryResult(receipt);
       return receipt;
-    },
-    async finalizeSubmission(input) {
-      const { sessionId } = input;
-      if ("retry" in input) {
-        const { operationId, attemptId } = input.retry;
-        if (
-          sessionId !== "fixture-session" ||
-          input.retry.sessionId !== sessionId
-        )
-          throw new Error("Wrong session");
-        const source = retries.get(attemptId);
-        if (source && source !== operationId)
-          throw new Error("Retry identity conflict");
-        if (source) return backend.lookup(attemptId);
-        if (
-          deleted.has(operationId) ||
-          receipts.get(operationId)?.state !== "failed" ||
-          submissions.has(attemptId)
-        )
-          return null;
-        retries.set(attemptId, operationId);
-        recovery = recovery.filter((r) => r.operationId !== operationId);
-        return backend.finalizeSubmission({
-          sessionId,
-          submission: {
-            ...submissions.get(operationId)!,
-            operationId: attemptId,
-          },
-        });
-      }
-      const { submission } = input;
-      if (sessionId !== "fixture-session") throw new Error("Wrong session");
-      const old = submissions.get(submission.operationId);
-      if (old && JSON.stringify(old) !== JSON.stringify(submission))
-        throw new Error("Identity conflict");
-      const receipt = receipts.get(submission.operationId);
-      if (receipt) return receipt;
-      // No await between checking native admission and durable rejection in this owned fake.
-      submissions.set(submission.operationId, structuredClone(submission));
-      const failed: Receipt = {
-        operationId: submission.operationId,
-        state: "failed",
-        messageId: null,
-        turnId: null,
-        error: "消息未被接收",
-      };
-      receipts.set(submission.operationId, failed);
-      recovery.push({
-        sourceId: submission.operationId,
-        operationId: submission.operationId,
-        text: submission.text,
-        images: submission.images ?? [],
-        replacementEligible: true,
-      });
-      changed();
-      return failed;
-    },
-    async retryFailed({ sessionId, operationId, attemptId }) {
-      if (sessionId !== "fixture-session" || operationId === attemptId)
-        throw new Error("Invalid retry");
-      const priorSource = retries.get(attemptId);
-      if (priorSource) {
-        if (priorSource !== operationId)
-          throw new Error("Retry identity conflict");
-        return receipts.get(attemptId)!;
-      }
-      if (
-        deleted.has(operationId) ||
-        receipts.get(operationId)?.state !== "failed"
-      )
-        throw new Error("Not a failed submission");
-      if (submissions.has(attemptId)) throw new Error("Attempt already exists");
-      const source = submissions.get(operationId)!;
-      const originals = (source.images ?? []).map((ref) =>
-        media.get(ref.attachmentId),
-      );
-      if (originals.some((image) => !image)) {
-        retries.set(attemptId, operationId);
-        submissions.set(attemptId, { ...source, operationId: attemptId });
-        const failed: Receipt = {
-          operationId: attemptId,
-          state: "failed",
-          messageId: null,
-          turnId: null,
-          error: "原图片不可用，请删除这条消息后重新选择图片发送。",
-        };
-        receipts.set(attemptId, failed);
-        recovery = recovery.filter((r) => r.operationId !== operationId);
-        changed();
-        return failed;
-      }
-      let images: ImageRef[] | undefined;
-      if (originals.length) {
-        // Reassociate exact stored bytes with the new attempt under the existing owner/session.
-        const input: ImageUpload = {
-          sessionId,
-          operationId: attemptId,
-          images: structuredClone(originals) as ImageUpload["images"],
-        };
-        images = originals.map((image, index) => {
-          const attachmentId = crypto.randomUUID();
-          media.set(attachmentId, structuredClone(image!));
-          return {
-            attachmentId,
-            name: image!.name,
-            mediaType: image!.mediaType,
-            availability: "available" as const,
-            ...(source.images?.[index]?.sticker
-              ? { sticker: structuredClone(source.images[index]!.sticker) }
-              : {}),
-          };
-        });
-        uploads.set(attemptId, { input, refs: images });
-      }
-      retries.set(attemptId, operationId);
-      recovery = recovery.filter((r) => r.operationId !== operationId);
-      let receipt = await backend.submit({
-        ...source,
-        operationId: attemptId,
-        ...(images ? { images } : {}),
-      });
-      if (images) {
-        receipt = {
-          ...receipt,
-          retryImages: {
-            sessionId,
-            sourceOperationId: operationId,
-            images: images.map((ref, index) => ({
-              sourceAttachmentId: source.images![index]!.attachmentId,
-              ref,
-            })),
-          },
-        };
-        receipts.set(attemptId, receipt);
-      }
-      changed();
-      return receipt;
-    },
-    async deleteFailed({ sessionId, operationId }) {
-      if (sessionId !== "fixture-session") throw new Error("Wrong session");
-      if (
-        !deleted.has(operationId) &&
-        receipts.get(operationId)?.state !== "failed"
-      )
-        return { sessionId, operationId, deleted: false };
-      deleted.add(operationId);
-      recovery = recovery.filter((r) => r.operationId !== operationId);
-      changed();
-      return { sessionId, operationId, deleted: true };
     },
     async lookup(id) {
       return receipts.get(id) ?? null;
@@ -378,6 +213,13 @@ export function imagesFixture() {
         turnId: id,
       });
       active = null;
+      for (const operationId of queued) {
+        const receipt: Receipt = { operationId, attempt: attempts.get(operationId)!, state: "failed", messageId: null,
+          turnId: null, error: "排队输入已取消" };
+        receipts.set(operationId, receipt);
+        deliveryResult(receipt);
+      }
+      queued.clear();
       changed();
       return { stopped: true };
     },
@@ -393,10 +235,10 @@ export function imagesFixture() {
         media.clear();
         submissions.clear();
         receipts.clear();
-        deleted.clear();
-        retries.clear();
+        attempts.clear();
+        fingerprints.clear();
+        queued.clear();
         messages.length = 0;
-        recovery = [];
         executions = 0;
         active = null;
         mode = "submitted";
@@ -410,10 +252,6 @@ export function imagesFixture() {
         break;
       case "disabled":
         disabled = input.enabled === true;
-        break;
-      case "missing":
-        for (const r of recovery)
-          for (const image of r.images) media.delete(image.attachmentId);
         break;
       case "complete": {
         const images: ImageRef[] = [];
@@ -461,9 +299,6 @@ export function imagesFixture() {
         });
         active = null;
         break;
-      case "consume":
-        recovery = [];
-        break;
       case "history":
         for (let i = 0; i < 32; i++)
           messages.push({
@@ -475,35 +310,6 @@ export function imagesFixture() {
             turnId: null,
           });
         break;
-      case "nativeRecovery": {
-        const id = crypto.randomUUID();
-        const attachmentId = crypto.randomUUID();
-        const png = btoa(String.fromCharCode(...fixtureImage));
-        media.set(attachmentId, {
-          id: attachmentId,
-          order: 0,
-          name: "native.png",
-          mediaType: "image/png",
-          original: png,
-          preview: png,
-          model: png,
-        });
-        recovery.push({
-          sourceId: id,
-          operationId: id,
-          text: "原生恢复输入",
-          images: [
-            {
-              attachmentId,
-              name: "native.png",
-              mediaType: "image/png",
-              availability: "available",
-            },
-          ],
-          replacementEligible: true,
-        });
-        break;
-      }
       case "state":
         break;
       default:
@@ -513,7 +319,6 @@ export function imagesFixture() {
     return {
       executions,
       submissions: [...submissions.values()],
-      recovery,
       messages,
       limits: disabled ? false : imageLimits,
       album: album(),

@@ -1,6 +1,5 @@
 import { Type, type Static } from "typebox";
 import { validate } from "./validation.ts";
-import { FileRefSchema } from "./files.ts";
 export const UPLOAD_PATH = "/api/chat/images";
 export const MEDIA_PATH = "/api/chat/media/";
 const object = { additionalProperties: false } as const;
@@ -100,17 +99,6 @@ export const UploadResultSchema = Type.Object(
   },
   object,
 );
-export const RecoverySchema = Type.Object(
-  {
-    sourceId: Type.String({ minLength: 1, maxLength: 300 }),
-    operationId: OperationIdSchema,
-    text: Type.String({ maxLength: 16000 }),
-    images: Type.Array(ImageRefSchema, { maxItems: 6 }),
-    files: Type.Optional(Type.Array(FileRefSchema, { maxItems: 6 })),
-    replacementEligible: Type.Boolean(),
-  },
-  object,
-);
 export type ImageLimits = Static<typeof ImageLimitsSchema>;
 export type ImageRef = Static<typeof ImageRefSchema>;
 export type ImageUpload = Static<typeof UploadSchema>;
@@ -152,7 +140,6 @@ export function validateUploadResult(
     throw new Error("Invalid upload result");
   return result;
 }
-export type InputRecovery = Static<typeof RecoverySchema>;
 export const MAX_UPLOAD_BODY_BYTES = 36_000_000;
 export function mediaUrl(
   id: string,
@@ -217,11 +204,5 @@ export function validateUpload(
       MAX_UPLOAD_BODY_BYTES
   )
     throw new Error("Images too large");
-  return input;
-}
-export function validateRecovery(value: unknown): InputRecovery {
-  const input = validate(RecoverySchema, value);
-  if (!input.text.trim() && !input.images.length && !input.files?.length)
-    throw new Error("Invalid recovery eligibility");
   return input;
 }

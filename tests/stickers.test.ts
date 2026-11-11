@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   validate,
   validateSubmission,
-  validateRecovery,
   MessageSchema,
   StickerPageSchema,
   StickerStageSchema,
@@ -103,22 +102,13 @@ function post(
   });
 }
 
-test("sticker identity remains bound to durable submission, recovery and history", () => {
+test("sticker identity remains bound to submission and history", () => {
   expect(validateStickerStageResult(result, stage)).toEqual(result);
   expect(
     validateSubmission({
       operationId: stage.operationId,
       text: "",
       images: [image],
-    }).images,
-  ).toEqual([image]);
-  expect(
-    validateRecovery({
-      sourceId: stage.operationId,
-      operationId: stage.operationId,
-      text: "",
-      images: [image],
-      replacementEligible: true,
     }).images,
   ).toEqual([image]);
   expect(
@@ -403,6 +393,7 @@ test("sticker references survive Chord submission, refresh and history without a
       }
       return {
         operationId: input.operationId,
+        attempt: 1,
         state: "submitted",
         messageId: input.operationId,
         turnId: "t",
@@ -751,21 +742,20 @@ test("failed sticker retry and reimport keep the sent version in real socket his
         .state,
     ).toBe("failed");
     await f.control({ action: "mode", state: "submitted" });
-    const attemptId = crypto.randomUUID();
-    const retry = { sessionId: "fixture-session", operationId, attemptId };
-    expect((await client.retryFailed(retry)).state).toBe("submitted");
-    expect((await client.retryFailed(retry)).state).toBe("submitted");
+    const retry = { operationId, text: "", images: [oldImage] };
+    expect((await client.submit(retry)).state).toBe("submitted");
+    expect((await client.submit(retry)).state).toBe("submitted");
     let state = await f.control({ action: "state" });
     const retryImage = state.submissions.find(
-      (input) => input.operationId === attemptId,
+      (input) => input.operationId === operationId,
     )!.images![0]!;
-    expect(retryImage.attachmentId).not.toBe(oldImage.attachmentId);
+    expect(retryImage.attachmentId).toBe(oldImage.attachmentId);
     expect(retryImage.sticker).toEqual(oldImage.sticker);
     expect(
       (await f.imageBackend.media(retryImage.attachmentId, "original"))?.bytes,
     ).toEqual(fixtureImage);
     expect(
-      state.messages.filter((message) => message.operationId === attemptId),
+      state.messages.filter((message) => message.operationId === operationId),
     ).toHaveLength(1);
     const imported = await stickerHttp(
       new Request(origin + "/api/stickers/imports?sessionId=fixture-session", {
@@ -792,7 +782,7 @@ test("failed sticker retry and reimport keep the sent version in real socket his
     await f.control({ action: "history" });
     state = await f.control({ action: "state" });
     expect(
-      state.messages.find((message) => message.operationId === attemptId)
+      state.messages.find((message) => message.operationId === operationId)
         ?.images?.[0]?.sticker,
     ).toEqual(oldImage.sticker);
     client.close();
@@ -808,7 +798,7 @@ test("failed sticker retry and reimport keep the sent version in real socket his
       before = next.before;
     }
     expect(
-      history.find((message) => message.operationId === attemptId)?.images?.[0]
+      history.find((message) => message.operationId === operationId)?.images?.[0]
         ?.sticker,
     ).toEqual(oldImage.sticker);
     expect(

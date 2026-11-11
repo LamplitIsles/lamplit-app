@@ -60,7 +60,6 @@
           older: controller.older,
           pending: controller.pending,
           localPreviews: controller.localPreviews,
-          recovery: controller.recovery,
           connected: controller.connected,
           before: controller.before,
           loadingOlder: controller.loadingOlder,
@@ -96,22 +95,11 @@
     for (const [key, anchor] of pendingAnchors) {
       if (anchor.sessionId !== view?.sessionId || !active.has(key)) pendingAnchors.delete(key);
     }
-    // A retried message can arrive before its verified attachment mapping.
-    // Keep the original content visible until the mapping is confirmed.
-    const visible = unique.filter(
-      (m) =>
-        !pending.some(
-          (p) =>
-            p.operationId === m.operationId &&
-            p.retrySource &&
-            ((p.files?.length && p.state !== "sent") ||
-              previews.some(
-                (preview) =>
-                  preview.sessionId === view?.sessionId &&
-                  preview.operationId === p.retrySource,
-              )),
-        ),
-    );
+    // A live item alone does not confirm delivery; keep the local bubble until
+    // its receipt establishes that the native host accepted it.
+    const visible = unique.filter((message) => !pending.some(
+      (p) => p.operationId === message.operationId && p.state !== "sent",
+    ));
     const units: TimelineMessageUnit[] = visible.map((m) => {
       const local = previews.filter((preview) =>
         preview.sessionId === view?.sessionId && preview.operationId === m.operationId,
@@ -241,11 +229,9 @@
           id: unitId,
           side: "outgoing",
           time: p.createdAt,
-          pending: p.state === "sending",
           failed: p.state === "failed",
-          actionId: p.logicalId ?? p.operationId,
-          pendingLabel:
-            p.state === "sending" ? t("delivery.sending") : undefined,
+          removable: controller.canDiscardPending(p.operationId),
+          actionId: p.operationId,
           items: [
             ...(p.previews
               ? p.previews.map((image) => ({
@@ -407,7 +393,7 @@
     const retained = new Set([
       ...state.older.map((message) => message.operationId),
       ...state.view.messages.map((message) => message.operationId),
-      ...state.pending.flatMap((item) => [item.operationId, item.retrySource]),
+      ...state.pending.map((item) => item.operationId),
     ]);
     for (const operationId of new Set(
       state.localPreviews.map((item) => item.operationId),
@@ -416,22 +402,10 @@
         controller.releasePreviews(state.view.sessionId, operationId);
     }
   });
-  const recovered = $derived.by(() => {
-    const native = chatState?.recovery[0];
-    if (native)
-      return {
-        ...native,
-        sourceIds: [native.sourceId],
-        localPendingKey: chatState?.pending.find(
-          (p) => p.operationId === native.operationId && p.state === "failed",
-        )?.operationId,
-      };
-    return undefined;
-  });
   const actions: CompanionActions = {
     openStickers: () => controller.openStickers(),
     sendSticker: (sticker) => controller.sendSticker(sticker),
-    async send(text, images, retire, sources, files) {
+    async send(text, images, retire, files) {
       if (!controller?.connected)
         throw new CompanionPreControllerError("请等待连接恢复后发送文字。");
       if (controller.pending.length >= 20 && !images.length && !files?.length)
@@ -449,7 +423,6 @@
           text,
           retire,
           images,
-          sources,
           undefined,
           undefined,
           files,
@@ -482,7 +455,7 @@
     },
     retryFailed: (key) => controller.retryFailed(key),
     deleteFailed: (key) => controller.deleteFailed(key),
-    dismissRecovery: (key) => controller.dismissRecovery(key),
+    discardPending: (key) => controller.discardPending(key),
     attachmentUrl: async (attachment) => {
       const ref = attachment as ImageRef;
       const response = await fetch(mediaUrl(ref.attachmentId), {
@@ -603,21 +576,6 @@
   imageLimits={chatState?.view?.capabilities.images || undefined}
   fileLimits={chatState?.view?.capabilities.files || undefined}
   workspaceImages={chatState?.view?.capabilities.workspaceImages === true}
-  recoveredDraft={recovered
-    ? {
-        key: recovered.sourceId,
-        localPendingKey: recovered.localPendingKey,
-        sourceIds: recovered.sourceIds,
-        input: recovered.text,
-        replacementEligible: recovered.replacementEligible,
-        images: recovered.images.map((image) => ({
-          id: image.attachmentId,
-          name: image.name,
-          url: mediaUrl(image.attachmentId),
-        })),
-        files: recovered.files ?? [],
-      }
-    : undefined}
   onHistoryOpenChange={undefined}
   sessionId={chatState?.view?.sessionId}
   identity={{

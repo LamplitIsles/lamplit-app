@@ -113,9 +113,8 @@ export interface TimelineMessageUnit {
   side: MessageSide;
   /** Source-order content; consecutive images are collapsed by the view. */
   items: readonly TimelineItem[];
-  pending?: boolean;
-  pendingLabel?: string;
   failed?: boolean;
+  removable?: boolean;
   /** Submission identity used by retry/delete when render identity differs. */
   actionId?: string;
   origin?: "user" | "steering";

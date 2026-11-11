@@ -66,7 +66,7 @@ An engine operation that condenses the active conversation context so the same c
 _Avoid_: New conversation, archive deletion, memory erasure
 
 **Shared chat baseline（共享聊天基准）**:
-The conversation, attachment and recovery behaviors that the shared frontend provides across supported hosts. Its visual presentation may evolve without changing those behaviors.
+The conversation, attachment and message-delivery behaviors that the shared frontend provides across supported hosts. Its visual presentation may evolve without changing those behaviors.
 _Avoid_: Treating one host's historical appearance as a permanent requirement
 
 **Message submission（消息提交）**:
@@ -78,7 +78,7 @@ A file the Human sends as part of a chat message for the companion to inspect. I
 _Avoid_: Workspace image reference, photo, image library entry
 
 **Failed submission（发送失败）**:
-A message confirmed not received. It remains available to retry or delete; waiting for confirmation alone is not failure.
+A message confirmed not received. It remains on the originating frontend for retry or deletion; waiting for confirmation alone is not failure.
 _Avoid_: Disconnected message, failed reply
 
 **Retry（重试）**:
@@ -88,11 +88,6 @@ _Avoid_: Restore to edit, automatic resend
 **Deleted failed message（已删除的失败消息）**:
 A failed message the owner has confirmed removing from the conversation. Deleting it does not remove other messages or photos.
 _Avoid_: Undo, archive deletion
-
-**Input recovery（输入恢复）**:
-Explicit editing of independently withdrawn input before processing. Failed web submissions instead offer direct Retry or Delete.
-A temporary disconnect or stopped/failed reply does not make input recoverable.
-_Avoid_: Automatic replay, recovery inferred from null lookup
 
 **Local capture readiness（本地录音就绪）**:
 The microphone is producing audio for the current dictation take, so the owner can

@@ -1,4 +1,3 @@
-export type PendingSubmissionRetirement = { reason: "observed" };
 export type ImageMediaType =
   | "image/png"
   | "image/jpeg"

@@ -75,15 +75,7 @@ for (const kind of ["image", "file", "mixed", "text", "sticker"] as const) {
         : undefined;
     try {
       const error = await rejected(
-        c.send(
-          "draft",
-          () => retired++,
-          images,
-          [],
-          undefined,
-          sticker,
-          drafts,
-        ),
+        c.send("draft", () => retired++, images, undefined, sticker, drafts),
       );
       if (images.length || drafts.length) {
         expect(error.code).toBe(PENDING_MESSAGE_CAPACITY_ERROR);
@@ -108,7 +100,7 @@ test("typed capacity state survives different wording and clears on replacement,
   try {
     inner.pending = pending();
     const current = await rejected(
-      c.send("", undefined, [], [], undefined, undefined, files()),
+      c.send("", undefined, [], undefined, undefined, files()),
     );
     current.message = "independently changed message";
     c.setError(current);
@@ -129,7 +121,7 @@ test("typed capacity state survives different wording and clears on replacement,
     for (let i = 0; i < 20; i++)
       inner.fileOriginals.set(`retained-${i}`, files());
     const retained = await rejected(
-      c.send("", undefined, [], [], undefined, undefined, files()),
+      c.send("", undefined, [], undefined, undefined, files()),
     );
     expect(retained.code).toBe(ATTACHMENT_CAPACITY_ERROR);
     retained.message = "another wording";
@@ -152,7 +144,7 @@ test("a successful send clears prior capacity state", async () => {
   try {
     inner.pending = pending();
     const error = await rejected(
-      c.send("", undefined, [], [], undefined, undefined, files()),
+      c.send("", undefined, [], undefined, undefined, files()),
     );
     c.setError(error);
     expect(c.errorCode).toBe(PENDING_MESSAGE_CAPACITY_ERROR);
@@ -177,7 +169,7 @@ test("a successful send clears prior capacity state", async () => {
   }
 });
 
-test("an explicit pre-dispatch retry replaces its pending item at the same-session limit", async () => {
+test("an unfinished file retries with a new operation without consuming a pending slot", async () => {
   const originalLocation = Object.getOwnPropertyDescriptor(
     globalThis,
     "location",
@@ -191,7 +183,8 @@ test("an explicit pre-dispatch retry replaces its pending item at the same-sessi
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
     value: async (_url: URL, init?: RequestInit) => {
-      if (!init?.method || init.method === "GET") return new Response(null, { status: 404 });
+      if (!init?.method || init.method === "GET")
+        return new Response(null, { status: 404 });
       uploads++;
       return new Response(null, { status: 503 });
     },
@@ -209,8 +202,6 @@ test("an explicit pre-dispatch retry replaces its pending item at the same-sessi
     expect(c.pending.at(-1)?.operationId).not.toBe(first.operationId);
     expect(c.pending.at(-1)?.logicalId).toBe(first.operationId);
     expect(c.pending.at(-1)?.state).toBe("failed");
-    expect(c.error).toBe("文件上传失败，请重试。");
-    expect(c.errorCode).toBeUndefined();
     expect(submissions()).toBe(0);
   } finally {
     c.close();

@@ -17,7 +17,7 @@ export function keetFixture(imageProfile: "dm" | "text-only" = "dm") {
     void base.backend.read().then(view => {
       for (const fn of listeners) fn({ type: "update", scope,
         window: { messages: [...live, ...view.messages].slice(-30), before: older.length ? "older-page" : null },
-        state: { activeTurnId: view.activeTurnId, recovery: view.recovery } });
+        state: { activeTurnId: view.activeTurnId } });
     });
   };
   const backend = {

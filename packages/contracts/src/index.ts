@@ -11,7 +11,6 @@ import {
   FileLimitsSchema,
   MAX_FILES_PER_MESSAGE,
   MAX_MESSAGE_FILE_BYTES,
-  type FileRef,
 } from "./files.ts";
 export * from "./stickers.ts";
 export * from "./workspace-images.ts";
@@ -27,9 +26,6 @@ import {
   OperationIdSchema,
   ImageRefSchema,
   ImageLimitsSchema,
-  RecoverySchema,
-  MediaIdSchema,
-  type ImageRef,
 } from "./images.ts";
 import { Type, type Static } from "typebox";
 import { Format } from "typebox/format";
@@ -54,168 +50,22 @@ export const SubmissionSchema = Type.Object(
     files: Type.Optional(
       Type.Array(FileRefSchema, { maxItems: MAX_FILES_PER_MESSAGE }),
     ),
-    replacementSourceIds: Type.Optional(
-      Type.Array(Id, { maxItems: 20, uniqueItems: true }),
-    ),
   },
   { additionalProperties: false },
 );
-export const RetryFailedSchema = Type.Object(
-  {
-    sessionId: Id,
-    operationId: OperationIdSchema,
-    attemptId: OperationIdSchema,
-  },
-  { additionalProperties: false },
-);
-export const FinalizeSubmissionSchema = Type.Union([
-  Type.Object(
-    { sessionId: Id, submission: SubmissionSchema },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { sessionId: Id, retry: RetryFailedSchema },
-    { additionalProperties: false },
-  ),
-]);
-export const DeleteFailedSchema = Type.Object(
-  { sessionId: Id, operationId: OperationIdSchema },
-  { additionalProperties: false },
-);
-export const DeleteFailedResultSchema = Type.Object(
-  { sessionId: Id, operationId: OperationIdSchema, deleted: Type.Boolean() },
-  { additionalProperties: false },
-);
-export type FinalizeSubmission = Static<typeof FinalizeSubmissionSchema>;
-export type RetryFailed = Static<typeof RetryFailedSchema>;
-export type DeleteFailed = Static<typeof DeleteFailedSchema>;
-export type DeleteFailedResult = Static<typeof DeleteFailedResultSchema>;
-export const RetryImageMappingSchema = Type.Object(
-  {
-    sessionId: Id,
-    sourceOperationId: OperationIdSchema,
-    images: Type.Array(
-      Type.Object(
-        { sourceAttachmentId: MediaIdSchema, ref: ImageRefSchema },
-        { additionalProperties: false },
-      ),
-      { minItems: 1, maxItems: 6 },
-    ),
-  },
-  { additionalProperties: false },
-);
-export type RetryImageMapping = Static<typeof RetryImageMappingSchema>;
-export function validateRetryImageMapping(
-  value: unknown,
-  sessionId: string,
-  sourceOperationId: string,
-  originals: readonly ImageRef[],
-): RetryImageMapping {
-  const mapping = validate(RetryImageMappingSchema, value);
-  const sourceIds = new Set(originals.map((image) => image.attachmentId));
-  const mappedIds = new Set(
-    mapping.images.map((image) => image.sourceAttachmentId),
-  );
-  if (
-    mapping.sessionId !== sessionId ||
-    mapping.sourceOperationId !== sourceOperationId ||
-    sourceIds.size !== originals.length ||
-    mapping.images.length !== originals.length ||
-    mappedIds.size !== originals.length ||
-    mapping.images.some(
-      (image) =>
-        !sourceIds.has(image.sourceAttachmentId) ||
-        image.ref.availability !== "available",
-    ) ||
-    new Set(mapping.images.map((image) => image.ref.attachmentId)).size !==
-      originals.length
-  )
-    throw new Error("Invalid retry image mapping");
-  return mapping;
-}
-export const RetryFileMappingSchema = Type.Object(
-  {
-    sessionId: Id,
-    sourceOperationId: OperationIdSchema,
-    files: Type.Array(
-      Type.Object(
-        { sourceAttachmentId: MediaIdSchema, ref: FileRefSchema },
-        { additionalProperties: false },
-      ),
-      { minItems: 1, maxItems: MAX_FILES_PER_MESSAGE },
-    ),
-  },
-  { additionalProperties: false },
-);
-export type RetryFileMapping = Static<typeof RetryFileMappingSchema>;
-export function validateRetryFileMapping(
-  value: unknown,
-  sessionId: string,
-  sourceOperationId: string,
-  originals: readonly FileRef[],
-): RetryFileMapping {
-  const mapping = validate(RetryFileMappingSchema, value);
-  const sources = new Map(originals.map((file) => [file.attachmentId, file]));
-  if (
-    mapping.sessionId !== sessionId ||
-    mapping.sourceOperationId !== sourceOperationId ||
-    sources.size !== originals.length ||
-    mapping.files.length !== originals.length ||
-    new Set(mapping.files.map((file) => file.sourceAttachmentId)).size !==
-      originals.length ||
-    new Set(mapping.files.map((file) => file.ref.attachmentId)).size !==
-      originals.length ||
-    mapping.files.some((file) => {
-      const original = sources.get(file.sourceAttachmentId);
-      return (
-        !original ||
-        file.ref.availability !== "available" ||
-        file.ref.name !== original.name ||
-        file.ref.mediaType !== original.mediaType ||
-        file.ref.size !== original.size
-      );
-    })
-  )
-    throw new Error("Invalid retry file mapping");
-  return mapping;
-}
 export const ReceiptSchema = Type.Object(
   {
-    operationId: Id,
+    operationId: OperationIdSchema,
+    attempt: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
     state: Type.Union([Type.Literal("submitted"), Type.Literal("failed")]),
     messageId: NullableId,
     turnId: NullableId,
     error: Type.Union([Type.String(), Type.Null()]),
-    retryImages: Type.Optional(RetryImageMappingSchema),
-    retryFiles: Type.Optional(RetryFileMappingSchema),
   },
   { additionalProperties: false },
 );
 export function validateReceipt(value: unknown): Static<typeof ReceiptSchema> {
-  const receipt = validate(ReceiptSchema, value);
-  const mapping = receipt.retryImages;
-  if (
-    mapping &&
-    (mapping.sourceOperationId === receipt.operationId ||
-      new Set(mapping.images.map((image) => image.sourceAttachmentId)).size !==
-        mapping.images.length ||
-      new Set(mapping.images.map((image) => image.ref.attachmentId)).size !==
-        mapping.images.length ||
-      mapping.images.some((image) => image.ref.availability !== "available"))
-  )
-    throw new Error("Invalid retry receipt");
-  const files = receipt.retryFiles;
-  if (
-    files &&
-    (files.sourceOperationId === receipt.operationId ||
-      new Set(files.files.map((file) => file.sourceAttachmentId)).size !==
-        files.files.length ||
-      new Set(files.files.map((file) => file.ref.attachmentId)).size !==
-        files.files.length ||
-      files.files.some((file) => file.ref.availability !== "available"))
-  )
-    throw new Error("Invalid retry file receipt");
-  return receipt;
+  return validate(ReceiptSchema, value);
 }
 export function validateLookup(
   value: unknown,
@@ -406,7 +256,6 @@ export const ViewSchema = Type.Object(
     compaction: CompactionSchema,
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),
     before: NullableId,
-    recovery: Type.Array(RecoverySchema, { maxItems: 20 }),
     capabilities: Type.Object(
       {
         text: Type.Literal(true),
@@ -447,15 +296,6 @@ export interface ChatService extends PanelService, SearchService {
   history(before: string, context: Context): Promise<HistoryPage>;
   submit(input: Submission, context: Context): Promise<Receipt>;
   lookup(operationId: string, context: Context): Promise<Receipt | null>;
-  finalizeSubmission(
-    input: FinalizeSubmission,
-    context: Context,
-  ): Promise<Receipt | null>;
-  retryFailed(input: RetryFailed, context: Context): Promise<Receipt>;
-  deleteFailed(
-    input: DeleteFailed,
-    context: Context,
-  ): Promise<DeleteFailedResult>;
   stop(turnId: string, context: Context): Promise<{ stopped: boolean }>;
 }
 export const Chat = defineService<ChatService>("lamplit.chat.v2");
@@ -469,7 +309,7 @@ export const capabilities: ChatView["capabilities"] = {
   images: false,
 };
 
-/** Optional image/replacement fields are omitted for ordinary text, not a second submission path. */
+/** Optional attachments are omitted for ordinary text. */
 export function validateSubmission(value: unknown): Submission {
   const input = validate(SubmissionSchema, value);
   if (!input.text.trim() && !input.images?.length && !input.files?.length)
