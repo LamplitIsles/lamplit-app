@@ -184,10 +184,6 @@ for (const name of [
       .replaceAll(
         "../packages/contracts/src/client.ts",
         "@lamplit/contracts/client",
-      )
-      .replaceAll(
-        "../packages/contracts/dist/voice.js",
-        "@lamplit/contracts/voice",
       ),
   );
 }

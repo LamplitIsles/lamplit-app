@@ -111,9 +111,10 @@ physical Mac Safari checklist. Linux fake-API checks do not prove OS display.
 
 The App supports playback of existing assistant voice messages and voice-output
 settings when provided by the host. Recording, speech-to-text and audio input
-streaming are not available in the App. The public voice input contract remains
-available for existing host compatibility. Earlier text/voice, panels, images,
-compaction and search acceptance with fake providers (FlickNote #3062/#3096/
+streaming are not available in the App. The former public voice input contract has
+been removed; see [compatibility and merge order](docs/protocol.md#voice-input-compatibility).
+Earlier text/voice, panels, images, compaction and search acceptance with fake
+providers (FlickNote #3062/#3096/
 #3119/#3142) is historical evidence; current artifacts need their own acceptance.
 
 ## Companion panels

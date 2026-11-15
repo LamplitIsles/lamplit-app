@@ -62,7 +62,7 @@ CHAT_BACKEND=http://127.0.0.1:8787 bun run dev
 
 `packages/contracts` exports compiled JavaScript/declarations from `dist`: root
 schemas/service, `/client` browser transport, `/server` portable Chord provider,
-WebSocket and image HTTP, `/voice` voice validators and `/wire` codecs. It imports
+WebSocket and image HTTP, and `/wire` codecs. It imports
 no Node, Worker or private web-app modules. Backends consume the compiled package
 through their own declared file/archive dependency and package manager; never
 import `apps/web/src`. For an intentional adjacent-package refresh:
@@ -113,7 +113,7 @@ A fresh build/deploy always builds App first; merging alone never deploys.
 Pi's existing Worker and PiSession own auth, session selection, native admission,
 media and Chord lifecycle. The normal Wrangler configuration serves App assets,
 with authenticated `/api/chat/socket`, `/api/chat/images`, `/api/chat/media/*`,
-native album media and `/api/voice/*`. Browser IDs never select another instance.
+and native album media. Browser IDs never select another instance.
 After the coordinated Pi change, Owner's documented backend commands are:
 
 ```sh
@@ -183,11 +183,11 @@ must consume the exact Orc-approved v2 contracts/frontend/runner identity in the
 [submission handoff](native-durable-submissions.md). Joint native acceptance is
 a separate gate; fixture success does not establish it.
 Stop targets one native turn and never follows an engine mismatch to a newer turn.
-The App no longer captures or streams voice input. The existing public voice input
-contract is retained for hosts such as CFL, whose capability and stream require
-native authentication and same-origin upgrades. Host recognition and aggregation
-remain backend responsibilities. Existing voice-message playback and streamed text
-replies are independent of this compatibility contract.
+The App no longer captures or streams voice input. The shared input contract is
+removed; see [compatibility and merge order](protocol.md#voice-input-compatibility).
+Older CFL versions implemented it; CFL after PR #142 no longer provides voice
+input. Deployed versions and their voice-input availability have not been verified.
+Existing voice-message playback and streamed text replies are independent.
 
 Panels use six bounded shared reads, image bytes use authenticated same-origin
 HTTP, and native reminder scheduling stays native. Images retain strict

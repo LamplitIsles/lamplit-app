@@ -270,34 +270,71 @@ try {
     await expect(
       page.getByText("已停止回复", { exact: true }).last(),
     ).toBeVisible();
-    // A definitively failed local send survives reload without automatic execution.
+    // A legacy dispatched send with an unknown outcome is only reconciled.
+    const unknownText = `unknown-${width}`;
+    const beforeRecovery = (await control({ action: "state" })).executions;
+    await page.evaluate(
+      ({ text, sessionId }) => {
+        localStorage.setItem(
+          `lamplit.pending:${sessionId}`,
+          JSON.stringify([
+            {
+              operationId: crypto.randomUUID(),
+              text,
+              createdAt: Date.now(),
+              state: "failed",
+            },
+          ]),
+        );
+      },
+      { text: unknownText, sessionId: initial.sessionId },
+    );
+    await page.reload();
+    await expect(page.getByText(unknownText, { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "发送失败，重试或删除", exact: true }),
+    ).toHaveCount(0);
+    expect((await control({ action: "state" })).executions).toBe(beforeRecovery);
+
+    // A definitely undispatched send survives reload until the user retries it.
     const operationId = crypto.randomUUID();
     const recoveryText = `recovered-${width}`;
-    const beforeRecovery = (await control({ action: "state" })).executions;
     await page.evaluate(
       ({ operationId, text, sessionId }) => {
         localStorage.setItem(
           `lamplit.pending:${sessionId}`,
           JSON.stringify([
-            { operationId, text, createdAt: Date.now(), state: "failed" },
+            {
+              operationId,
+              text,
+              createdAt: Date.now(),
+              state: "failed",
+              dispatched: false,
+              deliveryVersion: 2,
+            },
           ]),
         );
       },
       { operationId, text: recoveryText, sessionId: initial.sessionId },
     );
     await page.reload();
-    const retry = page.getByRole("button", { name: "恢复编辑", exact: true });
-    await expect(retry).toBeVisible();
+    const failed = page.getByRole("button", {
+      name: "发送失败，重试或删除",
+      exact: true,
+    });
+    await expect(failed).toBeVisible();
     expect((await control({ action: "state" })).executions).toBe(
       beforeRecovery,
     );
-    await retry.click();
-    await expect(input).toHaveValue(recoveryText);
-    await input.press("Enter");
+    await failed.click();
+    await page
+      .locator(".companion-action-menu")
+      .getByRole("button", { name: "重试", exact: true })
+      .click();
     await expect
       .poll(async () => (await control({ action: "state" })).executions)
       .toBe(beforeRecovery + 1);
-    await expect(retry).toHaveCount(0);
+    await expect(failed).toHaveCount(0);
     await page.reload();
     expect((await control({ action: "state" })).executions).toBe(
       beforeRecovery + 1,
@@ -403,7 +440,7 @@ try {
     await context.close();
   }
   console.log(
-    "Browser acceptance passed at 390px and 1280px: send, completed reply, refresh, stop, explicit pending-send restoration without duplicate execution, external links, anchored right-click/mouse-hold menus, typing motion, theme/language settings, no overflow/errors.",
+    "Browser acceptance passed at 390px and 1280px: send, completed reply, refresh, stop, unknown-send reconciliation and explicit retry without duplicate execution, external links, anchored right-click/mouse-hold menus, typing motion, theme/language settings, no overflow/errors.",
   );
 } finally {
   await browser.close();

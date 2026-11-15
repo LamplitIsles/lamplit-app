@@ -149,22 +149,32 @@ Each inbound command and outgoing frame passes the host authorization check.
 The Pi adapter supplies connection-specific hosted-session verification so one
 connection's identity cannot leak into another's delivery callback.
 
-## Voice input compatibility contract
+## Voice input compatibility
 
 The App no longer records audio, performs speech-to-text, or opens the voice input
-stream. Existing hosts, including CFL, still consume `@lamplit/contracts/voice`;
-its public export, schemas, validators, constants and wire semantics remain intact.
-This input compatibility contract is separate from [assistant voice messages](#assistant-voice-messages)
-and from streamed text replies.
+stream. The `@lamplit/contracts/voice` export and its input schemas, validators
+and constants are removed. This is a breaking package change: downstream users of
+that public subpath must stop importing it or retain a compatible previously
+published package. External consumers have not been ruled out. Existing published
+artifacts and downstream pins are not changed by this removal.
 
-For compatible hosts, `GET /api/voice/capability` returns `{ available: boolean }`
-and `/api/voice/stream` is a same-origin authenticated WebSocket. Audio is mono
-PCM16 little-endian at 16 kHz, limited to 300 seconds, 9,600,000 raw bytes and
-16 KiB per even-length frame. Client controls are `finish` and `cancel`; server
-events are `ready`, `result` with nonblank bounded text, or `error` with a listed
-voice error code. The public validators enforce frame, control, event and transcript
-bounds; hosts remain responsible for authentication, lifecycle and provider behavior.
-CFL's existing backend implementation and tests are unchanged by this App change.
+Older CFL versions implemented the contract; CFL after PR #142 no longer provides
+voice input, including the capability and stream endpoints. Lamplit Chat previously
+used the contract; its separate PR removes that use. Merge the Lamplit Chat removal
+before this App change, and coordinate any other consumers before upgrading their
+package pins. The App change also assumes CFL #142 is merged. Deployment versions
+and voice-input availability have not been verified. This removal is independent
+of [assistant voice messages](#assistant-voice-messages) and streamed text replies.
+
+Lamplit Chat main at `0e837feb` configures the published App `6b70e24` frontend
+and contracts; that App frontend has no microphone. The `b446bebc` identity is a
+historical candidate whose frontend had a microphone, not the current source pin.
+If that historical artifact is deployed, removing the server input endpoints
+leaves its microphone entry unusable.
+The artifact actually deployed and its browser compatibility and acceptance remain
+unverified. Before deployment, independently review and verify the exact compatible
+frontend artifact and pin. The Chat-before-App source merge order alone does not
+authorize deployment.
 
 ## Companion panels
 

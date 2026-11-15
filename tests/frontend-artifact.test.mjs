@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,8 +43,6 @@ async function fixture() {
     "packages/contracts/dist/server.d.ts": 'export { replyChunks } from "./reply-chunks.js";',
     "packages/contracts/dist/reply-chunks.js": 'import { Lexer } from "marked"; export const replyChunks = text => Lexer.lex(text);',
     "packages/contracts/dist/reply-chunks.d.ts": "export declare function replyChunks(text: string): unknown[];",
-    "packages/contracts/dist/voice.js": 'export const voice = "voice";',
-    "packages/contracts/dist/voice.d.ts": "export declare const voice: string;",
     "packages/contracts/dist/wire.js": 'export const wire = "wire";',
     "packages/contracts/dist/wire.d.ts": "export declare const wire: string;",
     "packages/contracts/dist/index.js":
@@ -78,6 +76,45 @@ async function fixture() {
   return root;
 }
 
+test("contract build removes stale input files and no longer exports the input subpath", async () => {
+  const root = await mkdtemp(join(tmpdir(), "contracts-build-test-"));
+  dirs.push(root);
+  await mkdir(join(root, "src"));
+  await mkdir(join(root, "dist"));
+  await writeFile(
+    join(root, "package.json"),
+    await readFile(new URL("../packages/contracts/package.json", import.meta.url), "utf8"),
+  );
+  await writeFile(join(root, "tsconfig.build.json"), JSON.stringify({
+    compilerOptions: {
+      module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022",
+      declaration: true, rootDir: "src", outDir: "dist", types: [],
+    },
+    include: ["src/**/*.ts"],
+  }));
+  await writeFile(join(root, "src/index.ts"), "export const current = true;\n");
+  await writeFile(join(root, "dist/voice.js"), "stale input contract");
+  await writeFile(join(root, "dist/voice.d.ts"), "stale input types");
+  const result = spawnSync("bun", ["run", "build"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      PATH: `${fileURLToPath(new URL("../node_modules/.bin", import.meta.url))}:${process.env.PATH}`,
+    },
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error(result.stderr + result.stdout);
+  expect((await readdir(join(root, "dist"))).sort()).toEqual([
+    "index.d.ts", "index.js",
+  ]);
+  const resolution = spawnSync("node", ["--input-type=module", "-e", `
+    try { await import("@lamplit/contracts/voice"); process.exit(1); }
+    catch (error) { if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error; }
+  `], { cwd: root, encoding: "utf8" });
+  expect(resolution.stderr).toBe("");
+  expect(resolution.status).toBe(0);
+});
+
 test("archive contains a usable browser, byte-exact contracts, licenses and CFL manifest; packaging is repeatable", async () => {
   const root = await fixture();
   const first = join(root, "one.tar.gz"),
@@ -110,8 +147,6 @@ test("archive contains a usable browser, byte-exact contracts, licenses and CFL 
     "dist/reply-chunks.js",
     "dist/server.d.ts",
     "dist/server.js",
-    "dist/voice.d.ts",
-    "dist/voice.js",
     "dist/wire.d.ts",
     "dist/wire.js",
     "dist/workspace-media.d.ts",
