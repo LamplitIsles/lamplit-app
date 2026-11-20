@@ -68,6 +68,13 @@ try {
       if (route.request().method() === "POST") {
         posts++;
         const input = route.request().postDataJSON();
+        expect(Object.keys(input).sort()).toEqual([
+          "expectedFast",
+          "expectedModel",
+          "fast",
+          "model",
+          "sessionId",
+        ]);
         expect(input.sessionId).toBe("fixture-session");
         expect(input.expectedModel).toBe(currentModel);
         expect(input.expectedFast).toBe(fast);
@@ -153,7 +160,10 @@ try {
       expect(bounds.height).toBeGreaterThanOrEqual(44);
     }
     expect(
-      await panel.locator(".model-option svg").first().getAttribute("width"),
+      await panel
+        .locator(".model-option svg.lucide-sun")
+        .first()
+        .getAttribute("width"),
     ).toBe("14");
     await page.screenshot({ path: `${evidence}/${width}-saved.png` });
     await choose("gpt-5.6-sol");
@@ -269,8 +279,200 @@ try {
     expect(errors).toEqual([]);
     await context.close();
   }
+  for (const width of [320, 390, 1280]) {
+    const context = await browser.newContext({
+      viewport: { width, height: 844 },
+      locale: "zh-CN",
+    });
+    await context.addInitScript(denyNativeNotifications);
+    const page = await context.newPage();
+    const availableModels = [
+      {
+        id: "gpt-6.2-sol",
+        name: "6.2 sol",
+        reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+      },
+      {
+        id: "gpt-6.1-sol",
+        name: "6.1 sol",
+        reasoningEfforts: ["medium", "high"],
+      },
+      { id: "gpt-5.6-sol", name: "5.6 sol", reasoningEfforts: ["high"] },
+      { id: "gpt-6.1-terra", name: "6.1 terra", reasoningEfforts: ["high"] },
+    ];
+    let currentModel = "gpt-6.1-sol",
+      fast = true,
+      reasoningEffort = "high",
+      busy = false;
+    let mode = "normal",
+      release,
+      posts = [];
+    const state = () => ({
+      sessionId: "fixture-session",
+      currentModel,
+      fast,
+      busy,
+      reasoningEffort,
+      availableModels,
+    });
+    await page.route("**/api/chat/models", async (route) => {
+      if (route.request().method() === "POST") {
+        const input = route.request().postDataJSON();
+        posts.push(input);
+        expect(Object.keys(input).sort()).toEqual([
+          "expectedFast",
+          "expectedModel",
+          "expectedReasoningEffort",
+          "fast",
+          "model",
+          "reasoningEffort",
+          "sessionId",
+        ]);
+        expect(input.sessionId).toBe("fixture-session");
+        expect(input.expectedModel).toBe(currentModel);
+        expect(input.expectedFast).toBe(fast);
+        expect(input.expectedReasoningEffort).toBe(reasoningEffort);
+        if (mode === "pending")
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+        currentModel = input.model;
+        fast = input.fast;
+        reasoningEffort = input.reasoningEffort;
+        if (mode === "ambiguous") return route.abort("failed");
+      }
+      return route.fulfill({ json: state() });
+    });
+    await page.goto(`http://127.0.0.1:${server.port}/`);
+    const draft = page.locator("#companion-textarea");
+    await draft.fill("保留草稿");
+    const panel = page.locator("#companion-preferences-panel");
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await panel.getByRole("button", { name: "模型", exact: true }).click();
+    const select = panel.getByLabel("思考强度");
+    const radio = (id) =>
+      panel.locator(`input[name="companion-model"][value="${id}"]`);
+    const choose = (id) =>
+      radio(id).locator("xpath=ancestor::label[1]").click();
+    const reload = panel.getByRole("button", { name: "刷新", exact: true });
+    await expect(radio("gpt-6.1-sol")).toBeChecked();
+    await expect(select).toHaveValue("high");
+    expect(posts.length).toBe(0);
+    await expect(panel.locator('input[name="companion-model"]')).toHaveCount(4);
+    await choose("gpt-6.2-sol");
+    await expect(radio("gpt-6.2-sol")).toBeChecked();
+    expect(posts.at(-1).reasoningEffort).toBe("high");
+    await expect(select.locator("option")).toHaveCount(6);
+    await expect(select.locator('option[value="ultra"]')).toHaveCount(0);
+    await page.screenshot({ path: `${evidence}/${width}-reasoning.png` });
+    mode = "pending";
+    await select.selectOption("max");
+    await expect.poll(() => posts.length).toBe(2);
+    await expect(select).toHaveValue("high");
+    await expect(select).toBeDisabled();
+    await expect(radio("gpt-6.2-sol")).toBeDisabled();
+    release();
+    mode = "normal";
+    await expect(select).toHaveValue("max");
+    await choose("gpt-6.1-sol");
+    await expect(radio("gpt-6.1-sol")).toBeChecked();
+    expect(posts.at(-1).reasoningEffort).toBeNull();
+    await expect(select).toHaveValue("");
+    await expect(select.locator("option")).toHaveCount(3);
+    await select.focus();
+    await page.keyboard.press("End");
+    await expect(select).toHaveValue("high");
+    await choose("gpt-6.1-terra");
+    await expect(radio("gpt-6.1-terra")).toBeChecked();
+    expect(posts.at(-1).reasoningEffort).toBe("high");
+    const fastSwitch = panel.getByRole("switch", { name: "Fast" });
+    await fastSwitch.focus();
+    await page.keyboard.press("Space");
+    await expect(fastSwitch).not.toBeChecked();
+    expect(posts.at(-1)).toMatchObject({
+      expectedReasoningEffort: "high",
+      reasoningEffort: "high",
+      fast: false,
+    });
+    mode = "ambiguous";
+    await select.selectOption("");
+    await expect(panel.getByRole("status")).toContainText("尚未确认设置");
+    await expect(select).toHaveValue("high");
+    const count = posts.length;
+    mode = "normal";
+    await reload.click();
+    await expect(select).toHaveValue("");
+    expect(posts.length).toBe(count);
+    busy = true;
+    await panel.getByRole("button", { name: "返回" }).click();
+    await panel.getByRole("button", { name: "返回" }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await panel.getByRole("button", { name: "模型", exact: true }).click();
+    await expect(panel.getByRole("status")).toContainText("正在处理对话");
+    await expect(select).toBeDisabled();
+    busy = false;
+    await reload.click();
+    await expect(select).toBeEnabled();
+    await panel.getByRole("button", { name: "返回" }).click();
+    await panel.getByRole("button", { name: "外观", exact: true }).click();
+    await panel
+      .locator('input[value="en"]')
+      .locator("xpath=ancestor::label[1]")
+      .click();
+    await panel.getByRole("button", { name: "Back" }).click();
+    await panel.getByRole("button", { name: "Model", exact: true }).click();
+    await expect(panel.getByLabel("Thinking strength")).toHaveValue("");
+    await expect(
+      panel.getByRole("option", { name: "Codex default" }),
+    ).toHaveCount(1);
+    expect(
+      await panel.getByLabel("Thinking strength").evaluate((select) => {
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        context.font = getComputedStyle(select).font;
+        return (
+          context.measureText(select.selectedOptions[0].textContent).width <=
+          select.clientWidth - 32
+        );
+      }),
+    ).toBe(true);
+    const bounds = await panel
+      .getByLabel("Thinking strength")
+      .evaluate((select) => {
+        const control = select.getBoundingClientRect();
+        const row = select.closest("label").getBoundingClientRect();
+        const label = select
+          .closest("label")
+          .querySelector("span")
+          .getBoundingClientRect();
+        return {
+          insideRow: control.left >= row.left && control.right <= row.right,
+          insideViewport:
+            control.left >= 0 && control.right <= window.innerWidth,
+          separated: label.right <= control.left,
+          arrowHit:
+            document.elementFromPoint(
+              control.right - 8,
+              control.top + control.height / 2,
+            ) === select,
+        };
+      });
+    expect(bounds).toEqual({
+      insideRow: true,
+      insideViewport: true,
+      separated: true,
+      arrowHit: true,
+    });
+    await page.screenshot({
+      path: `${evidence}/${width}-reasoning-english.png`,
+    });
+    await panel.getByRole("button", { name: "Back" }).click();
+    await panel.getByRole("button", { name: "Back" }).click();
+    await expect(draft).toHaveValue("保留草稿");
+    await context.close();
+  }
   console.log(
-    `PASS model radios: mobile/desktop, three fixed choices, direct/confirmed save, pending, reopen, draft, keyboard, busy, stale, ambiguous result, reload, unsupported, zh/en; ${evidence}`,
+    `PASS model settings: mobile/desktop, advertised and legacy choices, reasoning, Fast, confirmed save, draft, keyboard, busy, stale, ambiguous result, reload, unsupported, zh/en; ${evidence}`,
   );
 } finally {
   await browser.close();

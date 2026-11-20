@@ -1,20 +1,24 @@
 # Model and Fast settings
 
-Settings offers exactly three radios: **6.1 sol** (`gpt-6.1-sol`), **5.6 sol**
-(`gpt-5.6-sol`), and **6.1 terra** (`gpt-6.1-terra`). Selecting a different radio
-saves directly, without a switch button. There is no reasoning-strength control.
-Only small version text appears below the existing Lucide Sun/Earth icons in a
-single row. No persistent explanatory or success copy is shown. A change applies
-to the next reply, preserving the conversation and draft.
-The Fast switch saves directly, and defaults to on for a new workspace.
+Settings renders the models advertised by an upgraded host as radios, with a
+compact **Thinking strength** select and the existing Fast switch. Available
+strengths are specific to the selected model: Low, Medium, High, Extra high and
+Max where advertised. Codex default clears the explicit preference. Ultra
+is not offered. Changing models retains the explicit strength when supported,
+and otherwise clears it in the same save. Fast remains independent. A change
+applies to the next reply, preserving the conversation and draft. Availability
+of 6.2 sol depends on the host; it does not change the saved model or default.
 
 The optional same-origin `/api/chat/models` endpoint is independent of the chat
-socket and compiled contracts. GET returns `{sessionId, currentModel, fast, busy}`.
-These are the confirmed preferences for future replies. POST accepts strict JSON
-`{sessionId, expectedModel, expectedFast, model, fast}` and returns the same snapshot.
-Only the three fixed IDs are writable. If a host reports an unknown model, the
-UI shows its ID with all three radios unchecked until switched. Fast remains
-disabled until a supported model is chosen.
+socket and compiled contracts. GET returns `{sessionId, currentModel, fast, busy}`;
+upgraded hosts also return `reasoningEffort` (nullable) and `availableModels`
+(ordered `{id, name, reasoningEfforts}` entries). These are confirmed preferences
+for future replies. POST accepts `{sessionId, expectedModel, expectedFast, model,
+fast}`; upgraded requests add `expectedReasoningEffort` and `reasoningEffort`
+together. A host returning neither extension field keeps the original three
+radios (6.1 sol, 5.6 sol, 6.1 terra), Fast control, and exact legacy POST shape.
+If the host reports a current model outside its choices, the UI shows its ID and
+leaves radios unchecked until switched; Fast and Thinking strength are disabled.
 IDs are trimmed single-line strings, 1–200 characters; session IDs allow 1–300.
 
 Hosts enforce authentication/same-origin, recheck authorization at commit,
@@ -28,7 +32,7 @@ locked across closing and reopening. GET 404/405/501 hides model controls. Other
 failures offer Refresh and disable controls until a successful read. Writes are
 never automatically replayed, including after a lost response. Preserve the
 confirmed radio and switch while saving; manually refresh to reconcile ambiguous results.
-Busy conversations disable both controls and offer Refresh. The settings landing
+Busy conversations disable the controls and offer Refresh. The settings landing
 page shows the appearance entry and supported host configuration entries. Each
 entry opens its own page; the back button and browser history return to settings
 and then to chat without discarding the draft. On small screens the page scrolls
@@ -42,16 +46,17 @@ routes. The retired `#settings/voice` bookmark opens `#/settings`, since the App
 does not expose voice-input settings. Direct settings links provide a back path
 to the settings landing page and chat; the host pathname and query are preserved.
 
-CFL persists both preferences together for restart and requests them explicitly
+CFL persists preferences together for restart and requests them explicitly
 on future native turns. The defaults are **6.1 sol** and Fast on. Legacy
 `codex.model` and `codex.fast` entries in CFL configuration are ignored; the
-saved preference controls both settings. Fast requests the priority tier; actual provider
-availability depends on model and account support. Reasoning remains unchanged.
+saved preference controls these settings. Fast requests the priority tier; actual provider
+availability depends on model and account support. A null thinking strength follows
+Codex configuration.
 
-App spec #19 and CFL spec #20 govern this slice. Existing compiled contracts and
+App spec #6086 and CFL spec #6087 govern the extended settings. Existing compiled contracts and
 host pins stay unchanged. Backend deployment is separate from App changes.
 
-After `bun run build`, `bun run test:models-browser` verifies direct radios and switch,
+After `bun run build`, `bun run test:models-browser` verifies advertised choices, thinking strength, legacy radios and switch,
 confirmed selection, loading/saving/busy/error/reload, preserved draft, keyboard,
 unsupported hosts, and zh/en at mobile/desktop sizes. Test-owned fixtures and
 screenshots live under `.scratch/dashboard-model-selector/browser`. CFL owns

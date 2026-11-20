@@ -5,11 +5,26 @@ export const MODEL_CHOICES = [
   { id: "gpt-5.6-sol", name: "5.6 sol", version: "5.6" },
   { id: "gpt-6.1-terra", name: "6.1 terra", version: "6.1" },
 ] as const;
+export const REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+export interface AvailableModel {
+  id: string;
+  name: string;
+  reasoningEfforts: string[];
+}
 export interface ModelSettings {
   sessionId: string;
   currentModel: string;
   fast: boolean;
   busy: boolean;
+  reasoningEffort?: ReasoningEffort | null;
+  availableModels?: AvailableModel[];
 }
 
 function isValidIdentifier(value: unknown, max = 200): value is string {
@@ -34,5 +49,23 @@ export function validateModelSettings(value: unknown): ModelSettings {
   ) {
     throw new Error("Invalid model settings");
   }
+  const extended = "reasoningEffort" in v || "availableModels" in v;
+  if (
+    extended &&
+    (!(
+      v.reasoningEffort === null ||
+      REASONING_EFFORTS.some((effort) => effort === v.reasoningEffort)
+    ) ||
+      !Array.isArray(v.availableModels) ||
+      !v.availableModels.every(
+        (model) =>
+          model &&
+          isValidIdentifier(model.id) &&
+          isValidIdentifier(model.name) &&
+          Array.isArray(model.reasoningEfforts) &&
+          model.reasoningEfforts.every((effort) => isValidIdentifier(effort)),
+      ))
+  )
+    throw new Error("Invalid model settings");
   return v;
 }

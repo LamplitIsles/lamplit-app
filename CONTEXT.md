@@ -117,3 +117,9 @@ _Avoid_: Execution status, message receipt, per-line completion
 **Workspace image reference（工作区图片引用）**:
 A Markdown reference in an agent reply to an image kept in the agent execution workspace. It reads the current file and is distinct from retained conversation images and uploaded attachments; it does not add an image to the Chat Image Library.
 _Avoid_: Attachment, saved conversation image, image snapshot
+
+**Thinking strength（思考强度）**:
+An optional preference for the reasoning effort used on later replies. It is
+separate from the selected model and Fast; following Codex settings means no
+explicit preference.
+_Avoid_: Model, Fast, current reply

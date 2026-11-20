@@ -6,6 +6,8 @@
   import {
     MODELS_PATH,
     MODEL_CHOICES,
+    REASONING_EFFORTS,
+    type ReasoningEffort,
     validateModelSettings,
     type ModelSettings,
   } from "../../model-settings.ts";
@@ -42,9 +44,14 @@
             ? "models.busy"
             : undefined),
   );
+  const choices = $derived(snapshot?.availableModels ?? MODEL_CHOICES);
+  const currentEfforts = $derived(
+    snapshot?.availableModels?.find((model) => model.id === snapshot?.currentModel)
+      ?.reasoningEfforts ?? [],
+  );
   const legacyModel = $derived(
     snapshot &&
-      !MODEL_CHOICES.some((model) => model.id === snapshot?.currentModel),
+      !choices.some((model) => model.id === snapshot?.currentModel),
   );
 
   function choose(model: string, event: Event) {
@@ -54,7 +61,17 @@
       .closest("ul")!
       .querySelectorAll<HTMLInputElement>('input[name="companion-model"]'))
       radio.checked = radio.value === snapshot?.currentModel;
-    if (snapshot) void save(model, snapshot.fast);
+    if (snapshot) {
+      const effort = snapshot.reasoningEffort;
+      const supported = snapshot.availableModels?.find(
+        (choice) => choice.id === model,
+      )?.reasoningEfforts;
+      let nextEffort = effort;
+      if (snapshot.availableModels && effort && !supported?.includes(effort)) {
+        nextEffort = null;
+      }
+      void save(model, snapshot.fast, nextEffort);
+    }
   }
 
   function chooseFast(event: Event) {
@@ -62,6 +79,13 @@
     const fast = input.checked;
     input.checked = snapshot?.fast === true;
     if (snapshot) void save(snapshot.currentModel, fast);
+  }
+
+  function chooseEffort(event: Event) {
+    const input = event.currentTarget as HTMLSelectElement;
+    const effort = (input.value || null) as ReasoningEffort | null;
+    input.value = snapshot?.reasoningEffort ?? "";
+    if (snapshot) void save(snapshot.currentModel, snapshot.fast, effort);
   }
 
   async function load() {
@@ -97,11 +121,17 @@
     }
   }
 
-  async function save(model: string, fast: boolean) {
+  async function save(
+    model: string,
+    fast: boolean,
+    effort = snapshot?.reasoningEffort,
+  ) {
     if (
       locked ||
       !snapshot ||
-      (model === snapshot.currentModel && fast === snapshot.fast)
+      (model === snapshot.currentModel &&
+        fast === snapshot.fast &&
+        effort === snapshot.reasoningEffort)
     )
       return;
     const current = (request = new AbortController());
@@ -118,6 +148,10 @@
           expectedFast: snapshot.fast,
           model,
           fast,
+          ...(snapshot.availableModels && {
+            expectedReasoningEffort: snapshot.reasoningEffort,
+            reasoningEffort: effort,
+          }),
         }),
       });
       if (!response.ok) {
@@ -188,14 +222,14 @@
       aria-busy={phase === "loading" || phase === "saving"}
       use:modelDescriptions={!!status}
     >
-      {#each MODEL_CHOICES as model}
+      {#each choices as model}
         <Radio class="model-option" title={model.name}
             name="companion-model"
             value={model.id}
             checked={snapshot?.currentModel === model.id}
             disabled={locked}
             onChange={(event: Event) => choose(model.id, event)}>
-          {#if model.id === "gpt-6.1-terra"}
+          {#if model.id.endsWith("-terra")}
             <Earth size={14} strokeWidth={1.8} aria-hidden="true" />
           {:else}
             <Sun size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -228,6 +262,24 @@
       </div>
     {/if}
   </li>
+  {#if snapshot?.availableModels}
+    <li class="reasoning-setting">
+      <label class="reasoning-row">
+        <span>{t("models.reasoning")}</span>
+        <select
+          value={snapshot.reasoningEffort ?? ""}
+          disabled={locked || legacyModel}
+          aria-describedby={status ? "model-status" : undefined}
+          onchange={chooseEffort}
+        >
+          <option value="">{t("models.reasoningDefault")}</option>
+          {#each REASONING_EFFORTS.filter((effort) => currentEfforts.includes(effort)) as effort}
+            <option value={effort}>{t(`models.effort.${effort}`)}</option>
+          {/each}
+        </select>
+      </label>
+    </li>
+  {/if}
   <li class="fast-setting">
     <div class="fast-row" use:switchSemantics={{ phase, hasStatus: !!status }}>
       <span>Fast</span>
@@ -251,7 +303,8 @@
     flex-direction: column;
     padding: 0 16px;
   }
-  .fast-row {
+  .fast-row,
+  .reasoning-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -259,9 +312,31 @@
     padding: 0 16px;
     cursor: pointer;
   }
-  .fast-row:has(:global(input:disabled)) {
+  .fast-row:has(:global(input:disabled)),
+  .reasoning-row:has(select:disabled) {
     cursor: default;
     opacity: 0.55;
+  }
+  .reasoning-row {
+    gap: 8px;
+  }
+  .reasoning-row span {
+    min-width: 0;
+  }
+  .reasoning-row select {
+    flex-shrink: 0;
+    max-width: 100%;
+    min-height: 36px;
+    padding: 0 8px;
+    color: inherit;
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    font: inherit;
+  }
+  .reasoning-row select:focus-visible {
+    outline: 2px solid var(--k-color-primary);
+    outline-offset: 2px;
   }
   .model-options :global(.model-option) {
     display: flex;
