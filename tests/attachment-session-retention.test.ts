@@ -53,8 +53,8 @@ test("failed and in-flight attachments survive A-B-A and retry without reselecti
         getContext: () => ({ drawImage() {} }),
         toBlob: (callback: (blob: Blob) => void) =>
           callback(
-            new Blob([new Uint8Array([255, 216, 255, 224])], {
-              type: "image/jpeg",
+            new Blob([new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])], {
+              type: "image/webp",
             }),
           ),
       }),
@@ -538,7 +538,7 @@ test("photo-only preparation failure remains retryable after a session switch", 
       createElement: () => ({
         getContext: () => ({ drawImage() {} }),
         toBlob: (cb: (blob: Blob) => void) =>
-          cb(new Blob([new Uint8Array([255, 216, 255, 224])])),
+          cb(new Blob([new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])], { type: "image/webp" })),
       }),
     },
   });

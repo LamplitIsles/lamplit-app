@@ -2,6 +2,8 @@ import type { CompanionMessage } from "./locale.js";
 import type { ImageAttachmentLimits, ImageMediaType } from "./contracts.js";
 
 export const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+// A local decode bound, independent of the host's encoded upload limit.
+export const MAX_PHOTO_INPUT_BYTES = 32 * 1024 * 1024;
 
 const IMAGE_MEDIA_TYPES = new Set<ImageMediaType>([
   "image/png",
@@ -45,11 +47,18 @@ export function imageIntakeError(
       key: "image.countLimit",
       params: { count: limits.maxImagesPerMessage },
     };
-  if (incoming.some((file) => file.size > limits.maxImageBytes))
+  if (
+    incoming.some(
+      (file) =>
+        file.size > MAX_PHOTO_INPUT_BYTES ||
+        (file.type === "image/gif" && file.size > limits.maxImageBytes),
+    )
+  )
     return { key: "image.tooLarge" };
-  const total =
-    current.reduce((sum, image) => sum + image.file.size, 0) +
-    incoming.reduce((sum, file) => sum + file.size, 0);
+  // GIFs are always retained byte-for-byte; other formats may compress or animate.
+  const total = [...current.map((image) => image.file), ...incoming]
+    .filter((file) => file.type === "image/gif")
+    .reduce((sum, file) => sum + file.size, 0);
   if (total > limits.maxMessageImageBytes)
     return { key: "image.totalTooLarge" };
   return undefined;

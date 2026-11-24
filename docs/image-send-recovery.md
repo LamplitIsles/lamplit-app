@@ -4,7 +4,8 @@ Framework7 presentation references below describe the historical baseline
 before the spec #108 migration.
 
 Spec #3096 owns this app contract. The public root exports the TypeBox schemas,
-DTO types, `validateUpload`, `mediaUrl`, `UPLOAD_PATH`, and
+DTO types, `validateUpload`, `mediaUrl`, `chatImageThumbnailUrl`,
+`albumImageThumbnailUrl`, `UPLOAD_PATH`, and
 `MAX_UPLOAD_BODY_BYTES`; `/server` exports `imageHttp` and `ImageBackend`. Both
 native adapters consume the same compiled package and browser archive.
 
@@ -16,8 +17,15 @@ Allowed types are PNG, JPEG, WebP and GIF. Pi advertises six images, 8,000,000
 original bytes each and 24,000,000 original bytes per operation; CFL advertises
 five, 5,242,880 and 20,971,520. Public maxima permit both; hosts enforce their own
 advertised limits and native storage constraints. Invalid selection leaves text
-usable. Browser preparation preserves original bytes and creates JPEG preview
-(480px maximum side / 160,000 bytes) and model (1200px / 320,000 bytes) variants.
+usable. Browser preparation converts static photos to one orientation-corrected
+Q80 WebP, longest side at most 1200px without enlargement; the retained WebP is
+the full-size image. GIF, animated PNG and animated WebP retain their source bytes.
+Local sources are capped at 32 MiB and static decode at 40 million pixels and
+16,384 pixels per side; host limits apply to the actual uploaded bytes.
+Static WebP names fit CFL's 160 UTF-16-unit filename bound, including the
+extension. If canvas cannot encode WebP, a lazy, locally bundled libwebp WASM
+encoder produces the same Q80 format; it is fetched from the App origin and
+requires the browser's WebAssembly support and permission to compile it.
 
 `POST /api/chat/images`, JSON, same-origin credentials and Origin header:
 
@@ -27,15 +35,17 @@ usable. Browser preparation preserves original bytes and creates JPEG preview
   operationId: UUID;
   images: Array<{
     id: string; order: number; name: string; mediaType: ImageMediaType;
-    original: string; preview: string; model: string; // base64 only here
+    original: string; // base64 only here
+    preview?: string; model?: string; // both omitted, or both JPEG base64
   }>;
 }
 // Result
 { sessionId: string; operationId: UUID;
   images: Array<{ id: string; order: number; ref: ImageRef }> }
-// ImageRef (all fields required)
+// ImageRef
 { attachmentId: string; name: string; mediaType: ImageMediaType;
-  availability: "available" | "missing" }
+  availability: "available" | "missing"; animated?: true;
+  sticker?: StickerIdentity }
 ```
 
 IDs use `[A-Za-z0-9_-]`, at most 100 characters; filenames at most 200; count at
@@ -45,6 +55,16 @@ decoded byte bounds and PNG/JPEG/WebP/GIF signatures are checked by the common
 validator. Native adapters retain their existing storage checks, including CFL's
 160-character filename bound; no additional decoder or image-processing dependency
 is required.
+Legacy preview/model pairs remain bounded to 160,000/320,000 bytes and are
+validated as JPEGs; half-pairs are invalid. Identity and host per-image and
+message limits apply to the original actually sent. New browser uploads omit
+both optional fields, including for animations.
+On image references, `animated: true` is positive evidence derived by CFL from
+the retained image. An absent marker makes no assertion about animation; `false`
+and other values are invalid. A client uses the original directly for a flagged
+reference. Update App and ETOS readers to accept the marker before CFL emits it;
+there is no legacy-client capability negotiation. The marker does not change the
+upload record or the existing owner, session and operation identity boundaries.
 Each result echoes the corresponding request draft ID and order. Validate session,
 operation, count, order, unique draft IDs, unique returned attachment IDs and
 each reference before associating a local preview. Equal names or media types
@@ -95,6 +115,15 @@ it does not independently establish the native backend's session isolation.
 GET can remain available for previously stored media when new uploads are disabled;
 custom native routing may implement that distinction.
 
+The shared builders address CFL's generated WebP thumbnails at
+`/api/image-thumbnails/chat/{attachmentId}` and
+`/api/image-thumbnails/album/{catalogueId}`. The chat ID follows the existing
+media ID domain; the album ID is exactly 64 lowercase hexadecimal characters.
+Album consumers use the panel's `previewUrl` and `originalUrl` as supplied,
+because its entry ID need not be the catalogue ID. A thumbnail failure does not
+request the full-size original; opening the image does. These thumbnail paths are
+separate from the existing media routes and their variants.
+
 `submit` includes the logical operation ID, text and optional ordered image and
 file references. It rejects empty input and unavailable or duplicate attachment
 references. Upload alone does not establish native acceptance; it associates the
@@ -125,9 +154,10 @@ The former Composer/attachment mockup requirements are superseded. CFL's existin
 ## Browser image selection and historical native gallery evidence
 
 The App uses browser file inputs for photos and camera selection. Selected files
-are validated as a complete batch against current image limits before drafts are
-added. Upload retains original bytes alongside the existing JPEG preview/model
-variants. Picker results are scoped to the session and selection generation;
+are checked as a complete batch for type, count and bounded local input before
+drafts are added. Encoded output and retained animation bytes are checked against
+the current host limits before upload; processing failure retains the local draft.
+Picker results are scoped to the session and selection generation;
 a session change, including A → B → A, or disposal invalidates late results.
 The iPhone system source menu is browser behavior and is not a Capacitor adapter.
 

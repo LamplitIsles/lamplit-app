@@ -46,6 +46,8 @@ export const ImageRefSchema = Type.Object(
     sticker: Type.Optional(StickerIdentitySchema),
     mediaType: ImageTypeSchema,
     name: Type.String({ minLength: 1, maxLength: 200 }),
+    /** Positive evidence supplied by the host; absence makes no assertion. */
+    animated: Type.Optional(Type.Literal(true)),
     availability: Type.Union([
       Type.Literal("available"),
       Type.Literal("missing"),
@@ -59,23 +61,29 @@ const base64 = (bytes: number) =>
     maxLength: 4 * Math.ceil(bytes / 3),
     pattern: "^[A-Za-z0-9+/]*={0,2}$",
   });
+const uploadImageFields = {
+  id: MediaIdSchema,
+  order: Type.Integer({ minimum: 0, maximum: 5 }),
+  name: Type.String({ minLength: 1, maxLength: 200 }),
+  mediaType: ImageTypeSchema,
+  original: base64(8_000_000),
+};
 export const UploadSchema = Type.Object(
   {
     sessionId: Type.String({ minLength: 1, maxLength: 300 }),
     operationId: OperationIdSchema,
     images: Type.Array(
-      Type.Object(
-        {
-          id: MediaIdSchema,
-          order: Type.Integer({ minimum: 0, maximum: 5 }),
-          name: Type.String({ minLength: 1, maxLength: 200 }),
-          mediaType: ImageTypeSchema,
-          original: base64(8_000_000),
-          preview: base64(160_000),
-          model: base64(320_000),
-        },
-        object,
-      ),
+      Type.Union([
+        Type.Object(uploadImageFields, object),
+        Type.Object(
+          {
+            ...uploadImageFields,
+            preview: base64(160_000),
+            model: base64(320_000),
+          },
+          object,
+        ),
+      ]),
       { minItems: 1, maxItems: 6 },
     ),
   },
@@ -147,6 +155,14 @@ export function mediaUrl(
 ) {
   return `${MEDIA_PATH}${validate(MediaIdSchema, id)}/${variant}`;
 }
+export function chatImageThumbnailUrl(attachmentId: string) {
+  const id = validate(MediaIdSchema, attachmentId);
+  if (/[^A-Za-z0-9_-]/.test(id)) throw new Error("Invalid attachment ID");
+  return `/api/image-thumbnails/chat/${id}`;
+}
+export function albumImageThumbnailUrl(catalogueId: string) {
+  return `/api/image-thumbnails/album/${validate(Type.String({ pattern: "^[a-f0-9]{64}$", minLength: 64, maxLength: 64 }), catalogueId)}`;
+}
 export function validateUpload(
   value: unknown,
   limits: ImageLimits,
@@ -172,8 +188,8 @@ export function validateUpload(
       ids.has(image.id) ||
       !limits.mediaTypes.includes(image.mediaType) ||
       size > limits.maxImageBytes ||
-      bytes(image.preview) > 160_000 ||
-      bytes(image.model) > 320_000
+      ("preview" in image &&
+        (bytes(image.preview) > 160_000 || bytes(image.model) > 320_000))
     )
       throw new Error("Invalid image limits/order");
     const signature = (data: string) =>
@@ -194,7 +210,10 @@ export function validateUpload(
                 .match(/^GIF8[79]a$/)
             : new TextDecoder().decode(original.slice(0, 4)) === "RIFF" &&
               new TextDecoder().decode(original.slice(8, 12)) === "WEBP";
-    if (!validOriginal || !jpeg(image.preview) || !jpeg(image.model))
+    if (
+      !validOriginal ||
+      ("preview" in image && (!jpeg(image.preview) || !jpeg(image.model)))
+    )
       throw new Error("Invalid image bytes");
     ids.add(image.id);
   });

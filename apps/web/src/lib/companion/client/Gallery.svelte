@@ -10,6 +10,7 @@
   export let loadMore: () => Promise<void>;
   export let pick: (image: GalleryImage) => void;
   let viewport: HTMLDivElement | undefined;
+  let failedPreviews = new Set<string>();
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: 0,
     getScrollElement: () => viewport ?? null,
@@ -59,11 +60,12 @@
                 aria-label={image.filename}
                 disabled={!image.available}
                 on:click={() => pick(image)}
-                >{#if image.available}<img
+                >{#if image.available && !failedPreviews.has(image.url)}<img
                     src={image.url}
                     alt={image.filename}
                     loading="lazy"
                     decoding="async"
+                    on:error={() => { failedPreviews = new Set(failedPreviews).add(image.url); }}
                   />{:else}<span
                     >{image.filename}<br /><span>{unavailableLabel}</span></span
                   >{/if}</button

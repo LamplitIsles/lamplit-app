@@ -1,10 +1,10 @@
 <script lang="ts">
   import {
     APPEARANCE_PATH,
+    chatImageThumbnailUrl,
     validateChatAppearance,
     type ChatAppearance,
     mediaUrl,
-    type ImageRef,
   } from "@lamplit/contracts";
   import { affinityStage } from "./lib/companion/domain.ts";
   import { onMount } from "svelte";
@@ -456,13 +456,21 @@
     retryFailed: (key) => controller.retryFailed(key),
     deleteFailed: (key) => controller.deleteFailed(key),
     discardPending: (key) => controller.discardPending(key),
-    attachmentUrl: async (attachment) => {
-      const ref = attachment as ImageRef;
-      const response = await fetch(mediaUrl(ref.attachmentId), {
+    attachmentUrl: async (attachment, variant, signal) => {
+      const thumbnail = variant === "thumbnail";
+      const url = thumbnail
+        ? chatImageThumbnailUrl(attachment.attachmentId)
+        : mediaUrl(attachment.attachmentId);
+      const response = await fetch(url, {
         credentials: "same-origin",
+        redirect: "error",
+        signal,
       });
       if (!response.ok) throw new Error("Missing image");
-      return URL.createObjectURL(await response.blob());
+      const image = await response.blob();
+      if (thumbnail && (image.type !== "image/webp" || image.size === 0 || image.size > 1024 * 1024))
+        throw new Error("Invalid image thumbnail");
+      return URL.createObjectURL(image);
     },
     search: (input) => controller.readSearch("search", input),
     searchRead: (input) => controller.readSearch("searchRead", input),

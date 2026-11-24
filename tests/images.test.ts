@@ -3,9 +3,19 @@ import {
   validateUpload,
   UploadResultSchema,
   ImageRefSchema,
+  MessageSchema,
+  PageSchema,
+  ViewSchema,
+  capabilities,
   validate,
   mediaUrl,
+  chatImageThumbnailUrl,
+  albumImageThumbnailUrl,
   validateSubmission,
+  validateUploadResult,
+  validateStickerStageResult,
+  validateReceipt,
+  type ImageRef,
 } from "../packages/contracts/src/index.ts";
 import { imageHttp } from "../packages/contracts/src/server.ts";
 import { imagesFixture, imageLimits } from "./images-fixture.ts";
@@ -37,6 +47,106 @@ const request = (input: unknown, headers = {}) =>
     },
     body: JSON.stringify(input),
   });
+test("animation evidence is positive-only across image reference contexts", () => {
+  const input = upload();
+  const source = input.images[0]!;
+  const ref: ImageRef = {
+    attachmentId: "attachment",
+    name: source.name,
+    mediaType: source.mediaType,
+    availability: "available",
+  };
+  const markedRef: ImageRef = { ...ref, animated: true };
+  // @ts-expect-error The public type accepts only positive animation evidence.
+  const falseRef: ImageRef = { ...ref, animated: false };
+  const sticker = { id: "sticker", version: "a".repeat(64) };
+  const stage = {
+    sessionId: input.sessionId,
+    operationId: input.operationId,
+    sticker,
+  };
+  const check = (value: unknown) => {
+    const candidate = value as ImageRef;
+    const message = {
+      id: "message",
+      role: "user",
+      text: "",
+      createdAt: 1,
+      operationId: input.operationId,
+      turnId: null,
+      images: [candidate],
+    };
+    const page = { messages: [message], before: null };
+    const view = {
+      version: 2,
+      sessionId: input.sessionId,
+      name: "fixture",
+      activeTurnId: null,
+      contextUsage: { tokens: null, capacity: null },
+      compaction: null,
+      messages: [message],
+      before: null,
+      capabilities,
+    };
+    const submission = {
+      operationId: input.operationId,
+      text: "",
+      images: [candidate],
+    };
+    const result = {
+      sessionId: input.sessionId,
+      operationId: input.operationId,
+      images: [{ id: source.id, order: 0, ref: candidate }],
+    };
+    const stickerResult = {
+      sessionId: input.sessionId,
+      operationId: input.operationId,
+      image: { ...candidate, sticker },
+    };
+    return [
+      () => validate(ImageRefSchema, candidate),
+      () => validate(MessageSchema, message).images![0],
+      () => validate(PageSchema, page).messages[0]!.images![0],
+      () => validate(ViewSchema, view).messages[0]!.images![0],
+      () => validateSubmission(submission).images![0],
+      () => validateUploadResult(result, input).images[0]!.ref,
+      () => {
+        const { sticker: _, ...image } = validateStickerStageResult(
+          stickerResult,
+          stage,
+        ).image;
+        return image;
+      },
+    ];
+  };
+  for (const value of [ref, markedRef])
+    for (const run of check(value)) expect(run()).toEqual(value);
+  expect(() => validate(ImageRefSchema, falseRef)).toThrow();
+  for (const bad of [false, "true", 1, null, {}, []])
+    for (const run of check({ ...ref, animated: bad })) expect(run).toThrow();
+  for (const invalid of [
+    { ...ref, extra: true },
+    { ...ref, attachmentId: "../bad" },
+    { ...ref, mediaType: "text/html" },
+  ])
+    for (const run of check(invalid)) expect(run).toThrow();
+  expect(() =>
+    validateUpload(
+      { ...input, images: [{ ...source, animated: true }] },
+      imageLimits,
+    ),
+  ).toThrow();
+  const receipt = {
+    operationId: input.operationId,
+    attempt: 1,
+    state: "submitted" as const,
+    messageId: "message",
+    turnId: null,
+    error: null,
+  };
+  expect(validateReceipt(receipt)).toEqual(receipt);
+  expect(() => validateReceipt({ ...receipt, images: [ref] })).toThrow();
+});
 test("bounded strict image upload", () => {
   const value = upload();
   expect(() =>
@@ -67,7 +177,75 @@ test("bounded strict image upload", () => {
     }),
   ).toThrow();
   expect(() => mediaUrl("https://example.com/a")).toThrow();
-
+  expect(chatImageThumbnailUrl("abc_12-X")).toBe(
+    "/api/image-thumbnails/chat/abc_12-X",
+  );
+  expect(albumImageThumbnailUrl("a".repeat(64))).toBe(
+    `/api/image-thumbnails/album/${"a".repeat(64)}`,
+  );
+  for (const bad of ["", "../x", "a".repeat(101), "abc\n"])
+    expect(() => chatImageThumbnailUrl(bad)).toThrow();
+  for (const bad of [
+    "A".repeat(64),
+    "a".repeat(63),
+    "z".repeat(64),
+    "../x",
+    `${"a".repeat(64)}\n`,
+  ])
+    expect(() => albumImageThumbnailUrl(bad)).toThrow();
+});
+test("single WebP and paired legacy images share validation and HTTP admission", async () => {
+  const fixture = imagesFixture();
+  const legacy = upload();
+  const { preview, model, ...original } = legacy.images[0]!;
+  const single = {
+    ...legacy,
+    operationId: crypto.randomUUID(),
+    images: [
+      {
+        ...original,
+        name: "photo.webp",
+        mediaType: "image/webp" as const,
+        original: btoa("RIFF\x04\x00\x00\x00WEBP"),
+      },
+    ],
+  };
+  const auth = async () => ({
+    sessionId: "fixture-session",
+    limits: imageLimits,
+  });
+  expect(validateUpload(single, imageLimits)).toEqual(single);
+  expect(
+    (await imageHttp(request(single), fixture.imageBackend, auth))?.status,
+  ).toBe(200);
+  expect(
+    (await imageHttp(request(legacy), fixture.imageBackend, auth))?.status,
+  ).toBe(200);
+  for (const image of [
+    { ...original, preview },
+    { ...original, model },
+    { ...original, preview, model: png },
+    { ...single.images[0], original: png },
+  ]) {
+    expect(() =>
+      validateUpload({ ...legacy, images: [image] }, imageLimits),
+    ).toThrow();
+    expect(
+      (
+        await imageHttp(
+          request({ ...legacy, images: [image] }),
+          fixture.imageBackend,
+          auth,
+        )
+      )?.status,
+    ).toBe(400);
+  }
+  expect(() =>
+    validateUpload(single, { ...imageLimits, maxImageBytes: 1 }),
+  ).toThrow();
+  expect(() =>
+    validateUpload(single, { ...imageLimits, maxMessageImageBytes: 1 }),
+  ).toThrow();
 });
 test("HTTP upload authorization, session/order/identity, no admission, media owner isolation and bounds", async () => {
   const fixture = imagesFixture();

@@ -1,8 +1,9 @@
 /** Fetch through the authenticated web session, then save original bytes. */
-export async function saveImage(url: string, filename: string): Promise<void> {
-  const response = await fetch(url);
+export async function saveImage(url: string, filename: string, isCurrent: () => boolean): Promise<void> {
+  const response = await fetch(url, { credentials: "same-origin", redirect: "error" });
   if (!response.ok) throw new Error("Image unavailable");
   const blob = await response.blob();
+  if (!isCurrent()) return;
   const name = filename.replace(/[\\/:*?"<>|]/g, "-").trim() || "image";
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");

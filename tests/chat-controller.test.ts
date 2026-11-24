@@ -1210,8 +1210,8 @@ test("local image previews survive failed-send retry and a lost retry receipt wi
         getContext: () => ({ drawImage() {} }),
         toBlob: (done: (blob: Blob) => void) =>
           done(
-            new Blob([new Uint8Array([255, 216, 255, 217])], {
-              type: "image/jpeg",
+            new Blob([new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])], {
+              type: "image/webp",
             }),
           ),
       }),

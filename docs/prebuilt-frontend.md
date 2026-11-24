@@ -69,6 +69,8 @@ The PhotoSwipe 5.4.4 and TanStack Virtual MIT notices are also maintained in
 `docs/licenses/` and included, independently of the package-store notices.
 The `sv-router` 0.19.0 MIT notice is collected from its installed package at
 `licenses/dependencies/sv-router/0.19.0/LICENSE`.
+The pinned `@jsquash/webp` 1.5.0 Apache license is collected from the package;
+its bundled libwebp codec notice is reproduced in `lamplit-app-IMPORTS.md`.
 
 The pipeline needs Woodpecker enabled for this repository and two secrets:
 `forgejo_packages_token` with access to write and read the LamplitIsles generic

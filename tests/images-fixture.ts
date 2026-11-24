@@ -1,5 +1,7 @@
 import { searchFixture } from "./search-fixture.ts";
 import {
+  albumImageThumbnailUrl,
+  chatImageThumbnailUrl,
   capabilities,
   mediaUrl,
   type ChatMessage,
@@ -23,7 +25,13 @@ export const imageLimits: ImageLimits = {
   maxImageBytes: 8_000_000,
   maxMessageImageBytes: 24_000_000,
 };
-export function imagesFixture() {
+const albumId = (attachmentId: string) =>
+  new Bun.CryptoHasher("sha256").update(attachmentId).digest("hex");
+const fixtureThumbnail = Uint8Array.from(
+  atob("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA=="),
+  (c) => c.charCodeAt(0),
+);
+export function imagesFixture(isAnimated: (ref: ImageRef) => boolean = () => false) {
   const listeners = new Set<(change: ChatChange) => void>();
   const scope = Symbol("image fixture session");
   const panels = panelsFixture();
@@ -88,8 +96,9 @@ export function imagesFixture() {
     async media(id, variant) {
       const image = media.get(id);
       if (!image) return null;
+      if (variant !== "original" && !(variant in image)) return null;
       return {
-        bytes: Uint8Array.from(atob(image[variant]), (c) => c.charCodeAt(0)),
+        bytes: Uint8Array.from(atob(variant === "original" ? image.original : (image as { preview: string; model: string })[variant]), (c) => c.charCodeAt(0)),
         mediaType: variant === "original" ? image.mediaType : "image/jpeg",
       };
     },
@@ -109,7 +118,7 @@ export function imagesFixture() {
                   m.role === "agent" ? ("agent" as const) : ("human" as const),
                 available: media.has(image.attachmentId),
                 previewUrl: media.has(image.attachmentId)
-                  ? mediaUrl(image.attachmentId, "original")
+                  ? albumImageThumbnailUrl(albumId(image.attachmentId))
                   : null,
                 originalUrl: media.has(image.attachmentId)
                   ? mediaUrl(image.attachmentId)
@@ -189,7 +198,9 @@ export function imagesFixture() {
         submissions.set(input.operationId, structuredClone(input));
         messages.push({
           id: input.operationId, role: "user", text: input.text,
-          ...(input.images ? { images: input.images } : {}),
+          ...(input.images ? { images: input.images.map((ref) =>
+            isAnimated(ref) ? { ...ref, animated: true as const } : ref
+          ) } : {}),
           ...(input.files ? { files: input.files } : {}),
           createdAt: Date.now(), operationId: input.operationId, turnId: active,
         });
@@ -327,6 +338,12 @@ export function imagesFixture() {
   return {
     backend,
     imageBackend,
+    thumbnail(path: string) {
+      const available = [...media.keys()].some((id) => chatImageThumbnailUrl(id) === path)
+        || album().some((image) => image.previewUrl === path);
+      if (!available) return new Response(null, { status: 404 });
+      return new Response(fixtureThumbnail, { headers: { "Content-Type": "image/webp" } });
+    },
     async stageSticker(input: ImageUpload, sticker: StickerIdentity) {
       if (input.images.length !== 1) throw new Error("One sticker per stage");
       await imageBackend.upload(input);

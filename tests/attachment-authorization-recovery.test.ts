@@ -56,8 +56,8 @@ for (const mode of ["unknown", "failed"])
           getContext: () => ({ drawImage() {} }),
           toBlob: (cb: any) =>
             cb(
-              new Blob([new Uint8Array([255, 216, 255, 224])], {
-                type: "image/jpeg",
+              new Blob([new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])], {
+                type: "image/webp",
               }),
             ),
         }),
@@ -167,7 +167,7 @@ for (const mode of ["unknown", "failed"])
         expect(p.dispatched).toBe(true);
         expect(p.state).toBe(mode === "failed" ? "failed" : "sending");
         expect(p.images?.[0]?.attachmentId).toBe("image-ref");
-        expect(imageBytes).toBe(Buffer.from(fixtureImage).toString("base64"));
+        expect(imageBytes).toBe(btoa("RIFF\x04\x00\x00\x00WEBP"));
         if (mixed) expect(fileBytes).toBe("AAH/");
         x.disconnected(new ChatConnectionError("revoked", false));
         expect(released).toBe(1);

@@ -515,8 +515,8 @@ test("controller stages mixed image and file independently and submits both", as
         getContext: () => ({ drawImage() {} }),
         toBlob: (cb: (blob: Blob) => void) =>
           cb(
-            new Blob([new Uint8Array([255, 216, 255, 224])], {
-              type: "image/jpeg",
+            new Blob([new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])], {
+              type: "image/webp",
             }),
           ),
       }),
@@ -573,7 +573,8 @@ test("controller stages mixed image and file independently and submits both", as
       createFileDrafts([new File([new Uint8Array([0, 255])], "data.bin")]),
     );
     expect(submission.text).toBe("mixed");
-    expect(submission.images[0].name).toBe("photo.png");
+    expect(submission.images[0].name).toBe("photo.webp");
+    expect(submission.images[0].mediaType).toBe("image/webp");
     expect(submission.files[0].name).toBe("data.bin");
     expect(submission.files[0].size).toBe(2);
     expect(controller.pending[0]?.state).toBe("sent");

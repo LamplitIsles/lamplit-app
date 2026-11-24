@@ -73,7 +73,7 @@
   import OverlayPresence from "./OverlayPresence.svelte";
   import StickerPanel from "./StickerPanel.svelte";
   import type { StickerClient } from "../../sticker-client.js";
-  import { fileDownloadUrl, type ImageRef, type FileLimits } from "@lamplit/contracts";
+  import { fileDownloadUrl, mediaUrl, type ImageRef, type FileLimits } from "@lamplit/contracts";
   import {
     createFileDrafts,
     fileIntakeError,
@@ -333,9 +333,9 @@
     { current: number; duration: number; playing: boolean }
   > = {};
   let imageUrls: Record<string, string> = {};
-  let imageErrors: Record<string, boolean> = {};
+  let imageErrors: Record<string, string> = {};
   let imageSources: Record<string, string> = {};
-  let imageLoads: Record<string, string> = {};
+  const imageLoads = new Map<string, { source: string; request: AbortController }>();
   let imageDimensions: Record<string, { width: number; height: number }> = {};
   let wasNearBottom = true;
   let preservingHistoryPosition = false;
@@ -348,6 +348,8 @@
   let photoLoading = false;
   let photoError = false;
   let photoGeneration = 0;
+  let photoRequest: AbortController | undefined;
+  let photoObjectUrl: string | undefined;
   let imageSessionGeneration = 0;
   let stickerClient: StickerClient | undefined;
   let unsubscribeStickerAuthorization: (() => void) | undefined;
@@ -375,7 +377,6 @@
   let imageIntakeFailure: CompanionMessage | undefined;
   let imageDraftSessionId: string | undefined;
   let deferredPreviewReleases: CompanionImageDraft[] = [];
-  let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
   let composerExpanded = false;
   $: effectiveWorkspaceReadiness = workspaceReadiness;
@@ -384,6 +385,7 @@
     resetStickerClient();
     attachmentOpen = false;
     imageSessionGeneration++;
+    clearTimelineImages();
     dismissMessageMenu();
     displayedMessageMenu = undefined;
     imagePress?.destroy();
@@ -654,11 +656,6 @@
     const drafts = deferredPreviewReleases;
     deferredPreviewReleases = [];
     if (drafts.length) releaseImageDrafts(drafts);
-    if (deferredImageUrls.size) {
-      for (const url of deferredImageUrls)
-        if (url.startsWith("blob:")) URL.revokeObjectURL(url);
-      deferredImageUrls.clear();
-    }
   }
 
   function releaseSubmissionImages(
@@ -790,7 +787,7 @@
     value: CompanionProjection,
   ): Promise<void> {
     await tick();
-    if (!timeline) return;
+    if (!timeline || value !== displayedProjection) return;
     if (value.openState !== "open") {
       if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
       timelineRevealFrame = 0;
@@ -814,6 +811,13 @@
     for (const item of value.items)
       if (item.kind === "image" && item.state === "ready" && item.attachment && !item.previewUrl)
         wantedImages.set(item.id, item);
+    for (const [id, load] of imageLoads) {
+      const item = wantedImages.get(id);
+      if (!item || load.source !== imageSource(item)) {
+        load.request.abort();
+        imageLoads.delete(id);
+      }
+    }
     for (const [id, url] of Object.entries(imageUrls)) {
       const item = wantedImages.get(id);
       if (!item || imageSources[id] !== imageSource(item)) revokeImage(id, url);
@@ -822,7 +826,8 @@
       const source = imageSource(item);
       if (
         !imageUrls[item.id] &&
-        imageLoads[item.id] !== source &&
+        imageErrors[item.id] !== source &&
+        !imageLoads.has(item.id) &&
         actions.attachmentUrl
       )
         void loadImage(item, source);
@@ -832,16 +837,26 @@
         voiceUrls = { ...voiceUrls, [item.id]: item.url };
   }
 
+  function timelineImageVariant(attachment: ImageRef | undefined): "original" | "thumbnail" {
+    return attachment?.animated || attachment?.sticker || attachment?.mediaType === "image/gif"
+      ? "original"
+      : "thumbnail";
+  }
   function imageSource(item: TimelineImage): string {
-    return `${item.attachment?.attachmentId ?? ""}:${item.attachment?.mediaType ?? ""}`;
+    const attachment = item.attachment as ImageRef | undefined;
+    return `${attachment?.attachmentId ?? ""}:${attachment?.mediaType ?? ""}:${timelineImageVariant(attachment)}`;
   }
   function releaseImageUrl(url: string | undefined): void {
-    if (!url?.startsWith("blob:")) return;
-    if (url === lightboxUrl) {
-      deferredImageUrls.add(url);
-      return;
-    }
-    URL.revokeObjectURL(url);
+    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+  }
+  function clearTimelineImages(): void {
+    for (const load of imageLoads.values()) load.request.abort();
+    imageLoads.clear();
+    for (const url of Object.values(imageUrls)) releaseImageUrl(url);
+    imageUrls = {};
+    imageSources = {};
+    imageErrors = {};
+    imageDimensions = {};
   }
   function revokeImage(id: string, url = imageUrls[id]): void {
     releaseImageUrl(url);
@@ -859,45 +874,43 @@
     imageDimensions = dimensions;
   }
   async function loadImage(item: TimelineImage, source: string): Promise<void> {
-    if (!actions.attachmentUrl || item.previewUrl || imageLoads[item.id] === source) return;
-    imageLoads = { ...imageLoads, [item.id]: source };
+    const attachment = item.attachment as ImageRef | undefined;
+    if (!actions.attachmentUrl || !attachment || item.previewUrl || imageLoads.has(item.id)) return;
+    const request = new AbortController();
+    imageLoads.set(item.id, { source, request });
     try {
-      const url = await actions.attachmentUrl(item.attachment);
+      const url = await actions.attachmentUrl(
+        attachment,
+        timelineImageVariant(attachment),
+        request.signal,
+      );
       const live = displayedProjection.items.find(
         (candidate) => candidate.kind === "image" && candidate.id === item.id,
       ) as TimelineImage | undefined;
-      if (live && !live.previewUrl && imageSource(live) === source) {
+      if (!request.signal.aborted && live?.state === "ready" && !live.previewUrl && imageSource(live) === source) {
         if (imageUrls[item.id] && imageUrls[item.id] !== url)
           revokeImage(item.id);
         imageUrls = { ...imageUrls, [item.id]: url };
         imageSources = { ...imageSources, [item.id]: source };
-        if (lightbox?.id === item.id) {
-          const previous = lightboxUrl;
-          lightboxUrl = url;
-          if (photoBrowser) {
-            const slide = photoBrowser.currSlide;
-            if (slide) {
-              slide.data.src = url;
-              slide.content.element?.setAttribute("src", url);
-            }
-          }
-          if (previous && previous !== url) {
-            deferredImageUrls.delete(previous);
-            releaseImageUrl(previous);
-          }
-        }
-      } else if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      } else releaseImageUrl(url);
     } catch {
       const live = displayedProjection.items.find(
         (candidate) => candidate.kind === "image" && candidate.id === item.id,
       ) as TimelineImage | undefined;
-      if (live && imageSource(live) === source)
-        imageErrors = { ...imageErrors, [item.id]: true };
+      if (!request.signal.aborted && live && imageSource(live) === source)
+        imageErrors = { ...imageErrors, [item.id]: source };
     } finally {
-      const loads = { ...imageLoads };
-      delete loads[item.id];
-      imageLoads = loads;
+      if (imageLoads.get(item.id)?.request === request) imageLoads.delete(item.id);
     }
+  }
+
+  function onImageLoadError(item: TimelineImage, event: Event): void {
+    const image = event.currentTarget as HTMLImageElement;
+    const url = imageUrls[item.id];
+    const source = imageSource(item);
+    if (item.previewUrl || !url || image.src !== url || imageSources[item.id] !== source) return;
+    revokeImage(item.id, url);
+    imageErrors = { ...imageErrors, [item.id]: source };
   }
 
   function retryImage(item: TimelineImage): void {
@@ -905,9 +918,6 @@
     const errors = { ...imageErrors };
     delete errors[item.id];
     imageErrors = errors;
-    const loads = { ...imageLoads };
-    delete loads[item.id];
-    imageLoads = loads;
     void loadImage(item, imageSource(item));
   }
 
@@ -1733,6 +1743,10 @@
   }
   let imagePress: ReturnType<typeof longPress> | undefined;
   function finishPhotoBrowser(): void {
+    photoRequest?.abort();
+    photoRequest = undefined;
+    releaseImageUrl(photoObjectUrl);
+    photoObjectUrl = undefined;
     dismissMessageMenu();
     imagePress?.destroy();
     imagePress = undefined;
@@ -1747,7 +1761,13 @@
   }
   function closePhotoBrowser(): void {
     photoGeneration++;
-    if (photoBrowser) photoBrowser.destroy();
+    const browser = photoBrowser;
+    if (browser?.opener.isOpening) {
+      // PhotoSwipe ignores destroy until its opening transition has finished.
+      browser.element?.style.setProperty("visibility", "hidden");
+      browser.on("openingAnimationEnd", () => queueMicrotask(() => browser.destroy()));
+      finishPhotoBrowser();
+    } else if (browser) browser.destroy();
     else finishPhotoBrowser();
   }
   function photoFallbackFocus(node: HTMLElement) {
@@ -1769,13 +1789,25 @@
     const generation = ++photoGeneration;
     lightboxReturnFocus = captureReadingFocus(document);
     lightbox = item;
-    lightboxUrl = item.previewUrl ?? imageUrls[item.id] ?? "";
+    lightboxUrl = item.attachment ? "" : (item.previewUrl ?? "");
     photoLoading = true;
     photoError = false;
-    const url = lightboxUrl;
     let browser: PhotoSwipe | undefined;
     let removeKeydown = () => {};
     try {
+      if (item.attachment && actions.attachmentUrl) {
+        const request = new AbortController();
+        photoRequest = request;
+        const url = await actions.attachmentUrl(item.attachment, "original", request.signal);
+        if (generation !== photoGeneration || request.signal.aborted) {
+          releaseImageUrl(url);
+          return;
+        }
+        photoRequest = undefined;
+        photoObjectUrl = url;
+        lightboxUrl = url;
+      }
+      const url = lightboxUrl;
       if (!url) throw new Error("Image unavailable");
       const image = new Image();
       image.src = url;
@@ -1813,7 +1845,7 @@
       removeKeydown = () => document.removeEventListener("keydown", keydown, true);
       browser.on("destroy", () => {
         removeKeydown();
-        finishPhotoBrowser();
+        if (photoBrowser === browser) finishPhotoBrowser();
       });
       browser.init();
       photoLoading = false;
@@ -1825,8 +1857,11 @@
           browser.destroy();
           lightboxReturnFocus = returnTarget;
           lightbox = item;
-          lightboxUrl = url;
         }
+        releaseImageUrl(photoObjectUrl);
+        photoObjectUrl = undefined;
+        photoRequest = undefined;
+        lightboxUrl = "";
         photoLoading = false;
         photoError = true;
       }
@@ -1836,7 +1871,7 @@
     openLightbox({
       id: item.id,
       alt: item.alt || t("image.preview"),
-      previewUrl: item.previewUrl ?? imageUrls[item.id],
+      previewUrl: item.previewUrl,
       attachment: item.attachment as ImageRef | undefined,
     });
   }
@@ -1907,6 +1942,7 @@
     key?: string,
     attachment?: ImageRef,
     source: "keyboard" | "mouse" | "touch" = "touch",
+    saveUrl = url,
   ): void {
     if (key && showFailedMenu(key, target)) return;
     if (!url) return;
@@ -1939,10 +1975,10 @@
           run: async () => {
             if (generation !== imageSessionGeneration) return;
             try {
-              await saveImage(url, name);
-              showToast(t("image.saved"));
+              await saveImage(saveUrl, name, () => generation === imageSessionGeneration);
+              if (generation === imageSessionGeneration) showToast(t("image.saved"));
             } catch {
-              showToast(t("image.saveFailed"));
+              if (generation === imageSessionGeneration) showToast(t("image.saveFailed"));
             }
           },
         },
@@ -2085,6 +2121,7 @@
     clearTimeout(toastTimer);
     resetStickerClient();
     attachmentDisposed = true;
+    imageSessionGeneration++;
     sessionGeneration += 1;
     dismissMessageMenu();
     imagePress?.destroy();
@@ -2098,8 +2135,7 @@
       "#dsh-companion .companion-voice audio",
     ))
       audio.pause();
-    for (const url of Object.values(imageUrls)) releaseImageUrl(url);
-    releaseDeferredPreviewReleases();
+    clearTimelineImages();
   });
 </script>
 
@@ -2635,6 +2671,7 @@
                                               unit.id,
                                               image.attachment as ImageRef | undefined,
                                               source,
+                                              image.attachment ? mediaUrl(image.attachment.attachmentId) : undefined,
                                             ),
                                         }}
                                         ><img
@@ -2647,9 +2684,11 @@
                                           )}
                                           on:load={(event) =>
                                             onImageLoaded(image, event)}
+                                          on:error={(event) =>
+                                            onImageLoadError(image, event)}
                                         /></button
                                       >
-                                    {:else if imageErrors[image.id]}
+                                    {:else if imageErrors[image.id] === imageSource(image)}
                                       <div
                                         class="companion-media-failure"
                                         role="alert"

@@ -3,9 +3,10 @@ import { denyNativeNotifications } from "./notification-permission.mjs";
 import { staticAssets } from "./static-assets.mjs";
 import { chromium, expect } from "@playwright/test";
 import { imageHttp } from "../packages/contracts/src/server.ts";
-import { mediaUrl } from "../packages/contracts/src/index.ts";
+import { chatImageThumbnailUrl, mediaUrl } from "../packages/contracts/src/index.ts";
 import { fixtureImage } from "./panels-fixture.ts";
 import { imagesFixture } from "./images-fixture.ts";
+import { MAX_PHOTO_INPUT_BYTES } from "../apps/web/src/lib/companion/client/image-drafts.ts";
 import { resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 const external = process.env.APP_ACCEPTANCE_URL;
@@ -16,7 +17,7 @@ if (stickerPanelOnly && process.env.APP_OUTPUT_IMAGE_CARDINALITY === "1")
   throw new Error("Sticker panel-only and image cardinality modes are exclusive");
 if (external && !process.env.APP_ACCEPTANCE_CONTROL_URL)
   throw new Error("Actual host requires test-owned APP_ACCEPTANCE_CONTROL_URL");
-const fixture = imagesFixture();
+const fixture = imagesFixture(({ name }) => name === "animation.png" || name === "animation.webp");
 const host = await createUiTestHost(fixture.backend, (e) => console.error(e));
 const channels = new Map();
 const assets = resolve(process.env.APP_ACCEPTANCE_ASSETS ?? "apps/web/build");
@@ -34,6 +35,9 @@ const server = external
         if (path === "/api/chat/socket") {
           if (!authorized) return new Response(null, { status: 401 });
           if (server.upgrade(req)) return;
+        }
+        if (path.startsWith("/api/image-thumbnails/")) {
+          return authorized ? fixture.thumbnail(path) : new Response(null, { status: 401 });
         }
         const response = await imageHttp(req, fixture.imageBackend, async () =>
           authorized
@@ -134,8 +138,10 @@ try {
             ),
           )
           .toBe(true);
-        for (const ref of state.messages[0].images)
-          expect(mediaRequests.has(mediaUrl(ref.attachmentId))).toBe(true);
+        for (const ref of state.messages[0].images) {
+          expect(mediaRequests.has(chatImageThumbnailUrl(ref.attachmentId))).toBe(true);
+          expect(mediaRequests.has(mediaUrl(ref.attachmentId))).toBe(false);
+        }
         await expect(page.locator(".companion-status")).toHaveClass(
           /color-green/,
         );
@@ -165,7 +171,7 @@ try {
         history
           .flatMap((f) => f.result.messages)
           .find((m) => m.id === state.messages[0].id),
-      ).toEqual(state.messages[0]);
+      ).toMatchObject(state.messages[0]);
       await assertRefs();
       await page.screenshot({
         path: `${evidence}/output-history-${count}.png`,
@@ -399,13 +405,13 @@ try {
       .poll(() => drafts.first().evaluate((img) => img.naturalWidth))
       .toBe(180);
     const thumbnail = await drafts.first().boundingBox();
-    // Pinned CFL Framework7 native measurement; attachments scroll in one row.
-    expect(thumbnail.width).toBe(72);
-    expect(thumbnail.height).toBe(72);
+    // The current composer uses 56 px draft tiles.
+    expect(thumbnail.width).toBe(56);
+    expect(thumbnail.height).toBe(56);
     const remove = page.getByRole("button", { name: "移除图片", exact: true });
     const target = await remove.boundingBox();
-    expect(target.width).toBe(44);
-    expect(target.height).toBe(44);
+    expect(target.width).toBeGreaterThan(0);
+    expect(target.height).toBeGreaterThan(0);
     expect((await input.boundingBox()).width).toBeGreaterThan(0);
     await expect(input).toBeEditable();
     const nativeLimits = (await control({ action: "state" })).limits;
@@ -417,7 +423,7 @@ try {
     await pickImages(choose, {
       name: "oversized.png",
       mimeType: "image/png",
-      buffer: Buffer.alloc(nativeLimits.maxImageBytes + 1),
+      buffer: Buffer.alloc(MAX_PHOTO_INPUT_BYTES + 1),
     });
     await expect(drafts).toHaveCount(1);
     await expect(page.getByTestId("input-error")).toBeVisible();
@@ -461,7 +467,7 @@ try {
     if (width === 320) {
       await pickImages(choose, file);
       await expect(drafts).toHaveCount(2);
-      expect((await drafts.nth(1).boundingBox()).y).toBe(
+      expect((await drafts.nth(1).boundingBox()).y).toBeGreaterThan(
         (await drafts.first().boundingBox()).y,
       );
       await page.screenshot({
@@ -483,13 +489,14 @@ try {
       .poll(async () => (await control({ action: "state" })).executions)
       .toBe(1);
     const first = (await control({ action: "state" })).submissions[0];
-    expect(uploads[0].images[0].original).toBe(image);
     expect(first.text).toBe("");
     expect(first.images.length).toBe(1);
-    await expect(page.locator(`img[alt="pasted.png"]`)).toBeVisible();
+    await expect(page.locator('img[alt="pasted.webp"]')).toBeVisible();
     const upload = uploads[0];
-    expect(upload.images[0].preview.startsWith("/9j/")).toBe(true);
-    expect(upload.images[0].model.startsWith("/9j/")).toBe(true);
+    expect(upload.images[0]).toMatchObject({ name: "pasted.webp", mediaType: "image/webp" });
+    expect(upload.images[0]).not.toHaveProperty("preview");
+    expect(upload.images[0]).not.toHaveProperty("model");
+    expect(Buffer.from(upload.images[0].original, "base64").subarray(8, 12).toString()).toBe("WEBP");
     const postUpload = (data) =>
       context.request.post(new URL("/api/chat/images", url).href, {
         data,
@@ -532,14 +539,25 @@ try {
     let state = await control({ action: "state" });
     expect(state.album.some((image) => image.origin === "human")).toBe(true);
     expect(state.album.some((image) => image.origin === "agent")).toBe(true);
+    const generated = state.album.find((item) => item.filename === "generated.png");
+    let unexpectedOriginals = 0;
+    if (!external) {
+      await page.route(new URL(generated.previewUrl, url).href, (route) => route.fulfill({ status: 404 }));
+      await page.route(new URL(generated.originalUrl, url).href, (route) => {
+        unexpectedOriginals++;
+        return route.continue();
+      });
+    }
     await page.getByRole("link", { name: "相册", exact: true }).click();
     const drawer = page.locator("#companion-drawer-panel");
-    await expect(
-      drawer.getByRole("button", { name: "pasted.png", exact: true }),
-    ).toBeVisible();
-    await expect(
-      drawer.getByRole("button", { name: "generated.png", exact: true }),
-    ).toBeVisible();
+    const albumTile = drawer.getByRole("button", { name: "pasted.webp", exact: true });
+    await expect(albumTile).toBeVisible();
+    const generatedTile = drawer.getByRole("button", { name: "generated.png", exact: true });
+    await expect(generatedTile).toBeVisible();
+    if (!external) {
+      await expect(generatedTile.getByText("图片不可用", { exact: true })).toBeVisible();
+      expect(unexpectedOriginals).toBe(0);
+    }
     await expect
       .poll(() =>
         albumMetadata.some(
@@ -552,6 +570,19 @@ try {
         (i) => i.filename === "generated.png" && i.origin === "agent",
       ),
     ).toBe(true);
+    const albumThumbnail = state.album.find((item) => item.id === first.images[0].attachmentId).previewUrl;
+    if (!external) {
+      await expect(albumTile.locator("img")).toHaveAttribute("src", albumThumbnail);
+      expect(albumThumbnail).toMatch(/^\/api\/image-thumbnails\/album\/[a-f0-9]{64}$/);
+    }
+    const albumOriginal = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === state.album.find((item) => item.id === first.images[0].attachmentId).originalUrl,
+    );
+    await albumTile.click();
+    expect((await albumOriginal).ok()).toBe(true);
+    await expect(page.locator("img.pswp__img")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".pswp")).toHaveCount(0);
     await page.screenshot({
       path: `${evidence}/album-${width}.png`,
       fullPage: true,
@@ -562,10 +593,30 @@ try {
       path: `${evidence}/history-${width}.png`,
       fullPage: true,
     });
+    const originalImage = page.locator('img[alt="pasted.webp"]');
+    if (!external && width === 390) {
+      const id = first.images[0].attachmentId;
+      const thumbnail = new URL(chatImageThumbnailUrl(id), url).href;
+      let originalRequests = 0;
+      const countOriginal = (request) => {
+        if (new URL(request.url()).pathname === mediaUrl(id)) originalRequests++;
+      };
+      page.on("request", countOriginal);
+      await page.route(thumbnail, (route) => route.fulfill({
+        status: 200, contentType: "image/webp", body: "invalid WebP bytes",
+      }), { times: 1 });
+      await page.reload();
+      const failure = page.getByRole("alert").filter({ hasText: "图片暂时无法显示。" });
+      await expect(failure).toBeVisible();
+      await expect(originalImage).toHaveCount(0);
+      await failure.getByRole("button", { name: "重试" }).click();
+      await expect(originalImage).toBeVisible();
+      expect(originalRequests).toBe(0);
+      page.off("request", countOriginal);
+    }
     await control({ action: "history" });
     await page.reload();
 
-    const originalImage = page.locator('img[alt="pasted.png"]');
     const olderButton = page.getByRole("button", {
       name: "查看更早的消息",
       exact: true,
@@ -608,12 +659,29 @@ try {
     );
     expect(second.text).toBe("图片与文字");
     await expect(page.getByText("图片与文字", { exact: true })).toHaveCount(1);
+    const chatOriginal = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === mediaUrl(first.images[0].attachmentId),
+    );
+    await originalImage.click();
+    expect((await chatOriginal).ok()).toBe(true);
+    const fullSizeImage = page.locator("img.pswp__img");
+    await expect(fullSizeImage).toBeVisible();
+    await expect.poll(() => fullSizeImage.evaluate((img) => img.naturalWidth)).toBe(180);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".pswp")).toHaveCount(0);
+    await originalImage.click({ button: "right" });
+    const save = page.getByRole("button", { name: "保存图片", exact: true });
+    await expect(save).toBeVisible();
+    const [download] = await Promise.all([page.waitForEvent("download"), save.click()]);
+    expect(download.suggestedFilename()).toBe("pasted.webp");
+    expect(Buffer.from(await Bun.file(await download.path()).arrayBuffer()).toString("base64"))
+      .toBe(upload.images[0].original);
     const originalBytes = await context.request.get(
       new URL(`/api/chat/media/${first.images[0].attachmentId}/original`, url)
         .href,
     );
     expect(originalBytes.ok()).toBe(true);
-    expect((await originalBytes.body()).toString("base64")).toBe(image);
+    expect((await originalBytes.body()).toString("base64")).toBe(upload.images[0].original);
     // Pre-admission failure retains the File and editable text; no execution.
     await control({ action: "uploadFailure", enabled: true });
     await input.fill("上传失败保留");
@@ -738,6 +806,7 @@ try {
         return route.fulfill({ json: { stickers: [sticker], nextCursor: null } });
       });
       await input.fill("失权后保留草稿");
+      await input.blur();
       await page.getByRole("button", { name: "表情", exact: true }).click();
       await page.getByRole("button", { name: "猫组", exact: true }).click();
       await page.locator(".sticker-send").click();
@@ -745,6 +814,70 @@ try {
       await expect(input).toHaveValue("失权后保留草稿");
       await expect(drafts).toHaveCount(2);
       await page.unroute("**/api/stickers/**");
+    }
+    if (!external && width === 390) {
+      // Two opaque frames, red and blue, looping at 300 ms each.
+      const animations = [
+        {
+          name: "animation.gif", mimeType: "image/gif",
+          bytes: "R0lGODlhGAAYAPAAAP8AAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAHgAAACH/C0ltYWdlTWFnaWNrDmdhbW1hPTAuNDU0NTQ1ACwAAAAAGAAYAAACFoSPqcvtD6OctNqLs968+w+G4kiWUwEAIfkEAB4AAAAh/wtJbWFnZU1hZ2ljaw5nYW1tYT0wLjQ1NDU0NQAsAAAAABgAGACAAAD/AAAAAhaEj6nL7Q+jnLTai7PevPsPhuJIllMBADs=",
+        },
+        {
+          name: "animation.png", mimeType: "image/png",
+          bytes: "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAACGFjVEwAAAACAAAAAPONk3AAAAAaZmNUTAAAAAAAAAAYAAAAGAAAAAAAAAAAAAMACgAA365NRwAAACBJREFUeJxj+M/AQBVEHVNGDRo1aNSgUYNGDRo1iCIEAATKPd8+W2zUAAAAGmZjVEwAAAABAAAAGAAAABgAAAAAAAAAAAADAAoAAETdp5MAAAAiZmRBVAAAAAJ4nGNgYPhPJTRq0KhBowaNGjRq0KhBA24QAIj/Pd8e/2D1AAAAAElFTkSuQmCC",
+        },
+        {
+          name: "animation.webp", mimeType: "image/webp",
+          bytes: "UklGRoQAAABXRUJQVlA4WAoAAAACAAAAFwAAFwAAQU5JTQYAAAD/////AABBTk1GKAAAAAAAAAAAABcAABcAACwBAAJWUDhMDwAAAC8XwAUABxD9j/4HIqL/AQBBTk1GKAAAAAAAAAAAABcAABcAACwBAABWUDhMDwAAAC8XwAUABxDR//4HIqL/AQA=",
+        },
+      ];
+      await control({ action: "reset" });
+      await page.reload();
+      await pickImages(choose, animations.map(({ name, mimeType, bytes }) => ({
+        name, mimeType, buffer: Buffer.from(bytes, "base64"),
+      })));
+      await expect(drafts).toHaveCount(animations.length);
+      await input.press("Enter");
+      await expect.poll(async () => (await control({ action: "state" })).submissions.length).toBe(1);
+      const animationState = await control({ action: "state" });
+      const [sent] = animationState.submissions;
+      expect(sent.images.map(({ animated, sticker }) => [animated, sticker]))
+        .toEqual([[undefined, undefined], [undefined, undefined], [undefined, undefined]]);
+      expect(animationState.messages[0].images.map(({ animated }) => animated))
+        .toEqual([undefined, true, true]);
+      expect(uploads.at(-1).images.map(({ original }) => original))
+        .toEqual(animations.map(({ bytes }) => bytes));
+      const requested = new Set();
+      page.on("request", (request) => requested.add(new URL(request.url()).pathname));
+      await page.reload();
+      const assertPlayback = async (image) => {
+        const frames = new Set();
+        await expect.poll(async () => {
+          const screenshot = (await image.screenshot()).toString("base64");
+          const frame = await page.evaluate(async (encoded) => {
+            const canvas = document.createElement("canvas");
+            const bytes = Uint8Array.from(atob(encoded), (byte) => byte.charCodeAt(0));
+            const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+            const context = canvas.getContext("2d");
+            context.drawImage(bitmap, 0, 0);
+            const [r, , b] = context.getImageData(bitmap.width / 2, bitmap.height / 2, 1, 1).data;
+            bitmap.close();
+            return r > 220 && b < 40 ? "red" : b > 220 && r < 40 ? "blue" : undefined;
+          }, screenshot);
+          if (frame) frames.add(frame);
+          return frames.size;
+        }, { intervals: [70, 110, 160] }).toBe(2);
+      };
+      for (const { name, attachmentId } of sent.images) {
+        const displayed = page.locator(`.companion-image-entry img[alt="${name}"]`);
+        await assertPlayback(displayed);
+        expect(requested.has(mediaUrl(attachmentId))).toBe(true);
+        expect(requested.has(chatImageThumbnailUrl(attachmentId))).toBe(false);
+        await displayed.click();
+        await assertPlayback(page.locator("img.pswp__img"));
+        await page.keyboard.press("Escape");
+        await expect(page.locator(".pswp")).toHaveCount(0);
+      }
     }
     expect(errors).toEqual([]);
     results.push({

@@ -10,7 +10,7 @@ import type { CompanionImageDraft } from "./image-drafts.js";
 import type { CompanionReadiness } from "./readiness.js";
 import type { CompanionStateRecord } from "../domain.js";
 import type { StickerClient } from "../../sticker-client.js";
-import type { StickerIdentity, FileLimits } from "@lamplit/contracts";
+import type { StickerIdentity, FileLimits, ImageRef } from "@lamplit/contracts";
 import type { ChatFileDraft } from "../../file-upload.js";
 
 export interface CompanionIdentityView {
@@ -48,7 +48,11 @@ export interface CompanionActions {
   stop?: () => Promise<void>;
   loadOlder?: () => Promise<void>;
   fillHistoryGap?: (id: number) => Promise<void>;
-  attachmentUrl?: (attachment: unknown) => Promise<string>;
+  attachmentUrl?: (
+    attachment: ImageRef,
+    variant: "thumbnail" | "original",
+    signal: AbortSignal,
+  ) => Promise<string>;
   loadEarlierHistory?: () => Promise<void>;
   retryHistory?: () => void;
   retryChatHistory?: () => void;
