@@ -1279,24 +1279,84 @@ export class ChatController {
       this.changed();
     }
   }
+  private async readOlder(
+    client: NonNullable<ChatController["client"]>,
+    sessionId: string,
+    before: string,
+    current: () => boolean,
+  ) {
+    const page = await client.historySync({ kind: "older", sessionId, before });
+    if (!current()) return;
+    if (page.kind === "older") {
+      return {
+        messages: page.records.map(({ message }) => message),
+        before: page.before,
+      };
+    }
+    if (page.kind !== "resyncRequired")
+      throw new Error("Unexpected history result");
+
+    const start = await client.historySync({ kind: "start", sessionId });
+    if (!current()) return;
+    if (start.kind !== "start") throw new Error("Unexpected history result");
+    const messages = start.records.map(({ message }) => message);
+    const live = this.view?.messages ?? [];
+    // The oldest live message anchors which snapshot records may be prepended.
+    const firstLive = live[0];
+    const prefixEnd = firstLive
+      ? messages.findIndex(({ id }) => id === firstLive.id)
+      : messages.length;
+    const emptyHistory =
+      messages.length === 0 &&
+      start.before === null &&
+      live.every(({ textState }) => textState === "streaming");
+    if (prefixEnd < 0 && !emptyHistory) {
+      // A short snapshot can start inside the live window. Its continuation
+      // can still reach earlier history, with duplicate live records filtered.
+      let matched = 0;
+      for (const { id } of live) {
+        if (id === messages[matched]?.id) matched++;
+      }
+      if (!matched || matched !== messages.length) {
+        throw new Error("History snapshot does not join the live window");
+      }
+    }
+    const older = messages.slice(0, Math.max(0, prefixEnd));
+    const liveIds = new Set(live.map(({ id }) => id));
+    if (older.some(({ id }) => liveIds.has(id)))
+      throw new Error("History snapshot does not join the live window");
+    this.historyEpoch++;
+    this.historyLoadingToken = undefined;
+    this.loadingOlder = false;
+    this.gaps = [];
+    this.older = older;
+    this.before = start.before;
+    this.historySources.clear();
+    this.noteHistory(messages);
+    this.retireObserved();
+    this.save();
+    this.historySyncFailed = false;
+    if (this.error === "加载历史失败，请重试。") this.error = "";
+    this.changed();
+  }
   async loadOlder() {
-    const epoch = this.historyEpoch;
-    if (!this.client || !this.before || this.loadingOlder) return;
     const client = this.client,
       sessionId = this.view?.sessionId,
+      before = this.before,
+      epoch = this.historyEpoch,
       token = Symbol();
+    if (!client || !sessionId || !before || this.loadingOlder) return;
+    const current = () =>
+      !this.closed &&
+      this.client === client &&
+      this.view?.sessionId === sessionId &&
+      this.historyEpoch === epoch;
     this.historyLoadingToken = token;
     this.loadingOlder = true;
     this.changed();
     try {
-      const page = await client.history(this.before);
-      if (
-        this.client !== client ||
-        this.view?.sessionId !== sessionId ||
-        this.historyEpoch !== epoch ||
-        this.closed
-      )
-        return;
+      const page = await this.readOlder(client, sessionId, before, current);
+      if (!page || !current()) return;
       const liveIds = new Set(this.view?.messages.map((message) => message.id));
       this.older = [
         ...new Map(
@@ -1312,11 +1372,7 @@ export class ChatController {
       this.historySyncFailed = false;
       if (this.error === "加载历史失败，请重试。") this.error = "";
     } catch {
-      if (
-        !this.closed &&
-        this.historyEpoch === epoch &&
-        this.client === client
-      ) {
+      if (current()) {
         this.historySyncFailed = true;
         this.error = "加载历史失败，请重试。";
       }
@@ -1328,15 +1384,19 @@ export class ChatController {
       }
     }
   }
-  /** Read at most one page for this gap; never schedules another read. */
+  /** Fill one page of a gap on demand. */
   async fillGap(id: number) {
     const gap = this.gaps.find((item) => item.id === id);
+    const client = this.client,
+      session = this.view?.sessionId,
+      epoch = this.historyEpoch;
     if (
       !gap ||
       gap.status === "loading" ||
       gap.status === "unavailable" ||
       !gap.cursor ||
-      !this.client ||
+      !client ||
+      !session ||
       this.closed
     )
       return;
@@ -1348,10 +1408,16 @@ export class ChatController {
       this.changed();
       return;
     }
-    const client = this.client,
-      epoch = this.historyEpoch,
-      session = this.view?.sessionId;
     const cursor = gap.cursor;
+    const current = () =>
+      !this.closed &&
+      this.client === client &&
+      this.historyEpoch === epoch &&
+      this.view?.sessionId === session &&
+      this.gaps.some(
+        (item) =>
+          item.id === id && item.cursor === cursor && item.status === "loading",
+      );
     const update = (patch: Partial<GapState>) => {
       this.gaps = this.gaps.map((item) =>
         item.id === id ? { ...item, ...patch } : item,
@@ -1360,20 +1426,8 @@ export class ChatController {
     };
     update({ status: "loading" });
     try {
-      const page = await client.history(cursor);
-      if (
-        this.closed ||
-        this.client !== client ||
-        this.historyEpoch !== epoch ||
-        this.view?.sessionId !== session ||
-        !this.gaps.some(
-          (item) =>
-            item.id === id &&
-            item.cursor === cursor &&
-            item.status === "loading",
-        )
-      )
-        return;
+      const page = await this.readOlder(client, session, cursor, current);
+      if (!page || !current()) return;
       const anchor = this.older.findIndex((item) => item.id === gap.afterId);
       if (anchor < 0) {
         update({ status: "error" });
@@ -1382,13 +1436,6 @@ export class ChatController {
       const boundary = page.messages.findIndex(
         (item) => item.id === gap.afterId,
       );
-      if (
-        new Set(page.messages.map((item) => item.id)).size !==
-        page.messages.length
-      ) {
-        update({ status: "error" });
-        return;
-      }
       const known = new Map(
         [...this.older, ...(this.view?.messages ?? [])].map((item, index) => [
           item.id,
@@ -1444,14 +1491,7 @@ export class ChatController {
       this.save();
       this.changed();
     } catch {
-      if (
-        !this.closed &&
-        this.client === client &&
-        this.historyEpoch === epoch &&
-        this.view?.sessionId === session &&
-        this.gaps.some((item) => item.id === id && item.status === "loading")
-      )
-        update({ status: "error" });
+      if (current()) update({ status: "error" });
     }
   }
 }

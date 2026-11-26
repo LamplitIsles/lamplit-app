@@ -23,7 +23,6 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   Chat,
   ViewSchema,
-  PageSchema,
   validateSubmission,
   validateReceipt,
   validateLookup,
@@ -32,10 +31,12 @@ import {
   type ChatView,
   type ChatMessage,
   type StreamingReply,
-  type HistoryPage,
   type Receipt,
   type Submission,
   OperationIdSchema,
+  HistorySyncInputSchema,
+  type HistorySyncInput,
+  type HistorySyncResult,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -46,6 +47,7 @@ import {
 import { decodeFrame, readCall, type WireSocket } from "./wire.ts";
 import { createReplyProjection } from "./reply-projection.ts";
 import { isReplySource } from "./reply-ranges.ts";
+import { validateHistorySyncResult } from "./history-sync.ts";
 
 /** A provider-defined, process-local session lifetime; never serialized. */
 export type ChatScope = symbol;
@@ -70,7 +72,7 @@ export type ChatChange =
 export interface ChatBackend extends PanelBackend, SearchBackend {
   read(signal?: AbortSignal): Promise<ChatView>;
   compact(input: CompactInput): Promise<CompactResult>;
-  history(before: string): Promise<HistoryPage>;
+  historySync(input: HistorySyncInput): Promise<HistorySyncResult>;
   /** Attempts start at 1 and advance only on an explicit retry after failure.
    * Durable source identities preserve attempt numbering across restart. */
   submit(input: Submission): Promise<Receipt>;
@@ -323,18 +325,27 @@ export async function createChatHost(
         throw new Error("Wrong compact session");
       return result;
     },
-    async history(before: string) {
-      // Retain only the request's starting view; pages without an overlapping
-      // source cannot be ordered from the backend's existing contract.
+    async historySync(input: HistorySyncInput) {
+      const value = validate(HistorySyncInputSchema, input);
       const initialView = view.value;
+      if (value.sessionId !== initialView.sessionId)
+        throw new Error("Wrong session");
       const epoch = sessionEpoch;
-      const page = validate(
-        PageSchema,
-        boundA2UIInMessages(await backend.history(validateId(before))),
+      const result = validateHistorySyncResult(
+        value, await backend.historySync(value), false,
       );
-      if (closed || sessionEpoch !== epoch || view.value.sessionId !== initialView.sessionId)
-        throw new Error("History session changed");
-      return replyProjection.history(page, view.value, initialView);
+      if (closed || sessionEpoch !== epoch || view.value.sessionId !== value.sessionId)
+        throw new Error("History sync session changed");
+      if (result.kind === "resyncRequired") return result;
+      const records = result.records;
+      const messages = replyProjection.history(
+        records.map(record => record.message),
+        view.value, initialView,
+      );
+      const projected = records.map((record, index) => ({
+        ...record, message: messages[index]!,
+      }));
+      return validateHistorySyncResult(value, { ...result, records: projected });
     },
     async submit(input: Submission) {
       const value = validateSubmission(input);
@@ -417,7 +428,9 @@ export async function createChatHost(
     }
     let outgoing: Promise<void> = Promise.resolve();
     let queuedBytes = 0;
-    const deliver = (frame: unknown, current: () => boolean = () => true) => {
+    const deliver = (
+      frame: unknown, current: () => boolean = () => true, stale?: unknown,
+    ) => {
       if (disposed) return;
       const raw = JSON.stringify(frame);
       const bytes = new TextEncoder().encode(raw).byteLength;
@@ -439,7 +452,10 @@ export async function createChatHost(
               dispose();
               return;
             }
-            if (!disposed && current()) socket.send(raw);
+            if (!disposed) {
+              if (current()) socket.send(raw);
+              else if (stale) socket.send(JSON.stringify(stale));
+            }
           } finally {
             queuedBytes -= bytes;
           }
@@ -479,6 +495,7 @@ export async function createChatHost(
         id = frame.id;
         const call = readCall(frame.call);
         const control = decodeServiceControlCall(call);
+        const readEpoch = sessionEpoch;
         let result: unknown;
         if (control?.type === "subscribe") {
           if (subscriptions.size || subscriptions.has(control.subscriptionId))
@@ -508,7 +525,7 @@ export async function createChatHost(
             call.serviceId !== Chat.id ||
             call.instance ||
             ![
-              "history",
+              "historySync",
               "submit",
               "lookup",
               "stop",
@@ -533,7 +550,11 @@ export async function createChatHost(
           2 * 1024 * 1024
         )
           throw new Error("Method result exceeds frame limit");
-        deliver(reply);
+        if (call.member === "historySync" && !control)
+          deliver(reply, () => sessionEpoch === readEpoch, {
+            type: "error", id, error: "Request could not be completed",
+          });
+        else deliver(reply);
       } catch (error) {
         if (!id) {
           socket.close(1002, "Invalid frame");
@@ -567,7 +588,7 @@ export async function createChatHost(
               frame.id.length <= 100 &&
               call.serviceId === Chat.id &&
               !call.instance &&
-              (call.member === "history" || call.member === "lookup") &&
+              (call.member === "historySync" || call.member === "lookup") &&
               call.args.length === 1;
           } catch {
             /* Invalid frames follow the ordinary validation path. */

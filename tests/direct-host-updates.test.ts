@@ -1,3 +1,5 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { expect, test } from "bun:test";
 import { openChat } from "../packages/contracts/src/client.ts";
 import type { ChatMessage, ChatView } from "../packages/contracts/src/index.ts";
@@ -154,7 +156,7 @@ test("a queued older preview cannot hide lines of an initially completed source"
   const backend = {
     ...fixture.backend,
     async read() { entered(); await held; return { ...initial, messages: [complete], before: "older" }; },
-    async history() { return { messages: [complete], before: null }; },
+    async historySync(input: HistorySyncInput) { return olderResult(input.sessionId, [complete], null); },
     subscribe(changed: (change: ChatChange) => void) { listener = changed; return { scope, close() {} }; },
   };
   const errors: unknown[] = [];
@@ -180,7 +182,7 @@ test("a queued older preview cannot hide lines of an initially completed source"
     expect(view!.streamingReply).toBeUndefined();
     expect(view!.messages[0]!.text).toBe("old\nnew\n");
     expect(view!.messages[0]!.ends).toEqual([4, 8]);
-    expect((await client.history("older")).messages[0]!.ends).toEqual([4, 8]);
+    expect((await readOlder(client, view!.sessionId, "older")).records[0]!.message.ends).toEqual([4, 8]);
     listener({ type: "update", scope, messages: [{ type: "upsert", message: { ...complete, text: "changed\n" } }] });
     expect(errors.some(error => String(error).includes("Reply source conflict"))).toBe(true);
     expect(view!.messages[0]!.ends).toEqual([4, 8]);
@@ -426,7 +428,7 @@ test("direct changes preserve admission, media, history and session fences", asy
   const backend = {
     ...fixture.backend,
     async read() { return initial; },
-    async history() { historyEntered(); await heldHistory; return { messages: [], before: null }; },
+    async historySync(input: HistorySyncInput) { historyEntered(); await heldHistory; return olderResult(input.sessionId, [], null); },
     async submit(input: Parameters<typeof fixture.backend.submit>[0]) {
       submits++;
       listener({ type: "update", scope: scopeA, messages: [{ type: "upsert", afterId: null, message: {
@@ -462,7 +464,7 @@ test("direct changes preserve admission, media, history and session fences", asy
     listener({ type: "update", scope: scopeA, messages: [{ type: "upsert", message: image, afterId: operationId }] });
     await until(() => view?.messages[1]?.id === "image");
     expect(view!.messages[1]!.images![0]!.attachmentId).toBe("photo");
-    const history = client.history("older");
+    const history = readOlder(client, view!.sessionId, "older");
     await readingHistory;
     listener({ type: "session", scope: scopeA, nextScope: scopeB, view: { ...initial, sessionId: "session-b" } });
     listener({ type: "session", scope: scopeB, nextScope: scopeAgain, view: initial });

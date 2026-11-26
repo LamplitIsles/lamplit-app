@@ -1,6 +1,7 @@
 import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
 import { fixtureBackend } from "./fixture.ts";
+import { olderResult } from "./sync-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { resolve } from "node:path";
 
@@ -28,11 +29,13 @@ const host = await createUiTestHost({
       activeTurnId: active,
     };
   },
-  async history() {
-    return {
-      messages: [message("old-history", "agent", "old archived reply")],
-      before: null,
-    };
+  async historySync(input) {
+    if (input.kind !== "older") return fixture.backend.historySync(input);
+    return olderResult(
+      input.sessionId,
+      [message("old-history", "agent", "old archived reply")],
+      null,
+    );
   },
 });
 const channels = new Map();

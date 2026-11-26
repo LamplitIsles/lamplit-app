@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import "./marked-test-resolver.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
@@ -27,7 +28,7 @@ async function harness() {
   const backend = {
     ...fixture.backend,
     async read() { return { ...(await fixture.backend.read()), sessionId, messages: previewMode ? [] : [current], before: "older", ...(previewMode ? { streamingReply: { id: current.id, text: current.text, createdAt: current.createdAt, turnId: "turn" } } : {}) }; },
-    async history() { entered = true; await gate; return { messages: [history], before: null }; },
+    async historySync(input: import("../packages/contracts/src/index.ts").HistorySyncInput) { entered = true; await gate; return olderResult(input.sessionId, [history], null); },
     async submit(input: import("../packages/contracts/src/index.ts").Submission) {
       submitCount++;
       receipt = { operationId: input.operationId, attempt: 1, state: "submitted", messageId: "accepted", turnId: "turn", error: null };
@@ -100,17 +101,17 @@ test("unpublished streaming preview can be replaced by final history and view", 
     await h.publish();
     await until(() => h.view().streamingReply?.text === initial.text);
     expect(h.view().streamingReply!.ends).toEqual([]);
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.release();
     const page = await pending;
-    expect(page.messages[0]!.text).toBe(final.text);
-    expect(page.messages[0]!.ends).toEqual([final.text.length]);
+    expect(page.records[0]!.message.text).toBe(final.text);
+    expect(page.records[0]!.message.ends).toEqual([final.text.length]);
     h.complete(final);
     await h.publish();
     await until(() => h.view().messages[0]?.text === final.text);
     expect(h.view().messages[0]!.id).toBe(initial.id);
-    expect(h.view().messages[0]!.ends).toEqual(page.messages[0]!.ends);
+    expect(h.view().messages[0]!.ends).toEqual(page.records[0]!.message.ends);
   } finally { h.close(); }
 });
 
@@ -134,19 +135,19 @@ test("unmatched history and mutable reply metadata do not create conflicts", asy
   const h = await harness();
   try {
     h.history({ id: "other", role: "agent", text: "old\n", textState: "complete", createdAt: 1, operationId: null, turnId: "turn" });
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.release();
-    expect((await pending).messages[0]!.id).toBe("other");
+    expect((await pending).records[0]!.message.id).toBe("other");
     h.history({ id: "answer", role: "agent", text: "new\n", textState: "complete", createdAt: 1, operationId: null, turnId: "turn", thinking: "updated metadata" });
-    expect((await h.client.history("older")).messages[0]!.thinking).toBe("updated metadata");
+    expect((await readOlder(h.client, h.view().sessionId, "older")).records[0]!.message.thinking).toBe("updated metadata");
   } finally { h.close(); }
 });
 
 test("history still checks the initial view when its source leaves during the read", async () => {
   const h = await harness();
   try {
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.current({ id: "new-source", role: "agent", text: "other\n", textState: "complete", createdAt: 1, operationId: null, turnId: "turn" });
     await h.publish();
@@ -164,10 +165,10 @@ test("history may finalize identical streaming text without treating it as a rew
     h.history({ ...message, textState: "complete" });
     await h.publish();
     await until(() => h.view().messages[0]?.id === "new-source");
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.release();
-    expect((await pending).messages[0]!.textState).toBe("complete");
+    expect((await pending).records[0]!.message.textState).toBe("complete");
   } finally { h.close(); }
 });
 
@@ -176,10 +177,10 @@ test("history conflicts with an overlapping streaming preview source", async () 
   try {
     const message: ChatMessage = { id: "preview", role: "agent", text: "published\n", textState: "streaming", createdAt: 1, operationId: null, turnId: "turn" };
     h.preview(message);
-    h.history({ ...message, text: "different\n" });
+    h.history({ ...message, text: "different\n", textState: "complete" });
     await h.publish();
     await until(() => h.view().streamingReply?.id === "preview");
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.release();
     await expect(pending).rejects.toThrow();
@@ -196,14 +197,14 @@ test("history permits a changed hidden tail while preserving published segment b
     await h.publish();
     await until(() => h.view().streamingReply?.id === "preview");
     expect(h.view().streamingReply!.ends).toEqual([9]);
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.release();
     const page = await pending;
-    expect(page.messages[0]!.text).toBe("visible\r\nfinal answer");
-    expect(page.messages[0]!.ends).toEqual([9, "visible\r\nfinal answer".length]);
+    expect(page.records[0]!.message.text).toBe("visible\r\nfinal answer");
+    expect(page.records[0]!.message.ends).toEqual([9, "visible\r\nfinal answer".length]);
     h.history({ ...message, text: "changed\r\nfinal answer", textState: "complete" });
-    await expect(h.client.history("older")).rejects.toThrow();
+    await expect(readOlder(h.client, h.view().sessionId, "older")).rejects.toThrow();
   } finally { h.close(); }
 });
 
@@ -252,7 +253,7 @@ test("a later background conflict does not revoke an already delivered receipt",
 test("history cannot return older text for a reply already in the view", async () => {
   const h = await harness();
   try {
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.release();
     await expect(pending).rejects.toThrow();
@@ -264,7 +265,7 @@ test("history cannot return older text for a reply already in the view", async (
 test("an in-flight history read is rejected after the view changes session", async () => {
   const h = await harness();
   try {
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.switchSession();
     await h.publish();
@@ -278,7 +279,7 @@ test("an in-flight history read is rejected after the view changes session", asy
 test("returning to the same session does not revive its earlier in-flight history", async () => {
   const h = await harness();
   try {
-    const pending = h.client.history("older");
+    const pending = readOlder(h.client, h.view().sessionId, "older");
     await until(h.entered);
     h.switchSession("b");
     await h.publish();

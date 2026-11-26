@@ -1,5 +1,7 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { expect, test } from "bun:test";
-import { MessageSchema, PageSchema, validate, type ChatView } from "../packages/contracts/src/index.ts";
+import { MessageSchema, HistorySyncRecordSchema, validate, type ChatView } from "../packages/contracts/src/index.ts";
 import { createChatHost, type ChatChange } from "../packages/contracts/src/server.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
 import { fixtureBackend } from "./fixture.ts";
@@ -7,7 +9,7 @@ import { fixtureBackend } from "./fixture.ts";
 test("voice references survive message and history validation and reject malformed IDs", () => {
   const message = { id: "message", role: "agent" as const, text: "", createdAt: 1, operationId: null, turnId: "turn", voice: { id: "a".repeat(64) } };
   expect(validate(MessageSchema, message)).toEqual(message);
-  expect(validate(PageSchema, { messages: [message], before: null }).messages).toEqual([message]);
+  expect(validate(HistorySyncRecordSchema, { message, orderKey: "a" }).message).toEqual(message);
   for (const voice of [{ id: "a".repeat(63) }, { id: "A".repeat(64) }, { id: "g".repeat(64) }, { id: "a".repeat(64) + "\n" }, { id: "a".repeat(64), url: "/api/audio/file" }, { id: 1 }])
     expect(() => validate(MessageSchema, { ...message, voice })).toThrow();
 });
@@ -20,7 +22,7 @@ test("voice references survive publication, history and reconnect", async () => 
   let changed: (change: ChatChange) => void = () => {};
   const backend = { ...fixture.backend,
     async read() { return { ...await fixture.backend.read(), messages }; },
-    async history() { return { messages: [voice], before: null }; },
+    async historySync(input: HistorySyncInput) { return olderResult(input.sessionId, [voice], null); },
     subscribe(listener: (change: ChatChange) => void) { changed = listener; return { scope, close() { changed = () => {}; } }; },
   };
   let host = await createChatHost(backend);
@@ -41,7 +43,7 @@ test("voice references survive publication, history and reconnect", async () => 
     const deadline = Date.now() + 3000;
     while (!view?.messages.length && Date.now() < deadline) await Bun.sleep(10);
     expect(view?.messages).toEqual([voice]);
-    expect((await client.history("older")).messages).toEqual([voice]);
+    expect((await readOlder(client, view!.sessionId, "older")).records.map(record => record.message)).toEqual([voice]);
     client.close(); host.close(); host = await createChatHost(backend);
     client = await connect();
     expect(view?.messages).toEqual([voice]);

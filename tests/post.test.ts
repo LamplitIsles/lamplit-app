@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import {
   MessageSourceSchema,
   ViewSchema,
-  PageSchema,
+  HistorySyncRecordSchema,
   validate,
   validateSubmission,
 } from "../packages/contracts/src/index.ts";
@@ -41,7 +41,7 @@ test("Post display source preserves bounded names and exact IDs through public v
         validate(ViewSchema, { ...view, messages: [message] }).messages,
       ).toEqual([message]);
       expect(
-        validate(PageSchema, { messages: [message], before: null }).messages,
+        [validate(HistorySyncRecordSchema, { message, orderKey: "a" }).message],
       ).toEqual([message]);
     }
   const {

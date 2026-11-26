@@ -62,7 +62,7 @@ async function harness() {
         submits++;
         return fixture.backend.submit(input);
       },
-      async history() {
+      async historySync() {
         throw new Error("valid domain rejection");
       },
     },
@@ -178,7 +178,7 @@ test("healthy idle has zero RPC beyond initialization; live updates and domain e
     const initial = h.calls;
     await Bun.sleep(16050);
     expect(h.calls).toBe(initial);
-    await expect(c.history("missing")).rejects.toThrow();
+    await expect(c.historySync({ kind: "older", sessionId: "fixture-session", before: "missing" })).rejects.toThrow();
     expect(offline).toBe(0);
     await h.fixture.backend.submit({
       operationId: crypto.randomUUID(),

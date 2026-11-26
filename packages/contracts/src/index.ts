@@ -230,13 +230,35 @@ export const MessageSchema = Type.Object(
     ],
   },
 );
-export const PageSchema = Type.Object(
-  {
-    messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),
-    before: NullableId,
-  },
-  { additionalProperties: false },
-);
+/** Opaque sync cursors have their own limit, independent of message IDs. */
+export const HistorySyncCursorSchema = Type.String({ minLength: 1, maxLength: 4096 });
+const SyncObject = { additionalProperties: false } as const;
+const SyncSession = { sessionId: Id };
+export const HistorySyncInputSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("start"), ...SyncSession }, SyncObject),
+  Type.Object({ kind: Type.Literal("older"), ...SyncSession, before: HistorySyncCursorSchema }, SyncObject),
+  Type.Object({ kind: Type.Literal("newer"), ...SyncSession, after: HistorySyncCursorSchema }, SyncObject),
+]);
+export const HistorySyncRecordSchema = Type.Object({
+  message: MessageSchema,
+  orderKey: Type.String({ minLength: 1, maxLength: 512, pattern: "^[\\x00-\\x7f]+$" }),
+  wake: Type.Optional(Type.Object({
+    occurrenceId: Id, reminderId: Id,
+    triggeredAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  }, SyncObject)),
+}, SyncObject);
+const SyncRecords = Type.Array(HistorySyncRecordSchema, { maxItems: 128 });
+const SyncBefore = Type.Union([HistorySyncCursorSchema, Type.Null()]);
+export const HistorySyncResultSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("start"), ...SyncSession, historyId: Id, records: SyncRecords, before: SyncBefore, head: HistorySyncCursorSchema }, SyncObject),
+  Type.Object({ kind: Type.Literal("older"), ...SyncSession, historyId: Id, records: SyncRecords, before: SyncBefore }, SyncObject),
+  Type.Object({ kind: Type.Literal("newer"), ...SyncSession, historyId: Id, records: SyncRecords, nextAfter: HistorySyncCursorSchema, hasMore: Type.Boolean() }, SyncObject),
+  Type.Object({ kind: Type.Literal("resyncRequired"), ...SyncSession }, SyncObject),
+]);
+export type HistorySyncInput = Static<typeof HistorySyncInputSchema>;
+export type HistorySyncRecord = Static<typeof HistorySyncRecordSchema>;
+export type HistorySyncResult = Static<typeof HistorySyncResultSchema>;
+
 /** Transient answer-only preview; the host supplies its UTF-16 segment ends. */
 export const StreamingReplySchema = Type.Object(
   { id: Id, turnId: NullableId, createdAt: Type.Number(), text: Type.String(), ends: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }))) },
@@ -255,7 +277,8 @@ export const ViewSchema = Type.Object(
     contextUsage: ContextUsageSchema,
     compaction: CompactionSchema,
     messages: Type.Array(MessageSchema, { maxItems: PAGE_SIZE }),
-    before: NullableId,
+    /** Opaque older cursor immediately before the live window, not client progress. */
+    before: SyncBefore,
     capabilities: Type.Object(
       {
         text: Type.Literal(true),
@@ -276,7 +299,6 @@ export type Submission = Static<typeof SubmissionSchema>;
 export const LookupSchema = Type.Union([ReceiptSchema, Type.Null()]);
 export type Receipt = Static<typeof ReceiptSchema>;
 export type ChatMessage = Static<typeof MessageSchema>;
-export type HistoryPage = Static<typeof PageSchema>;
 export type ChatView = Static<typeof ViewSchema>;
 type PanelService = {
   [K in keyof PanelBackend]: (
@@ -293,7 +315,7 @@ type SearchService = {
 export interface ChatService extends PanelService, SearchService {
   view: ReplicatedState<ChatView>;
   compact(input: CompactInput, context: Context): Promise<CompactResult>;
-  history(before: string, context: Context): Promise<HistoryPage>;
+  historySync(input: HistorySyncInput, context: Context): Promise<HistorySyncResult>;
   submit(input: Submission, context: Context): Promise<Receipt>;
   lookup(operationId: string, context: Context): Promise<Receipt | null>;
   stop(turnId: string, context: Context): Promise<{ stopped: boolean }>;

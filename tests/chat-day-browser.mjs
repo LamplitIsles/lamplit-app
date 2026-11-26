@@ -2,6 +2,7 @@ import { chromium, devices, expect } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fixtureBackend } from "./fixture.ts";
+import { olderResult } from "./sync-fixture.ts";
 import { createUiTestHost } from "./ui-test-host.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
@@ -40,8 +41,9 @@ const backend = {
       before: "older",
     };
   },
-  async history() {
-    return { messages: [earlier, previous], before: null };
+  async historySync(input) {
+    if (input.kind !== "older") return fixture.backend.historySync(input);
+    return olderResult(input.sessionId, [earlier, previous], null);
   },
 };
 const host = await createUiTestHost(backend);

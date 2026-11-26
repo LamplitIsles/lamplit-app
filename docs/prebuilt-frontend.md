@@ -9,7 +9,7 @@ For the full lowercase App commit `SHA`, the archive is
 `lamplit-app-SHA.tar.gz`:
 
 - GitHub: `https://github.com/LamplitIsles/lamplit-app/releases/download/app-SHA/lamplit-app-SHA.tar.gz`
-- Forgejo: `https://forgejo.n5.guion.io/api/packages/LamplitIsles/generic/lamplit-app/SHA/lamplit-app-SHA.tar.gz`
+- Forgejo: `https://code.sfang.space/api/packages/LamplitIsles/generic/lamplit-app/SHA/lamplit-app-SHA.tar.gz`
 
 GitHub downloads are anonymous when the mirror and release are public. The
 archive root has `browser/`, `contracts/dist/`, `licenses/`, and `manifest.json`.
@@ -29,7 +29,7 @@ The same build also produces the independent npm-compatible
 `lamplit-contracts-SHA.tar.gz`, published alongside the frontend archive:
 
 - GitHub: `https://github.com/LamplitIsles/lamplit-app/releases/download/app-SHA/lamplit-contracts-SHA.tar.gz`
-- Forgejo: `https://forgejo.n5.guion.io/api/packages/LamplitIsles/generic/lamplit-app/SHA/lamplit-contracts-SHA.tar.gz`
+- Forgejo: `https://code.sfang.space/api/packages/LamplitIsles/generic/lamplit-app/SHA/lamplit-contracts-SHA.tar.gz`
 
 It uses the same deterministic ustar/gzip settings and contains `package/` with
 `package.json`, `LICENSE`, `dist/`, `lamplit-source.json`, and the maintained

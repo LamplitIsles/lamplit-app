@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import "./marked-test-resolver.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
@@ -18,7 +19,7 @@ test("real host/client transports source identity and raw text across a fake pre
   const fixture = sentenceFixture();
   const source = "🙂 first\r\n```js\nvalue()\n```\nlast\n\n";
   let complete = { id: "", role: "agent" as const, text: source, createdAt: 1792129000000, operationId: null, turnId: "turn-1" };
-  const host = await createChatHost({ ...fixture.backend, async history() { return { messages: [complete], before: null }; } });
+  const host = await createChatHost({ ...fixture.backend, async historySync(input) { return olderResult(input.sessionId, [complete], null); } });
   const channels = new Map<object, ReturnType<typeof host.connect>>();
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
@@ -51,7 +52,7 @@ test("real host/client transports source identity and raw text across a fake pre
     await host.publish();
     await until(() => view?.messages.some(message => message.id === complete.id) === true);
     const final = view!.messages.find(message => message.id === complete.id)!;
-    const historical = (await client.history("older")).messages[0]!;
+    const historical = (await readOlder(client, view!.sessionId, "older")).records[0]!.message;
     expect(final.text).toBe(source);
     expect(historical.text).toBe(source);
     expect(historical.id).toBe(final.id);

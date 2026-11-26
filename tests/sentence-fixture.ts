@@ -1,3 +1,5 @@
+import { olderResult } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { fixtureBackend } from "./fixture.ts";
 import type {
   ChatMessage,
@@ -265,14 +267,16 @@ export function sentenceFixture(profile = "default") {
         control({ action: "stop" });
         return { stopped: true };
       },
-      async history(before: string) {
+      async historySync(input: HistorySyncInput) {
+        if (input.kind !== "older") return base.backend.historySync(input);
+        const before = input.before;
         if (gapMessages) {
           gapHistoryCalls++;
           if (failNextGapPage) { failNextGapPage = false; throw new Error("test-owned gap failure"); }
           const end = Number(before), start = Math.max(0, end - 30);
-          return { messages: gapMessages.slice(start, end), before: start ? String(start) : null };
+          return olderResult(input.sessionId, gapMessages.slice(start, end), start ? String(start) : null, start);
         }
-        return { messages: [...older], before: null };
+        return olderResult(input.sessionId, [...older], null);
       },
       subscribe(fn: (change: ChatChange) => void) {
         const listener = { fn, scope: Symbol("sentence session"), sessionId };

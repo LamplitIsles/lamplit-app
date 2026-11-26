@@ -1,3 +1,5 @@
+import { olderResult } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { fixtureBackend } from "./fixture.ts";
 import type { ChatChange } from "../packages/contracts/src/server.ts";
 import {
@@ -31,9 +33,10 @@ export function thinkingFixture() {
           before: older.length ? "older" : null,
         };
       },
-      async history(before: string) {
-        if (before !== "older") throw new Error("Invalid fixture cursor");
-        return { messages: [...older], before: null };
+      async historySync(input: HistorySyncInput) {
+        if (input.kind !== "older") return base.backend.historySync(input);
+        if (input.before !== "older") return { kind: "resyncRequired" as const, sessionId: input.sessionId };
+        return olderResult(input.sessionId, [...older], null);
       },
       subscribe(fn: (change: ChatChange) => void) {
         listeners.add(fn);

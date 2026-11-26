@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const github = "https://api.github.com/repos/LamplitIsles/lamplit-app";
 const forgejo =
-  "https://forgejo.n5.guion.io/api/packages/LamplitIsles/generic/lamplit-app";
+  "https://code.sfang.space/api/packages/LamplitIsles/generic/lamplit-app";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 async function request(fetcher, url, token, options = {}) {

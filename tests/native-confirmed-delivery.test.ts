@@ -1,3 +1,4 @@
+import { olderResult } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import { openChat } from "../packages/contracts/src/client.ts";
 import {
@@ -680,10 +681,10 @@ test("history and lookup share a bounded read budget without blocking mutations"
       await gate;
       return null;
     },
-    async history() {
+    async historySync(input) {
       reads++;
       await gate;
-      return { messages: [], before: null };
+      return olderResult(input.sessionId, [], null);
     },
   };
   const h = await harness(backend);
@@ -692,11 +693,11 @@ test("history and lookup share a bounded read budget without blocking mutations"
     const pending: Array<Promise<unknown>> = [];
     for (let i = 0; i < 4; i++) {
       pending.push(client.lookup(crypto.randomUUID()));
-      pending.push(client.history(`cursor-${i}`));
+      pending.push(client.historySync({ kind: "older", sessionId: "fixture-session", before: `cursor-${i}` }));
     }
     await waitFor(() => reads === 8);
     await expect(client.lookup(crypto.randomUUID())).rejects.toThrow();
-    await expect(client.history("extra")).rejects.toThrow();
+    await expect(client.historySync({ kind: "older", sessionId: "fixture-session", before: "extra" })).rejects.toThrow();
     expect(reads).toBe(8);
     const input = { operationId: crypto.randomUUID(), text: "unblocked" };
     const stopped = client

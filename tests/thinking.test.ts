@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   MessageSchema,
-  PageSchema,
+  HistorySyncResultSchema,
   ViewSchema,
   validate,
 } from "../packages/contracts/src/index.ts";
@@ -30,8 +30,7 @@ test("optional thinking survives completed view/history without changing answer"
     history: true,
   });
   expect(
-    validate(PageSchema, await fixture.backend.history("older")).messages[0]
-      ?.thinking,
+    (validate(HistorySyncResultSchema, await fixture.backend.historySync({ kind: "older", sessionId: "fixture-session", before: "older" })) as { records: Array<{ message: { thinking?: string } }> }).records[0]?.message.thinking,
   ).toBe("first\nsecond");
   const { thinking: _, ...without } = message;
   expect(validate(MessageSchema, without)).toEqual(without);

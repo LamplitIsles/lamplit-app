@@ -1,3 +1,4 @@
+import { olderResult } from "./sync-fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
 import {
   albumImageThumbnailUrl,
@@ -154,13 +155,12 @@ export function imagesFixture(isAnimated: (ref: ImageRef) => boolean = () => fal
     async compact(input) {
       return { sessionId: input.sessionId, accepted: false };
     },
-    async history(before) {
-      const end = messages.findIndex((m) => m.id === before);
-      if (end < 0) throw new Error("Invalid cursor");
-      return {
-        messages: messages.slice(Math.max(0, end - 15), end),
-        before: end > 15 ? messages[end - 15]!.id : null,
-      };
+    async historySync(input) {
+      if (input.kind !== "older") throw new Error("Fixture only supports older reads");
+      const end = messages.findIndex((m) => m.id === input.before);
+      if (end < 0) return { kind: "resyncRequired", sessionId: input.sessionId };
+      const start = Math.max(0, end - 15);
+      return olderResult(input.sessionId, messages.slice(start, end), start ? messages[start]!.id : null, start);
     },
     async submit(input) {
       const fingerprint = new Bun.CryptoHasher("sha256")

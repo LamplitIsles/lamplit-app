@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
 import { fixtureBackend } from "./fixture.ts";
+import { olderResult } from "./sync-fixture.ts";
 import {
   SubmissionSchema,
   validate,
@@ -26,12 +27,12 @@ test("a timed-out history read leaves other calls and the connection usable", as
   });
   const host = await createChatHost({
     ...fixture.backend,
-    async history(before) {
-      if (before === "old") {
+    async historySync(input) {
+      if (input.kind === "older" && input.before === "old") {
         entered = true;
         await held;
       }
-      return { messages: [], before: null };
+      return olderResult(input.sessionId, [], null);
     },
   });
   const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -75,13 +76,13 @@ test("a timed-out history read leaves other calls and the connection usable", as
       if (delay === 30000 && !expire) expire = () => callback(...args);
       return originalTimer(callback, delay, ...args);
     }) as typeof setTimeout;
-    const old = client.history("old");
+    const old = client.historySync({ kind: "older", sessionId: "fixture-session", before: "old" });
     globalThis.setTimeout = originalTimer;
     await eventually(() => entered && !!expire);
     expire!();
     await expect(old).rejects.toThrow("timed out");
     expect(offline).toBe(false);
-    expect(await client.history("new")).toEqual({ messages: [], before: null });
+    expect(await client.historySync({ kind: "older", sessionId: "fixture-session", before: "new" })).toEqual(olderResult("fixture-session", [], null));
     expect(offline).toBe(false);
   } finally {
     globalThis.setTimeout = originalTimer;
@@ -109,10 +110,10 @@ test("held history does not reorder mutations, and revoked access blocks reads a
   const source = crypto.randomUUID();
   const host = await createChatHost({
     ...fixture.backend,
-    async history() {
+    async historySync(input) {
       historyCalls++;
       await heldHistory;
-      return { messages: [], before: null };
+      return olderResult(input.sessionId, [], null);
     },
     async submit(input) {
       order.push("submit-start");
@@ -151,7 +152,7 @@ test("held history does not reorder mutations, and revoked access blocks reads a
       call: { serviceId: "lamplit.chat.v2", member, args: [arg] },
     });
   try {
-    await connection.receive(call("h1", "history", "old"));
+    await connection.receive(call("h1", "historySync", { kind: "older", sessionId: "fixture-session", before: "old" }));
     await eventually(() => historyCalls === 1);
     const first = connection.receive(
       call("s", "submit", { operationId: source, text: "hello" }),
@@ -168,7 +169,7 @@ test("held history does not reorder mutations, and revoked access blocks reads a
     expect(order).toEqual(["submit-start", "submit-end", "lookup"]);
     await eventually(() => frames.some((frame) => frame.id === "r"));
     authorized = false;
-    await connection.receive(call("h2", "history", "new"));
+    await connection.receive(call("h2", "historySync", { kind: "older", sessionId: "fixture-session", before: "new" }));
     await eventually(() => closed.includes(1008));
     releaseHistory();
     await Bun.sleep(20);
@@ -194,10 +195,10 @@ test("concurrent history reads are bounded and excess requests fail in isolation
   });
   const host = await createChatHost({
     ...fixture.backend,
-    async history() {
+    async historySync(input) {
       calls++;
       await held;
-      return { messages: [], before: null };
+      return olderResult(input.sessionId, [], null);
     },
   });
   const connection = host.connect(
@@ -218,8 +219,8 @@ test("concurrent history reads are bounded and excess requests fail in isolation
           id: String(i),
           call: {
             serviceId: "lamplit.chat.v2",
-            member: "history",
-            args: ["cursor"],
+            member: "historySync",
+            args: [{ kind: "older", sessionId: "fixture-session", before: "cursor" }],
           },
         }),
       );
@@ -237,8 +238,8 @@ test("concurrent history reads are bounded and excess requests fail in isolation
         id: "again",
         call: {
           serviceId: "lamplit.chat.v2",
-          member: "history",
-          args: ["cursor"],
+          member: "historySync",
+          args: [{ kind: "older", sessionId: "fixture-session", before: "cursor" }],
         },
       }),
     );

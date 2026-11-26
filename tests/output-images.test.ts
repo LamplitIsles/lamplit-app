@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { createUiTestHost } from "./ui-test-host.ts";
 import { expect, test } from "bun:test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
@@ -24,8 +25,8 @@ for (const count of [6, 7, 11])
           const view = await fixture.backend.read();
           return historyOnly ? { ...view, messages: [] } : view;
         },
-        async history() {
-          return { messages: [message], before: null };
+        async historySync(input) {
+          return olderResult(input.sessionId, [message], null);
         },
       });
       const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -65,7 +66,7 @@ for (const count of [6, 7, 11])
       );
       try {
         expect(view!.messages).toEqual(historyOnly ? [] : [projected]);
-        expect((await client.history(message.id)).messages).toEqual([projected]);
+        expect((await readOlder(client, view!.sessionId, message.id)).records.map(record => record.message)).toEqual([projected]);
         expect(offline).toBe(false);
         if (historyOnly) return;
         const next = await fixture.control({ action: "complete", count });

@@ -22,6 +22,7 @@ export function fixtureBackend() {
   };
   const panels = panelsFixture();
   const backend: ChatBackend = {
+    async historySync() { throw new Error("Sync not implemented by fixture"); },
     ...panels.backend,
     ...searchFixture().backend,
     async read(): Promise<ChatView> {
@@ -39,9 +40,6 @@ export function fixtureBackend() {
     },
     async compact(input) {
       return { sessionId: input.sessionId, accepted: false };
-    },
-    async history() {
-      return { messages: [], before: null };
     },
     async submit(input) {
       const old = submissions.get(input.operationId);

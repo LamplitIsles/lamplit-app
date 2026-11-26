@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatView, HistoryPage, StreamingReply } from "./index.ts";
+import type { ChatMessage, ChatView, StreamingReply } from "./index.ts";
 import { createReplySegmenter, stableReplySegments } from "./reply-chunks.ts";
 import { isReplySource } from "./reply-ranges.ts";
 
@@ -65,7 +65,7 @@ export function createReplyProjection() {
       const { streamingReply: _rawPreview, ...rest } = next;
       return { ...rest, messages, ...(streamingReply ? { streamingReply } : {}) };
     },
-    history(page: HistoryPage, current: ChatView, initial: ChatView): HistoryPage {
+    history(messages: ChatMessage[], current: ChatView, initial: ChatView): ChatMessage[] {
       // Compare only the source itself; image, delivery and other metadata may change.
       const referenceIn = (view: ChatView, id: string) => {
         const message = view.messages.find(item => item.id === id && isReply(item));
@@ -73,7 +73,7 @@ export function createReplyProjection() {
         if (view.streamingReply?.id === id)
           return { text: view.streamingReply.text, textState: "streaming" as const, ends: view.streamingReply.ends };
       };
-      const projected = page.messages.map(projectItem);
+      const projected = messages.map(projectItem);
       for (const message of projected) {
         if (!isReply(message)) continue;
         const reference = referenceIn(current, message.id) ?? referenceIn(initial, message.id);
@@ -85,7 +85,7 @@ export function createReplyProjection() {
             ends.some((end, index) => message.ends?.[index] !== end)))
           throw new Error("Reply source conflict: history differs from view");
       }
-      return { ...page, messages: projected };
+      return projected;
     },
     clear() { active.clear(); sessionId = undefined; },
   };

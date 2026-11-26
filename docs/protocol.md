@@ -14,7 +14,7 @@ Reloading the page reads updated configuration.
 | Member                                                                 | Meaning                                                                                 |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `view`                                                                 | Replicated main-session identity, recent messages, active turn, cursor and capabilities |
-| `history(before)`                                                      | Previous page of source messages and its opaque continuation cursor                     |
+| `historySync(input)`                                                   | Session-scoped recent history, older pages, and append catch-up                        |
 | `submit({ operationId, text, images?, files? })`                       | Submit one logical message and return a correlated native outcome                      |
 | `lookup(operationId)`                                                 | Inspect a logical message's current confirmed outcome, or unknown                      |
 | `compact({ sessionId })`                                               | Explicit native idle compaction; refusal preserves drafts, success has no chat message  |
@@ -23,6 +23,38 @@ Reloading the page reads updated configuration.
 Chord method contracts include an invocation context as their last parameter.
 The browser helper supplies it. Socket cancellation is not passed into execution;
 the native execution owner handles explicit stop.
+
+## History synchronization
+
+`historySync` is an authenticated read. Inputs are `{ kind: "start", sessionId }`,
+`{ kind: "older", sessionId, before }`, or `{ kind: "newer", sessionId, after }`.
+Each result carries the same session ID and kind. `start` returns `historyId`,
+`records`, nullable `before`, and `head`; `older` returns `historyId`, `records`,
+and nullable `before`; `newer` returns `historyId`, `records`, `nextAfter`, and
+`hasMore`. An expired `older` or `newer` cursor returns `{ kind:
+"resyncRequired", sessionId }`. Cursors are opaque nonempty strings of at most
+4096 characters, distinct from IDs. The live view’s `before` is an `older`
+cursor for the finalized range before its window; it does not represent client
+progress.
+
+Each record has a stable `message`, an ASCII `orderKey` (1–512 characters,
+unique within a history generation and comparable with SQLite BINARY). Each batch
+is strictly ascending by that key. Records remain stable within a history
+generation; there are no row versions or updates to committed records.
+An assistant record may include `wake: { occurrenceId, reminderId,
+triggeredAtMs }` only when the backend can prove the trigger association.
+The host bounds A2UI payloads and projects completed assistant reply segments as
+for browsing; streaming bodies are rejected. Pages contain at most 128 records
+and must fit the existing frame limit.
+
+The backend owns the snapshot boundary, ordering, persistence, and cursor
+validity: `start` takes its records, `before`, and `head` from one boundary;
+`older` stays within its cursor’s membership; each `newer` call targets a
+finite upper bound and never advances `nextAfter` past an unreturned visible record.
+A non-null older continuation must differ from its request cursor; newer must
+advance when it returns records or `hasMore` is true. Empty pages can advance
+over invisible entries. Consumers commit each batch and its
+cursor together; the shared contract does not provide storage.
 
 ## Assistant voice messages
 
@@ -320,16 +352,22 @@ history only when complete and readable; the shared schema itself does not enfor
 that provider behavior.
 
 The Web controller retains loaded messages when the live window changes and can
-expose multiple gaps between retained old and new sources. A visible pending gap
-is filled on demand, at most one history page per `fillGap(id)` call, with no
-background full-history scan. Errors can be retried; a repeated cursor or reaching
-the end without the retained boundary leaves an unavailable gap. Empty pages with
-a new continuation cursor can advance. Session and connection changes fence late
-results; a normal continuous reconnect does not scan history.
+expose multiple gaps between retained old and new sources. It reads one
+`older` page on demand when browsing or filling a gap. Reaching the end
+without the retained boundary or revisiting a cursor leaves an unavailable gap.
+Empty pages with a new continuation cursor can advance. A failed request can be
+retried. On `resyncRequired`, Web uses `start` to replace retained history
+once the snapshot can be joined to the current live window. A short snapshot
+inside the live window can supply a fresh continuation; subsequent pages
+deduplicate live messages. An empty snapshot with no continuation can reset
+retained history while the current live messages are all streaming. Other
+snapshots without a usable anchor keep the current history and gaps available
+for retry. Session and connection changes fence late results. A normal
+continuous reconnect does not scan history.
 
 This relies on a provider's opaque `before` cursor yielding ordered, contiguous
 source pages, preserving source IDs and usable across a same-session reconnect;
-an expired cursor must fail explicitly. A page may be empty with a continuation;
+an expired cursor returns `resyncRequired`. A page may be empty with a continuation;
 `before: null` denotes the end of that provider's range. The existing wire does
 not prove these properties or distinguish all remote pending/outcome records from
 durable history. The controller excludes locally known pending inputs from its
@@ -377,7 +415,7 @@ a validated conversation snapshot and installed update subscription, not socket 
 Silent carrier loss and missed autonomous updates may remain undiscovered until an
 actual request, lifecycle recovery, or transport event; recovery obtains a fresh snapshot.
 
-The 10-second opening and 30-second request bounds remain. A history or lookup
+The 10-second opening and 30-second request bounds remain. A historySync or lookup
 deadline rejects only that read; its backend work may still occupy a read slot until
 it finishes. Other request deadlines, send failure, close, or error invalidate the
 carrier once. Valid business errors reject only their request; caller-context

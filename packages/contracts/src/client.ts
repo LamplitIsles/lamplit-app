@@ -31,7 +31,6 @@ import {
 import {
   Chat,
   ViewSchema,
-  PageSchema,
   validateReceipt,
   validateLookup,
   validate,
@@ -39,6 +38,8 @@ import {
   type ChatView,
   type Receipt,
   OperationIdSchema,
+  HistorySyncInputSchema,
+  type HistorySyncInput,
 } from "./index.ts";
 import {
   CompactInputSchema,
@@ -47,6 +48,7 @@ import {
 } from "./compact.ts";
 import { decodeFrame, sendFrame } from "./wire.ts";
 import { isReplySource, validateReplySource } from "./reply-ranges.ts";
+import { validateHistorySyncResult } from "./history-sync.ts";
 
 export class ChatConnectionError extends Error {
   constructor(
@@ -116,7 +118,7 @@ export async function openChat(
         if (
           call.serviceId === Chat.id &&
           !call.instance &&
-          (call.member === "history" || call.member === "lookup")
+          (call.member === "historySync" || call.member === "lookup")
         ) {
           const request = pending.get(id);
           if (!request) return;
@@ -203,6 +205,7 @@ export async function openChat(
   });
   const service = binding.use(Chat);
   let unsubscribe = () => {};
+  let sessionId: string | undefined, sessionEpoch = 0;
   const finish = (error = new ChatConnectionError("Offline")) => {
     if (closed) return;
     closed = true;
@@ -268,6 +271,10 @@ export async function openChat(
         const view = validate(ViewSchema, boundA2UIInMessages(value));
         view.messages.forEach(message => validateReplySource(message, isReplySource(message)));
         if (view.streamingReply) validateReplySource(view.streamingReply, true);
+        if (sessionId !== view.sessionId) {
+          sessionId = view.sessionId;
+          sessionEpoch++;
+        }
         changed(view);
       } catch {
         socket.close(1002, "Invalid view");
@@ -314,15 +321,16 @@ export async function openChat(
           throw new Error("Wrong compact session");
         return result;
       },
-      async history(before: string) {
-        const page = validate(
-          PageSchema,
-          boundA2UIInMessages(
-            await service.history(before, BACKGROUND_CONTEXT),
-          ),
+      async historySync(input: HistorySyncInput) {
+        const value = validate(HistorySyncInputSchema, input);
+        if (sessionId !== value.sessionId) throw new Error("Wrong session");
+        const epoch = sessionEpoch;
+        const result = validateHistorySyncResult(
+          value, await service.historySync(value, BACKGROUND_CONTEXT),
         );
-        page.messages.forEach(message => validateReplySource(message, isReplySource(message)));
-        return page;
+        if (closed || sessionEpoch !== epoch || sessionId !== value.sessionId)
+          throw new Error("History sync session changed");
+        return result;
       },
       async submit(input: import("./index.ts").Submission) {
         const receipt = validateReceipt(

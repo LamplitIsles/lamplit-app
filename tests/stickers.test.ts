@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import {
   validate,
@@ -406,8 +407,8 @@ test("sticker references survive Chord submission, refresh and history without a
         messages: admitted ? [message] : [],
       };
     },
-    async history() {
-      return { messages: [message], before: null };
+    async historySync(input) {
+      return olderResult(input.sessionId, [message], null);
     },
   });
   const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -451,7 +452,7 @@ test("sticker references survive Chord submission, refresh and history without a
     const end = Date.now() + 3000;
     while (!view?.messages.length && Date.now() < end) await Bun.sleep(10);
     expect(view?.messages[0]?.images).toEqual([image]);
-    expect((await client.history("older")).messages[0]?.images).toEqual([
+    expect((await readOlder(client, view!.sessionId, "older")).records[0]?.message.images).toEqual([
       image,
     ]);
     await expect(
@@ -793,8 +794,8 @@ test("failed sticker retry and reimport keep the sent version in real socket his
     const history = [...page.messages];
     let before = page.before;
     while (before) {
-      const next = await client.history(before);
-      history.push(...next.messages);
+      const next = await readOlder(client, page.sessionId, before);
+      history.push(...next.records.map(record => record.message));
       before = next.before;
     }
     expect(

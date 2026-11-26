@@ -108,7 +108,11 @@ try {
         });
         ws.on("framesent", ({ payload }) => {
           const f = JSON.parse(String(payload));
-          if (f.call?.member === "history") historyCalls.add(f.id);
+          if (
+            f.call?.member === "historySync" &&
+            f.call.args[0]?.kind === "older"
+          )
+            historyCalls.add(f.id);
         });
         ws.on("framereceived", ({ payload }) => {
           frames.push(String(payload));
@@ -169,7 +173,7 @@ try {
       }
       expect(
         history
-          .flatMap((f) => f.result.messages)
+          .flatMap((f) => f.result.records.map(({ message }) => message))
           .find((m) => m.id === state.messages[0].id),
       ).toMatchObject(state.messages[0]);
       await assertRefs();
@@ -244,8 +248,12 @@ try {
     page.on("websocket", (socket) => {
       socket.on("framesent", ({ payload }) => {
         const frame = JSON.parse(String(payload));
-        if (frame.type === "call" && frame.call?.member === "history")
-          historyRequests.set(frame.id, frame.call.args[0]);
+        if (
+          frame.type === "call" &&
+          frame.call?.member === "historySync" &&
+          frame.call.args[0]?.kind === "older"
+        )
+          historyRequests.set(frame.id, frame.call.args[0].before);
       });
       socket.on("framereceived", ({ payload }) => {
         const frame = JSON.parse(String(payload));
@@ -644,7 +652,9 @@ try {
     }
     await expect(originalImage).toBeVisible();
     await expect(originalImage).toHaveCount(1);
-    const historyMessages = historyPages.flatMap((p) => p.messages);
+    const historyMessages = historyPages.flatMap((p) =>
+      p.records.map(({ message }) => message),
+    );
     expect(new Set(historyMessages.map((m) => m.id)).size).toBe(
       historyMessages.length,
     );

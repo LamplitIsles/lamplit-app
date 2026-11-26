@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import "./marked-test-resolver.ts";
 import { openChat } from "../packages/contracts/src/client.ts";
@@ -14,7 +15,7 @@ async function until(check: () => boolean) {
   }
 }
 
-/** App-owned Pi-shaped fake. Native partials never enter read() or history(). */
+/** App-owned Pi-shaped fake. Native partials never enter read() or historySync(). */
 function completedBackend() {
   const fixture = fixtureBackend();
   let sessionId = "pi-session-a", active: string | null = null, held = "";
@@ -34,13 +35,14 @@ function completedBackend() {
       return { ...(await fixture.backend.read()), sessionId, activeTurnId: active, messages: visible,
         before: records.length > visible.length ? cursor(visible[0]!.id) : null };
     },
-    async history(before: string) {
-      const [owner, id] = JSON.parse(before) as [string, string];
-      if (owner !== sessionId) throw new Error("Wrong session cursor");
+    async historySync(input: import("../packages/contracts/src/index.ts").HistorySyncInput) {
+      if (input.kind !== "older") return fixture.backend.historySync(input);
+      const [owner, id] = JSON.parse(input.before) as [string, string];
+      if (owner !== sessionId) return { kind: "resyncRequired" as const, sessionId: input.sessionId };
       const end = records.findIndex(record => record.id === id);
-      if (end < 0) throw new Error("Unknown cursor");
+      if (end < 0) return { kind: "resyncRequired" as const, sessionId: input.sessionId };
       const start = Math.max(0, end - 30);
-      return { messages: records.slice(start, end), before: start ? cursor(records[start]!.id) : null };
+      return olderResult(input.sessionId, records.slice(start, end), start ? cursor(records[start]!.id) : null, start);
     },
     async submit(input: Submission) {
       calls.push(input.operationId);
@@ -114,8 +116,8 @@ test("completed Pi-shaped source uses native entry identity across view, history
     const incoming = initial.messages.find(message => message.id === "native:33")!;
     expect(incoming.source).toEqual({ kind: "keet", channel: "dm", senderLabel: "Friend", destination: "test" });
     expect(incoming.images?.[0]?.attachmentId).toBe("incoming");
-    const firstHistory = await client.history(initial.before!);
-    expect(firstHistory.messages.map(message => message.id)).toEqual(["native:1", "native:2", "native:3"]);
+    const firstHistory = await readOlder(client, initial.sessionId, initial.before!);
+    expect(firstHistory.records.map(record => record.message.id)).toEqual(["native:1", "native:2", "native:3"]);
     expect(firstHistory.before).toBeNull();
 
     const operationId = crypto.randomUUID();
@@ -146,15 +148,15 @@ test("completed Pi-shaped source uses native entry identity across view, history
     await fixture.publish();
     await until(() => views.at(-1)?.messages[0]?.id === "later:0");
     const oldCursor = views.at(-1)!.before!;
-    const page = await client.history(oldCursor);
-    const historical = page.messages.find(message => message.id === "native:501")!;
+    const page = await readOlder(client, views.at(-1)!.sessionId, oldCursor);
+    const historical = page.records.map(record => record.message).find(message => message.id === "native:501")!;
     expect(historical).toEqual(answer);
-    expect(page.messages.find(message => message.id === "native:33")).toEqual(incoming);
-    expect(page.messages.length).toBeLessThanOrEqual(30);
+    expect(page.records.map(record => record.message).find(message => message.id === "native:33")).toEqual(incoming);
+    expect(page.records.length).toBeLessThanOrEqual(30);
     client.close();
     client = await connect();
     await until(() => views.at(-1)?.messages[0]?.id === "later:0");
-    expect((await client.history(oldCursor)).messages.find(message => message.id === "native:501")).toEqual(answer);
+    expect((await readOlder(client, views.at(-1)!.sessionId, oldCursor)).records.find(record => record.message.id === "native:501")?.message).toEqual(answer);
 
     const stopped = crypto.randomUUID();
     await client.submit({ operationId: stopped, text: "stop" });
@@ -178,7 +180,6 @@ test("completed Pi-shaped source uses native entry identity across view, history
     await fixture.publish();
     await until(() => views.at(-1)?.sessionId === "pi-session-b");
     expect(errors).toEqual([]);
-    await expect(client.history(oldCursor)).rejects.toThrow();
-    expect(errors.map(String)).toEqual(["Error: Wrong session cursor"]);
+    expect(await client.historySync({ kind: "older", sessionId: "pi-session-b", before: oldCursor })).toEqual({ kind: "resyncRequired", sessionId: "pi-session-b" });
   } finally { client.close(); host.close(); server.stop(true); }
 });

@@ -457,6 +457,58 @@ describe("publication", () => {
     ).rejects.toThrow("differs");
     expect(methods).toEqual(["GET"]);
   });
+  test("Forgejo publishes and verifies both archives at the current repository domain", async () => {
+    const frontend = Buffer.from("frontend archive");
+    const contracts = Buffer.from("contracts archive");
+    const artifacts = new Map();
+    const calls = [];
+    const fetcher = async (url, options) => {
+      const method = options.method ?? "GET";
+      calls.push([url, method]);
+      expect(options.headers.Authorization).toBe("Bearer fake-token");
+      if (method === "PUT") {
+        expect(options.headers["Content-Type"]).toBe("application/gzip");
+        artifacts.set(url, Buffer.from(options.body));
+        return new Response(null, { status: 201 });
+      }
+      const stored = artifacts.get(url);
+      return stored
+        ? new Response(stored)
+        : new Response(null, { status: 404 });
+    };
+    const base = `https://code.sfang.space/api/packages/LamplitIsles/generic/lamplit-app/${sha}`;
+    const frontendUrl = `${base}/lamplit-app-${sha}.tar.gz`;
+    const contractsUrl = `${base}/lamplit-contracts-${sha}.tar.gz`;
+    await publishForgejo(sha, frontend, "fake-token", fetcher);
+    await publishForgejo(
+      sha,
+      contracts,
+      "fake-token",
+      fetcher,
+      `lamplit-contracts-${sha}.tar.gz`,
+    );
+    expect(calls).toEqual([
+      [frontendUrl, "GET"],
+      [frontendUrl, "PUT"],
+      [frontendUrl, "GET"],
+      [contractsUrl, "GET"],
+      [contractsUrl, "PUT"],
+      [contractsUrl, "GET"],
+    ]);
+    expect(artifacts.get(frontendUrl)).toEqual(frontend);
+    expect(artifacts.get(contractsUrl)).toEqual(contracts);
+
+    let attempts = 0;
+    await expect(
+      publishForgejo(sha, frontend, "fake-token", async () => {
+        attempts++;
+        if (attempts === 1) return new Response(null, { status: 404 });
+        if (attempts === 2) return new Response(null, { status: 201 });
+        return new Response("different bytes");
+      }),
+    ).rejects.toThrow("differs");
+    expect(attempts).toBe(3);
+  });
   test("Forgejo inspects after successful upload and does not replay an uncertain upload", async () => {
     const methods = [];
     const fetcher = async (_url, options) => {

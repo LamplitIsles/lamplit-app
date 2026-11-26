@@ -3,7 +3,7 @@ import {
   MatrixSourceSchema,
   MessageSourceSchema,
   ViewSchema,
-  PageSchema,
+  HistorySyncRecordSchema,
   validate,
   validateSubmission,
 } from "../packages/contracts/src/index.ts";
@@ -37,7 +37,7 @@ test("Matrix preserves exact labels and enforces gateway UTF-16 capacity in sour
       validate(ViewSchema, { ...view, messages: [message] }).messages,
     ).toEqual([message]);
     expect(
-      validate(PageSchema, { messages: [message], before: null }).messages,
+      [validate(HistorySyncRecordSchema, { message, orderKey: "a" }).message],
     ).toEqual([message]);
   }
   for (const key of ["senderId", "senderDisplayName", "roomId"]) {

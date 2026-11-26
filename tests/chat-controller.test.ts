@@ -1,4 +1,5 @@
 import { fixtureBackend } from "./fixture.ts";
+import { olderResult } from "./sync-fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
 import { panelsFixture } from "./panels-fixture.ts";
 import { expect, test } from "bun:test";
@@ -53,14 +54,17 @@ test("moving live window retains history/sent inputs and rejects previous-sessio
     async compact(input) {
       return { sessionId: input.sessionId, accepted: false };
     },
-    async history() {
-      return {
-        messages: Array.from({ length: 10 }, (_, i) => ({
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      return olderResult(
+        input.sessionId,
+        Array.from({ length: 10 }, (_, i) => ({
           ...message(i + 1),
           operationId: i === 0 ? historicalOperation : null,
         })),
-        before: null,
-      };
+        null,
+      );
     },
     async submit(input) {
       active = "queued-turn";
@@ -413,8 +417,10 @@ test("single channel history overlap never duplicates the current live source", 
         before: "older",
       };
     },
-    async history() {
-      return { messages: [old, live], before: null };
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      return olderResult(input.sessionId, [old, live], null);
     },
   };
   const h = await controllerHarness(backend);
@@ -451,10 +457,13 @@ test("single channel reconnect retains loaded history without an automatic histo
         before: "older",
       };
     },
-    async history() {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
       calls++;
-      return {
-        messages: [
+      return olderResult(
+        input.sessionId,
+        [
           {
             id: "old",
             role: "user",
@@ -464,8 +473,8 @@ test("single channel reconnect retains loaded history without an automatic histo
             turnId: null,
           },
         ],
-        before: null,
-      };
+        null,
+      );
     },
   };
   const h = await controllerHarness(backend);
@@ -505,14 +514,18 @@ test("reconnect gap can be paged without losing source order", async () => {
         before: records.length > live.length ? live[0]!.id : null,
       };
     },
-    async history(before) {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      const before = input.before;
       const end = records.findIndex((message) => message.id === before);
       if (end < 0) throw new Error("Unknown cursor");
       const start = Math.max(0, end - 30);
-      return {
-        messages: records.slice(start, end),
-        before: start ? records[start]!.id : null,
-      };
+      return olderResult(
+        input.sessionId,
+        records.slice(start, end),
+        start ? records[start]!.id : null,
+      );
     },
   };
   const h = await controllerHarness(backend);
@@ -548,7 +561,7 @@ test("reconnect gap can be paged without losing source order", async () => {
   }
 });
 
-async function gapHarness() {
+async function gapHarness(startLimit = 31) {
   const message = (i: number, session = "A"): ChatMessage => ({
     id: `${session}-${i}`,
     role: "user",
@@ -560,6 +573,7 @@ async function gapHarness() {
   const fixture = fixtureBackend();
   let session = "A",
     records = Array.from({ length: 65 }, (_, i) => message(i));
+  let streaming: ChatMessage | undefined;
   let behavior:
     | "normal"
     | "error"
@@ -567,10 +581,18 @@ async function gapHarness() {
     | "empty"
     | "cycle"
     | "end"
+    | "resync"
     | "inclusive" = "normal";
   let hold:
     | { entered: ReturnType<typeof gate>; release: ReturnType<typeof gate> }
     | undefined;
+  const pauseRead = async () => {
+    const paused = hold;
+    if (paused) {
+      paused.entered.release();
+      await paused.release.promise;
+    }
+  };
   let submissions = 0;
   const calls: string[] = [];
   const backend: ChatBackend = {
@@ -580,59 +602,73 @@ async function gapHarness() {
       return fixture.backend.submit(input);
     },
     async read() {
-      const live = records.slice(-30);
+      const live = streaming ? [streaming] : records.slice(-30);
       return {
         ...(await fixture.backend.read()),
         sessionId: session,
+        activeTurnId: streaming?.turnId ?? null,
         messages: live,
         before: records.length > live.length ? live[0]!.id : null,
       };
     },
-    async history(before) {
+    async historySync(input) {
+      if (input.kind === "start" && behavior === "resync") {
+        calls.push("start");
+        behavior = "normal";
+        const page = olderResult(
+          input.sessionId,
+          records.slice(-startLimit),
+          records.length > startLimit ? records.at(-startLimit)!.id : null,
+        );
+        await pauseRead();
+        return { ...page, kind: "start", head: "fixture-head" };
+      }
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      let before = input.before;
       calls.push(before);
-      if (behavior === "end") return { messages: [], before: null };
+      if (behavior === "resync")
+        return { kind: "resyncRequired", sessionId: input.sessionId };
+      if (behavior === "end") return olderResult(input.sessionId, [], null);
       if (behavior === "cycle")
-        return {
-          messages: [],
-          before: before.startsWith("cycle:")
-            ? before.slice(6)
-            : `cycle:${before}`,
-        };
+        return olderResult(
+          input.sessionId,
+          [],
+          before.startsWith("cycle:") ? before.slice(6) : `cycle:${before}`,
+        );
       if (behavior === "empty" && !before.startsWith("empty:"))
-        return { messages: [], before: `empty:${before}` };
+        return olderResult(input.sessionId, [], `empty:${before}`);
       if (before.startsWith("empty:")) before = before.slice(6);
       const end = records.findIndex((item) => item.id === before);
       if (end < 0 || behavior === "error")
         throw new Error("invalid or unavailable cursor");
-      if (behavior === "no-progress") return { messages: [], before };
+      if (behavior === "no-progress")
+        return olderResult(input.sessionId, [], before);
       const start = Math.max(0, end - (behavior === "inclusive" ? 29 : 30));
-      const result = {
-        messages: records.slice(
-          start,
-          end + (behavior === "inclusive" ? 1 : 0),
-        ),
-        before: start ? records[start]!.id : null,
-      };
-      const paused = hold;
-      if (paused) {
-        paused.entered.release();
-        await paused.release.promise;
-      }
+      const result = olderResult(
+        input.sessionId,
+        records.slice(start, end + (behavior === "inclusive" ? 1 : 0)),
+        start ? records[start]!.id : null,
+      );
+      await pauseRead();
       return result;
     },
   };
   const h = await controllerHarness(backend);
   const c = await h.create();
-  const reconnect = async (count: number) => {
-    const disconnected = h.disconnections;
-    c.setVisible(false);
-    h.disconnect();
-    await eventually(() => h.disconnections > disconnected);
+  const append = (count: number) => {
     const length = records.length;
     records = [
       ...records,
       ...Array.from({ length: count }, (_, i) => message(length + i, session)),
     ];
+  };
+  const reconnect = async (count: number) => {
+    const disconnected = h.disconnections;
+    c.setVisible(false);
+    h.disconnect();
+    await eventually(() => h.disconnections > disconnected);
+    append(count);
     await h.publish();
     c.setVisible(true);
     await eventually(
@@ -644,7 +680,18 @@ async function gapHarness() {
     h,
     c,
     calls,
+    append,
     reconnect,
+    replaceHistoryWithStream() {
+      records = [];
+      streaming = {
+        ...message(0, session),
+        id: "new-stream",
+        role: "agent",
+        textState: "streaming",
+        turnId: "new-turn",
+      };
+    },
     submissions: () => submissions,
     behavior(value: typeof behavior) {
       behavior = value;
@@ -706,14 +753,18 @@ test("a pending user in both windows does not prove their durable history is con
         before: durable[0]!.id,
       };
     },
-    async history(before) {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      const before = input.before;
       const end = records.findIndex((item) => item.id === before);
       if (end < 0) throw new Error("Unknown cursor");
       const start = Math.max(0, end - 30);
-      return {
-        messages: records.slice(start, end),
-        before: start ? records[start]!.id : null,
-      };
+      return olderResult(
+        input.sessionId,
+        records.slice(start, end),
+        start ? records[start]!.id : null,
+      );
     },
   };
   const h = await controllerHarness(backend);
@@ -782,14 +833,18 @@ test("a locally observed queued input cannot bridge a gap after it moves to the 
         before: durable[0]!.id,
       };
     },
-    async history(before) {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      const before = input.before;
       const end = records.findIndex((item) => item.id === before);
       if (end < 0) throw new Error("Unknown cursor");
       const start = Math.max(0, end - 30);
-      return {
-        messages: records.slice(start, end),
-        before: start ? records[start]!.id : null,
-      };
+      return olderResult(
+        input.sessionId,
+        records.slice(start, end),
+        start ? records[start]!.id : null,
+      );
     },
   };
   const saved = new Map([
@@ -933,6 +988,127 @@ test("history ending without the retained boundary leaves an unavailable gap", a
   }
 });
 
+test("an expired gap cursor replaces old history with a fresh start window", async () => {
+  const f = await gapHarness();
+  try {
+    await f.c.loadOlder();
+    await f.reconnect(60);
+    f.behavior("resync");
+    await f.c.fillGap(f.c.historyGaps[0]!.id);
+    expect(f.calls).toEqual(["A-35", "A-95", "start"]);
+    expect(f.c.historyGaps).toEqual([]);
+    expect(f.c.older.map(({ id }) => id)).toEqual(["A-94"]);
+    expect(f.c.view?.messages[0]?.id).toBe("A-95");
+    expect(f.c.before).toBe("A-94");
+    await f.c.loadOlder();
+    expect(f.calls.at(-1)).toBe("A-94");
+    expect(f.c.older[0]?.id).toBe("A-64");
+  } finally {
+    f.h.close();
+  }
+});
+
+test("an expired cursor recovers from a start page narrower than the live window", async () => {
+  const f = await gapHarness(1);
+  try {
+    await f.c.loadOlder();
+    expect(f.c.before).toBe("A-5");
+    expect(f.c.view?.before).toBe("A-35");
+    f.behavior("resync");
+    await f.c.loadOlder();
+    expect(f.c.historySyncFailed).toBe(false);
+    expect(f.c.before).toBe("A-64");
+    for (let page = 0; page < 3; page++) await f.c.loadOlder();
+    expect(f.c.before).toBeNull();
+    expect(
+      [...f.c.older, ...f.c.view!.messages].map(({ id }) => id),
+    ).toEqual(Array.from({ length: 65 }, (_, i) => `A-${i}`));
+  } finally {
+    f.h.close();
+  }
+});
+
+test("an empty history reset preserves the live stream and discards expired history", async () => {
+  const f = await gapHarness();
+  try {
+    await f.c.loadOlder();
+    f.replaceHistoryWithStream();
+    f.behavior("resync");
+    await f.c.loadOlder();
+    expect(f.c.historySyncFailed).toBe(true);
+    expect(f.c.before).toBe("A-5");
+    expect(f.c.older[0]?.id).toBe("A-5");
+
+    await f.h.publish();
+    await eventually(() => f.c.view?.messages[0]?.id === "new-stream");
+    f.behavior("resync");
+    await f.c.loadOlder();
+    expect(f.c.before).toBeNull();
+    expect(f.c.older).toEqual([]);
+    expect(f.c.historyGaps).toEqual([]);
+    expect(f.c.historySyncFailed).toBe(false);
+    expect(f.c.view?.messages).toMatchObject([
+      { id: "new-stream", textState: "streaming" },
+    ]);
+  } finally {
+    f.h.close();
+  }
+});
+
+test("a held history reset cannot erase the gap from a newer live window", async () => {
+  const f = await gapHarness();
+  const held = f.hold();
+  try {
+    await f.reconnect(60);
+    f.behavior("resync");
+    const pending = f.c.fillGap(f.c.historyGaps[0]!.id);
+    await held.entered.promise;
+    f.append(60);
+    await f.h.publish();
+    await eventually(() => f.c.view?.messages[0]?.id === "A-155");
+    held.release.release();
+    await pending;
+    expect(
+      f.c.historyGaps.map(({ afterId, beforeId, status }) => [
+        afterId,
+        beforeId,
+        status,
+      ]),
+    ).toEqual([
+      ["A-64", "A-95", "error"],
+      ["A-124", "A-155", "pending"],
+    ]);
+  } finally {
+    held.release.release();
+    f.h.close();
+  }
+});
+
+test("a reset snapshot ahead of the live window waits for a safe retry", async () => {
+  const f = await gapHarness();
+  try {
+    await f.c.loadOlder();
+    const retained = f.c.older.map(({ id }) => id);
+    f.append(10);
+    f.behavior("resync");
+    await f.c.loadOlder();
+    expect(f.c.view?.messages[0]?.id).toBe("A-35");
+    expect(f.c.older.map(({ id }) => id)).toEqual(retained);
+    expect(f.c.before).toBe("A-5");
+    expect(f.c.historySyncFailed).toBe(true);
+
+    await f.h.publish();
+    await eventually(() => f.c.view?.messages[0]?.id === "A-45");
+    f.behavior("resync");
+    f.c.retryHistory();
+    await eventually(() => !f.c.historySyncFailed);
+    expect(f.c.older.map(({ id }) => id)).toEqual(["A-44"]);
+    expect(f.c.before).toBe("A-44");
+  } finally {
+    f.h.close();
+  }
+});
+
 test("visible gaps can each request a single page concurrently", async () => {
   const f = await gapHarness();
   try {
@@ -976,10 +1152,11 @@ test("gap failures are explicit, retryable, and no progress stops paging", async
     expect(f.c.historyGaps[0]!.status).toBe("pending");
     f.behavior("no-progress");
     await f.c.fillGap(id);
-    expect(f.c.historyGaps[0]!.status).toBe("unavailable");
-    const calls = f.calls.length;
+    expect(f.c.historyGaps[0]!.status).toBe("error");
+    expect(f.calls).toHaveLength(3);
+    f.behavior("normal");
     await f.c.fillGap(id);
-    expect(f.calls).toHaveLength(calls);
+    expect(f.c.historyGaps).toEqual([]);
   } finally {
     f.h.close();
   }
@@ -1074,11 +1251,14 @@ test("manual history failure retains the current range and retries only on reque
         before: "older",
       };
     },
-    async history() {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
       calls++;
       if (calls === 1) throw new Error("temporary history error");
-      return {
-        messages: [
+      return olderResult(
+        input.sessionId,
+        [
           {
             id: "old",
             role: "user",
@@ -1088,8 +1268,8 @@ test("manual history failure retains the current range and retries only on reque
             turnId: null,
           },
         ],
-        before: null,
-      };
+        null,
+      );
     },
   };
   const h = await controllerHarness(backend);
@@ -1135,15 +1315,18 @@ test("old session page cannot clear a new session's in-flight pagination", async
         before: `${sessionId}-cursor`,
       };
     },
-    async history(before) {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      const before = input.before;
       if (before === "A-cursor") {
         aEntered.release();
         await aRelease.promise;
-        return { messages: [message("A-old")], before: null };
+        return olderResult(input.sessionId, [message("A-old")], null);
       }
       bEntered.release();
       await bRelease.promise;
-      return { messages: [message("B-old")], before: null };
+      return olderResult(input.sessionId, [message("B-old")], null);
     },
   };
   const h = await controllerHarness(backend);
@@ -1289,13 +1472,16 @@ test("a history reply from a previous session cannot enter the new session", asy
         before: sessionId === "fixture-session" ? "old-5" : null,
       };
     },
-    async history() {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
       entered.release();
       await release.promise;
-      return {
-        messages: Array.from({ length: 5 }, (_, i) => message(i)),
-        before: null,
-      };
+      return olderResult(
+        input.sessionId,
+        Array.from({ length: 5 }, (_, i) => message(i)),
+        null,
+      );
     },
   };
   const h = await controllerHarness(backend);
@@ -1340,15 +1526,17 @@ test("reconnection releases stale history ownership without reviving its old pag
         before: "live",
       };
     },
-    async history() {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
       if (++calls === 1) {
         oldEntered.release();
         await oldRelease.promise;
-        return { messages: [message("old")], before: null };
+        return olderResult(input.sessionId, [message("old")], null);
       }
       newEntered.release();
       await newRelease.promise;
-      return { messages: [message("new", "stale")], before: null };
+      return olderResult(input.sessionId, [message("new", "stale")], null);
     },
   };
   const h = await controllerHarness(backend);
@@ -1400,13 +1588,16 @@ test("new session receives history while the old session read is still held", as
         before: `${sessionId}-live`,
       };
     },
-    async history(cursor) {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
+      const cursor = input.before;
       if (cursor === "A-live") {
         entered.release();
         await release.promise;
-        return { messages: [message("A-old")], before: null };
+        return olderResult(input.sessionId, [message("A-old")], null);
       }
-      return { messages: [message("B-old")], before: null };
+      return olderResult(input.sessionId, [message("B-old")], null);
     },
   };
   const h = await controllerHarness(backend);
@@ -1452,10 +1643,12 @@ test("returning to the same session does not accept its earlier history request"
         before: `${sessionId}-live`,
       };
     },
-    async history() {
+    async historySync(input) {
+      if (input.kind !== "older")
+        throw new Error("Fixture requires an older read");
       entered.release();
       await release.promise;
-      return { messages: [message("obsolete")], before: null };
+      return olderResult(input.sessionId, [message("obsolete")], null);
     },
   };
   const h = await controllerHarness(backend);

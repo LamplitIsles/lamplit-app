@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import {
   FileRefSchema,
@@ -619,8 +620,8 @@ test("paginated history transports available and missing file references", async
   };
   const host = await createChatHost({
     ...fixtureBackend().backend,
-    async history() {
-      return { messages: [message], before: null };
+    async historySync(input) {
+      return olderResult(input.sessionId, [message], null);
     },
   });
   const channels = new Map<object, ReturnType<typeof host.connect>>();
@@ -654,10 +655,7 @@ test("paginated history transports available and missing file references", async
     () => {},
   );
   try {
-    expect(await client.history("cursor")).toEqual({
-      messages: [message],
-      before: null,
-    });
+    expect(await readOlder(client, "fixture-session", "cursor")).toEqual(olderResult("fixture-session", [message], null));
   } finally {
     client.close();
     host.close();

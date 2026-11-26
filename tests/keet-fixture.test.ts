@@ -15,10 +15,11 @@ for (const profile of ["dm", "text-only"] as const)
       history: true,
     };
     const result = await fixture.control(event);
-    const history = await fixture.backend.history("older-page");
-    expect(history.messages[0]?.text).toBe(`原文\n\n${result.imageNote}`);
-    expect(history.messages[0]?.images).toBeUndefined();
-    expect(history.messages[0]?.source).toEqual({
+    const history = await fixture.backend.historySync({ kind: "older", sessionId: "fixture-session", before: "older-page" });
+    if (history.kind !== "older") throw new Error("Expected older page");
+    expect(history.records[0]?.message?.text).toBe(`原文\n\n${result.imageNote}`);
+    expect(history.records[0]?.message?.images).toBeUndefined();
+    expect(history.records[0]?.message?.source).toEqual({
       kind: "keet",
       channel: "group",
       senderLabel: "Alice",

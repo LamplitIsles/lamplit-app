@@ -1,3 +1,5 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { expect, test } from "bun:test";
 import { openChat } from "../packages/contracts/src/client.ts";
 import {
@@ -69,6 +71,7 @@ test("live and historical UI keep order and identity across invalid payloads and
   let listener: (change: ChatChange) => void = () => {};
   const bad: ChatMessage = { ...base, id: "bad", ui: { version: "v999" } };
   let good: ChatMessage = { ...base, id: "good", ui: fixture };
+  const historicalGood = good;
   const other: ChatMessage = {
     ...base,
     id: "other",
@@ -84,8 +87,8 @@ test("live and historical UI keep order and identity across invalid payloads and
         before: "older",
       };
     },
-    async history() {
-      return { messages: [other, bad, good], before: null };
+    async historySync(input: HistorySyncInput) {
+      return olderResult(input.sessionId, [other, bad, historicalGood], null);
     },
     subscribe(changed: (change: ChatChange) => void) {
       listener = changed;
@@ -136,9 +139,9 @@ test("live and historical UI keep order and identity across invalid payloads and
     expect(validateA2UISurface(view!.messages[2]!.ui) as unknown).toEqual(
       fixture,
     );
-    const history = await client.history("older");
-    expect(history.messages.map((m) => m.id)).toEqual(["other", "bad", "good"]);
-    expect(history.messages[1]!.ui).toEqual(bad.ui);
+    const history = await readOlder(client, view!.sessionId, "older");
+    expect(history.records.map((r) => r.message.id)).toEqual(["other", "bad", "good"]);
+    expect(history.records[1]!.message.ui).toEqual(bad.ui);
     good = { ...good, ui: workspaceFixture };
     listener({
       type: "update",
@@ -153,8 +156,8 @@ test("live and historical UI keep order and identity across invalid payloads and
     expect(validateA2UISurface(view!.messages[2]!.ui) as unknown).toEqual(
       workspaceFixture,
     );
-    expect((await client.history("older")).messages[2]!.ui).toEqual(
-      workspaceFixture,
+    expect((await readOlder(client, view!.sessionId, "older")).records[2]!.message.ui).toEqual(
+      fixture,
     );
     listener({
       type: "update",

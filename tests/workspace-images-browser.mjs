@@ -2,6 +2,7 @@ import { createUiTestHost } from "./ui-test-host.ts";
 import { chromium, expect } from "@playwright/test";
 import { WORKSPACE_IMAGE_PATH } from "../packages/contracts/src/index.ts";
 import { fixtureBackend } from "./fixture.ts";
+import { olderResult } from "./sync-fixture.ts";
 import { fixtureImage } from "./panels-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
@@ -80,8 +81,9 @@ const host = await createUiTestHost({
       before: older ? "older" : null,
     };
   },
-  async history() {
-    return { messages: [message], before: null };
+  async historySync(input) {
+    if (input.kind !== "older") return fixture.backend.historySync(input);
+    return olderResult(input.sessionId, [message], null);
   },
 });
 const channels = new Map(),

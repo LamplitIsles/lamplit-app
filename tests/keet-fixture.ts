@@ -1,3 +1,5 @@
+import { olderResult } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { fixtureBackend } from "./fixture.ts";
 import type { ChatChange } from "../packages/contracts/src/server.ts";
 import {
@@ -30,9 +32,10 @@ export function keetFixture(imageProfile: "dm" | "text-only" = "dm") {
         before: older.length ? "older-page" : null,
       };
     },
-    async history(before: string) {
-      if (before !== "older-page") throw new Error("Invalid fixture cursor");
-      return { messages: [...older], before: null };
+    async historySync(input: HistorySyncInput) {
+      if (input.kind !== "older") return base.backend.historySync(input);
+      if (input.before !== "older-page") return { kind: "resyncRequired" as const, sessionId: input.sessionId };
+      return olderResult(input.sessionId, [...older], null);
     },
     subscribe(listener: (change: ChatChange) => void) {
       listeners.add(listener);

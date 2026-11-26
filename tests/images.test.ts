@@ -4,7 +4,7 @@ import {
   UploadResultSchema,
   ImageRefSchema,
   MessageSchema,
-  PageSchema,
+  HistorySyncRecordSchema,
   ViewSchema,
   capabilities,
   validate,
@@ -76,7 +76,6 @@ test("animation evidence is positive-only across image reference contexts", () =
       turnId: null,
       images: [candidate],
     };
-    const page = { messages: [message], before: null };
     const view = {
       version: 2,
       sessionId: input.sessionId,
@@ -106,7 +105,7 @@ test("animation evidence is positive-only across image reference contexts", () =
     return [
       () => validate(ImageRefSchema, candidate),
       () => validate(MessageSchema, message).images![0],
-      () => validate(PageSchema, page).messages[0]!.images![0],
+      () => validate(HistorySyncRecordSchema, { message, orderKey: "a" }).message.images![0],
       () => validate(ViewSchema, view).messages[0]!.images![0],
       () => validateSubmission(submission).images![0],
       () => validateUploadResult(result, input).images[0]!.ref,
@@ -374,9 +373,10 @@ test("image admission preserves immutable references and history", async () => {
   for (let page = 0; before && page < 40; page++) {
     expect(cursors.has(before)).toBe(false);
     cursors.add(before);
-    const older = await fixture.backend.history(before);
+    const older = await fixture.backend.historySync({ kind: "older", sessionId: view.sessionId, before });
+    if (older.kind !== "older") throw new Error("Expected older page");
     expect(older.before).not.toBe(before);
-    history.push(...older.messages);
+    history.push(...older.records.map(record => record.message));
     before = older.before;
   }
   expect(before).toBeNull();

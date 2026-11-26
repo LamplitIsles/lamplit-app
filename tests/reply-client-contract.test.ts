@@ -1,3 +1,5 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
+import type { HistorySyncInput } from "../packages/contracts/src/index.ts";
 import { expect, test } from "bun:test";
 import { createServiceStateDecoder, createServiceStateEncoder } from "../packages/contracts/node_modules/@earendil-works/chord/dist/index.js";
 import { openChat } from "../packages/contracts/src/client.ts";
@@ -25,7 +27,7 @@ async function harness(mode: "view" | "preview" | "history" | "invalid" | "valid
   const host = await createChatHost({
     ...fixture.backend,
     async read() { return { ...(await fixture.backend.read()), messages: mode === "preview" ? [] : [reply, ...(mode === "valid" ? other : [])], ...((mode === "preview" || mode === "valid") ? { streamingReply: { id: "preview", text: "tail", createdAt: 1, turnId: "turn" } } : {}), before: "old" }; },
-    async history() { return { messages: [{ ...reply, id: "history" }, ...(mode === "valid" ? other : [])], before: null }; },
+    async historySync(input: HistorySyncInput) { return olderResult(input.sessionId, [{ ...reply, id: "history", textState: "complete" }, ...(mode === "valid" ? other.map(message => ({ ...message, textState: "complete" as const })) : [])], null); },
   }, () => {});
   let removed = 0;
   const scrub = (value: unknown): void => {
@@ -48,8 +50,8 @@ async function harness(mode: "view" | "preview" | "history" | "invalid" | "valid
             const snapshot = decoder.decodeSnapshot(frame.result);
             if (mode === "view" || mode === "preview") scrub(snapshot);
             frame.result = encoder.encodeSnapshot(snapshot);
-          } else if (frame.type === "result" && frame.result?.messages && mode === "history") scrub(frame.result);
-          else if (frame.type === "result" && frame.result?.messages && mode === "invalid") frame.result.messages[0].ends = [5];
+          } else if (frame.type === "result" && frame.result?.records && mode === "history") scrub(frame.result);
+          else if (frame.type === "result" && frame.result?.records && mode === "invalid") frame.result.records[0].message.ends = [5];
           ws.send(JSON.stringify(frame));
         },
         close(code, reason) { ws.close(code, reason); },
@@ -86,7 +88,7 @@ test("openChat rejects history reply missing ends while accepting empty ends", a
     const client = await h.open();
     await until(() => !!h.view);
     expect(h.view!.messages[0]!.ends).toEqual([]);
-    await expect(client.history("old")).rejects.toThrow();
+    await expect(readOlder(client, "fixture-session", "old")).rejects.toThrow();
     expect(h.removed).toBeGreaterThan(0);
     expect(h.offline).toBe(false);
     client.close();
@@ -101,9 +103,9 @@ test("openChat accepts empty ends for projected replies and no ends for other re
     expect(h.view!.messages[0]!.ends).toEqual([]);
     expect(h.view!.streamingReply!.ends).toEqual([]);
     expect(h.view!.messages.slice(1).every(message => message.ends === undefined)).toBe(true);
-    const page = await client.history("old");
-    expect(page.messages[0]!.ends).toEqual([]);
-    expect(page.messages.slice(1).every(message => message.ends === undefined)).toBe(true);
+    const page = await readOlder(client, "fixture-session", "old");
+    expect(page.records[0]!.message.ends).toEqual([4]);
+    expect(page.records.slice(1).every(record => record.message.ends === undefined)).toBe(true);
     client.close();
   } finally { h.close(); }
 });
@@ -112,7 +114,7 @@ test("openChat rejects invalid projected history boundaries", async () => {
   const h = await harness("invalid");
   try {
     const client = await h.open();
-    await expect(client.history("old")).rejects.toThrow();
+    await expect(readOlder(client, "fixture-session", "old")).rejects.toThrow();
     expect(h.offline).toBe(false);
     client.close();
   } finally { h.close(); }

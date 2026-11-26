@@ -1,3 +1,4 @@
+import { olderResult, readOlder } from "./sync-fixture.ts";
 import { expect, test } from "bun:test";
 import "./marked-test-resolver.ts";
 import * as marked from "../packages/contracts/node_modules/marked";
@@ -55,7 +56,7 @@ test("host publishes source and stable UTF-16 ends through live, final and histo
   const backend = {
     ...fixture.backend,
     async read() { return { ...(await fixture.backend.read()), sessionId, activeTurnId: "turn", messages: message ? [message] : [], before: "older", ...(preview ? { streamingReply: preview } : {}) }; },
-    async history() { return { messages: message ? [message] : [], before: null }; },
+    async historySync(input: import("../packages/contracts/src/index.ts").HistorySyncInput) { return olderResult(input.sessionId, message ? [message] : [], null); },
   };
   const errors: unknown[] = [];
   const host = await createChatHost(backend, error => errors.push(error));
@@ -100,7 +101,7 @@ test("host publishes source and stable UTF-16 ends through live, final and histo
     await host.publish();
     await until(() => view?.messages[0]?.textState === "complete");
     const final = view!.messages[0] as ChatMessage & { ends?: number[] };
-    const historical = (await client.history("older")).messages[0] as ChatMessage & { ends?: number[] };
+    const historical = (await readOlder(client, sessionId, "older")).records[0]!.message as ChatMessage & { ends?: number[] };
     expect(final.id).toBe("authoritative-answer");
     expect(historical.id).toBe(final.id);
     expect(historical.ends).toEqual(final.ends);
@@ -121,7 +122,7 @@ test("host publishes source and stable UTF-16 ends through live, final and histo
     await until(() => view?.messages[0]?.text === longText);
     expect(view!.messages).toHaveLength(1);
     expect(view!.messages[0]!.ends).toHaveLength(36);
-    expect((await client.history("older")).messages[0]!.ends).toEqual(view!.messages[0]!.ends);
+    expect((await readOlder(client, sessionId, "older")).records[0]!.message!.ends).toEqual(view!.messages[0]!.ends);
   } finally {
     client.close(); host.close(); server.stop(true);
   }

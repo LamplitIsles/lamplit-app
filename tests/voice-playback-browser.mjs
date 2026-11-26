@@ -1,6 +1,7 @@
 import { chromium, expect } from "@playwright/test";
 import { createChatHost } from "../packages/contracts/src/server.ts";
 import { fixtureBackend } from "./fixture.ts";
+import { olderResult } from "./sync-fixture.ts";
 import { staticAssets } from "./static-assets.mjs";
 import { denyNativeNotifications } from "./notification-permission.mjs";
 import { resolve } from "node:path";
@@ -19,7 +20,10 @@ const current = { ...voice("current", "a".repeat(64)), images: [{ attachmentId: 
 const older = voice("older", "b".repeat(64));
 const backend = { ...fixture.backend,
   async read() { return { ...await fixture.backend.read(), messages: [current], before: "older" }; },
-  async history() { return { messages: [older], before: null }; },
+  async historySync(input) {
+    if (input.kind !== "older") return fixture.backend.historySync(input);
+    return olderResult(input.sessionId, [older], null);
+  },
 };
 const host = await createChatHost(backend);
 const channels = new Map();
